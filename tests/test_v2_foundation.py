@@ -229,6 +229,58 @@ def test_reference_resolver_supports_explicit_premiere_bin_reference(tmp_path: P
     assert resolved["media_count"] == 1
 
 
+def test_premiere_context_clear_prevents_stale_bin_resolution(tmp_path: Path):
+    media = tmp_path / "old.mp4"
+    media.write_bytes(b"fake video")
+
+    premiere = PremiereContextService()
+    premiere.save_project_context(
+        {
+            "bins": [{"name": "6", "binPath": "Raw/6", "itemId": "bin_raw_6"}],
+            "items": [
+                {
+                    "name": "old.mp4",
+                    "itemId": "old_item",
+                    "mediaPath": str(media),
+                    "mediaType": "VIDEO",
+                    "binPath": "Raw/6",
+                }
+            ],
+        }
+    )
+    premiere.clear_project_context()
+
+    resolver = ReferenceResolverService()
+    resolved = resolver.resolve(ReferenceResolveRequest(text="use @bin:Raw/6", kind="bin"))
+
+    assert resolved["success"] is False
+    assert "bin:Raw/6" in resolved["missing"]
+
+
+def test_premiere_bin_summaries_include_media_counts(tmp_path: Path):
+    media_a = tmp_path / "a.mp4"
+    media_b = tmp_path / "b.mp4"
+    media_a.write_bytes(b"fake video")
+    media_b.write_bytes(b"fake video")
+
+    premiere = PremiereContextService()
+    premiere.save_project_context(
+        {
+            "bins": [{"name": "6", "binPath": "Raw/6", "itemId": "bin_raw_6"}],
+            "items": [
+                {"name": "a.mp4", "mediaPath": str(media_a), "mediaType": "VIDEO", "binPath": "Raw/6"},
+                {"name": "b.mp4", "mediaPath": str(media_b), "mediaType": "VIDEO", "binPath": "Raw/6"},
+            ],
+        }
+    )
+
+    summaries = premiere.list_bin_summaries()
+
+    assert summaries[0]["bin_path"] == "Raw/6"
+    assert summaries[0]["item_count"] == 2
+    assert summaries[0]["media_count"] == 2
+
+
 def test_combine_folder_assets_dry_run_creates_timeline_items(tmp_path: Path):
     media_a = tmp_path / "a.mp4"
     media_b = tmp_path / "b.mp4"

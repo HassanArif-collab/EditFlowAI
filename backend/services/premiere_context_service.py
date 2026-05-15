@@ -13,13 +13,27 @@ from ..services.v2_registry_service import v2_registry_service
 
 
 class PremiereContextService:
+    def clear_project_context(self) -> Dict[str, Any]:
+        bin_count = db.fetch_one("SELECT COUNT(*) AS count FROM premiere_bins") or {"count": 0}
+        item_count = db.fetch_one("SELECT COUNT(*) AS count FROM premiere_project_items") or {"count": 0}
+        db.execute("DELETE FROM premiere_bins")
+        db.execute("DELETE FROM premiere_project_items")
+        db.execute(
+            "DELETE FROM editflow_fts WHERE entity_type IN (?, ?)",
+            ("premiere_bin", "premiere_project_item"),
+        )
+        return {
+            "success": True,
+            "cleared_bins": int(bin_count.get("count") or 0),
+            "cleared_items": int(item_count.get("count") or 0),
+        }
+
     def save_project_context(self, context: Dict[str, Any]) -> Dict[str, Any]:
         now = utc_now()
         bins = context.get("bins") or []
         items = context.get("items") or []
 
-        db.execute("DELETE FROM premiere_bins")
-        db.execute("DELETE FROM premiere_project_items")
+        self.clear_project_context()
 
         for bin_item in bins:
             name = str(bin_item.get("name") or "")
@@ -127,6 +141,33 @@ class PremiereContextService:
         )
         for row in rows:
             row["metadata"] = db.loads(row.get("metadata"), {})
+        return rows
+
+    def list_bin_summaries(self, limit: int = 200) -> List[Dict[str, Any]]:
+        rows = db.fetch_all(
+            """
+            SELECT
+                b.id,
+                b.name,
+                b.bin_path,
+                b.item_id,
+                b.child_count,
+                b.depth,
+                b.updated_at,
+                COUNT(i.id) AS item_count,
+                SUM(CASE WHEN i.media_path <> '' THEN 1 ELSE 0 END) AS media_count
+            FROM premiere_bins b
+            LEFT JOIN premiere_project_items i
+                ON lower(i.bin_path) = lower(b.bin_path)
+            GROUP BY b.id, b.name, b.bin_path, b.item_id, b.child_count, b.depth, b.updated_at
+            ORDER BY lower(b.bin_path)
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        for row in rows:
+            row["item_count"] = int(row.get("item_count") or 0)
+            row["media_count"] = int(row.get("media_count") or 0)
         return rows
 
     def items_in_bin(self, bin_path: str, recursive: bool = False) -> List[Dict[str, Any]]:

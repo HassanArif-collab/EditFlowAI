@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from ..config import Settings
+from ..config import Settings, feature_flags
 from ..models.database import db
 from ..models.schemas import ChatMessage, ChatResponse, MessageRole, PremiereAction, ScriptPreview
 from ..services.ollama_service import ollama_service
@@ -75,6 +75,15 @@ CURRENT TIMELINE CONTEXT:
 
 CONVERSATION HISTORY:
 {history}
+"""
+
+PHASE1_PROMPT = """
+
+PHASE 1 MODE:
+Only reference scanning and reference resolution are enabled right now.
+Allowed actions: chat, query_project, query_timeline, v2_folder_sequence for bin/folder reference verification.
+Do not use import_files, generate_script, edit execution, effects, labels, export, or timeline-changing commands.
+If the user asks for editing, resolve the exact Premiere bin/media first and explain that execution comes in a later phase.
 """
 
 
@@ -209,6 +218,8 @@ class ChatEngine:
             timeline_context=timeline_context,
             history=history,
         )
+        if self.settings.ENABLE_PHASE1_REFERENCE_ONLY:
+            system += PHASE1_PROMPT
 
         parsed = self._deterministic_command(message)
         if parsed is None:
@@ -227,6 +238,10 @@ class ChatEngine:
         intent = parsed.get("intent", "chat")
         parameters = parsed.get("parameters", {})
         response_text = parsed.get("response", "I'll help you with that.")
+        if not self._intent_enabled(intent):
+            response_text = self._disabled_intent_response(intent)
+            intent = "chat"
+            parameters = {}
         action = self._build_action(intent, parameters)
 
         session.messages.append({"role": "assistant", "content": response_text})
@@ -260,6 +275,8 @@ class ChatEngine:
         return {"intent": "chat", "confidence": 0.5, "parameters": {}, "response": raw}
 
     def _build_action(self, intent: str, parameters: dict) -> dict | None:
+        if not self._intent_enabled(intent):
+            return None
         intent_to_command = {
             "import_files": "importFiles",
             "add_clips": "addAllBinClips",
@@ -304,6 +321,48 @@ class ChatEngine:
             "command": command,
             "parameters": self._normalize_action_parameters(parameters),
         }
+
+    def _intent_enabled(self, intent: str) -> bool:
+        if intent in {"chat", "query_project", "query_timeline", "v2_folder_sequence"}:
+            return True
+        if intent == "import_files":
+            return self.settings.ENABLE_OLD_IMPORT_FILES
+        if intent == "generate_script":
+            return self.settings.ENABLE_OLD_GENERATE_SCRIPT
+        if intent in {"execute_script"}:
+            return not self.settings.ENABLE_PHASE1_REFERENCE_ONLY and self.settings.ENABLE_V2_EDIT_PLANNING
+        if intent in {
+            "add_clips",
+            "insert_clip",
+            "remove_clips",
+            "clear_labels",
+            "move_clip",
+            "create_sequence",
+            "apply_effect",
+            "apply_transition",
+            "set_audio",
+            "normalize_audio",
+            "audio_fade",
+            "export",
+            "add_marker",
+            "organize",
+            "label_clips",
+            "set_speed",
+            "set_scale",
+            "undo",
+            "manage_tracks",
+        }:
+            return self.settings.ENABLE_LEGACY_PREMIERE_COMMANDS
+        return False
+
+    def _disabled_intent_response(self, intent: str) -> str:
+        flags = feature_flags(self.settings)
+        if flags.get("phase1_reference_only"):
+            return (
+                "Phase 1 is reference-check only, so I will not run that old action yet. "
+                "First scan the project and verify the exact Premiere bin/media, for example @bin:Raw/6."
+            )
+        return f"That action is disabled by feature flags right now: {intent}."
 
     def _normalize_action_parameters(self, parameters: dict) -> dict:
         if not isinstance(parameters, dict):

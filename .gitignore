@@ -25,3 +25,5 @@ data/edl/
 data/catalogs/
 logs/
 *.log
+*.sqlite3-shm
+*.sqlite3-wal

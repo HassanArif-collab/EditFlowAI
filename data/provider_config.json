@@ -24,7 +24,7 @@
         "gemma3:4b"
       ],
       "status": "connected",
-      "last_checked": "2026-05-15T03:09:44.509848",
+      "last_checked": "2026-05-15T04:07:52.629479",
       "error": null,
       "timeout": 10,
       "chat_model": "gemma4:31b-cloud",
@@ -170,7 +170,7 @@
     ]
   },
   "cache_timestamps": {
-    "ollama-local": 1778814584.5164516
+    "ollama-local": 1778818072.6350608
   },
-  "saved_at": "2026-05-15T03:09:44.516451"
+  "saved_at": "2026-05-15T04:07:52.635060"
 }

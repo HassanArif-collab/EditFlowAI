@@ -33,6 +33,14 @@ let v2State = {
     visualMapId: null,
     planId: null,
 };
+let featureFlags = {
+    phase1_reference_only: true,
+    enable_v2_bin_workflow: true,
+    enable_v2_edit_planning: false,
+    enable_legacy_premiere_commands: false,
+    enable_old_import_files: false,
+    enable_old_generate_script: false,
+};
 
 // ── DOM Elements ──
 const chatMessages = document.getElementById('chat-messages');
@@ -108,6 +116,7 @@ try {
 
 async function init() {
     setupEventListeners();
+    applyFeatureFlags();
 
     // Load backend URL from localStorage
     const savedUrl = localStorage.getItem('editflow_backend_url');
@@ -167,6 +176,9 @@ async function scanProjectContext(showMessage = true) {
         return null;
     }
     try {
+        await apiPost('/api/project/context/clear', {}, 5000).catch(e => {
+            console.warn('Could not clear stale project context:', e);
+        });
         const result = await callExtendScript('scanProjectMedia');
         if (!result || result.success === false) {
             if (showMessage) addMessage('system', 'Project scan failed: ' + ((result && result.error) || 'Unknown error'));
@@ -180,7 +192,10 @@ async function scanProjectContext(showMessage = true) {
         const itemCount = result.total_items || (result.items && result.items.length) || 0;
         const binCount = (result.bins && result.bins.length) || 0;
         console.log("Project scanned and synced", registry);
-        if (showMessage) addMessage('system', `Project references synced: ${itemCount} item(s), ${binCount} bin(s).`);
+        if (showMessage) {
+            const summaries = await apiGet('/api/references/premiere-bins?limit=20', 5000).catch(e => null);
+            addMessage('system', `Project references synced: ${itemCount} item(s), ${binCount} bin(s). ${formatBinSummaries(summaries && summaries.bins)}`);
+        }
         return result;
     } catch(e) {
         console.warn("Auto-scan failed:", e);
@@ -359,6 +374,8 @@ async function apiPut(path, body, timeoutMs = 10000) {
 async function checkBackendHealth() {
     try {
         const data = await apiGet('/api/status', 3000);
+        featureFlags = data.feature_flags || featureFlags;
+        applyFeatureFlags();
         isConnected = true;
         connectionStatus.className = 'status-dot connected';
         connectionStatus.title = 'Connected';
@@ -373,6 +390,18 @@ async function checkBackendHealth() {
         providerBar.classList.remove('hidden', 'connected', 'partial');
         providerBarText.textContent = 'Backend not running - start the server first';
         return null;
+    }
+}
+
+function applyFeatureFlags() {
+    const phase1 = featureFlags.phase1_reference_only || !featureFlags.enable_v2_edit_planning;
+    if (v2DryRunBtn) {
+        v2DryRunBtn.disabled = phase1;
+        v2DryRunBtn.title = phase1 ? 'Phase 1 only: verify references first' : '';
+    }
+    if (v2ExecuteBtn) {
+        v2ExecuteBtn.disabled = phase1;
+        v2ExecuteBtn.title = phase1 ? 'Phase 1 only: execution comes after reference verification' : '';
     }
 }
 
@@ -807,6 +836,7 @@ async function handleV2FolderSequence(options) {
     addMessage('system', 'Refreshing Premiere references and resolving the folder/bin...');
     try {
         await scanProjectContext(false);
+        const referenceOnly = featureFlags.phase1_reference_only || !featureFlags.enable_v2_edit_planning;
         const explicitBinRef = options.binPath
             ? (/\s/.test(options.binPath) ? `@bin:"${options.binPath}"` : `@bin:${options.binPath}`)
             : '';
@@ -818,7 +848,7 @@ async function handleV2FolderSequence(options) {
             kind: options.kind || 'bin_or_folder',
             root_alias: options.rootAlias || 'raw',
             folder_name: options.folderName || '',
-            register_assets: true,
+            register_assets: !referenceOnly,
             recursive: false,
         }, 30000);
 
@@ -826,6 +856,13 @@ async function handleV2FolderSequence(options) {
             v2Panel.classList.remove('hidden');
             addMessage('system', `${resolved.message} ${formatSuggestions(resolved.suggestions)}`);
             return null;
+        }
+
+        showV2ReferencePreview(resolved);
+
+        if (referenceOnly) {
+            addMessage('system', `Reference verified: ${resolved.media_count} media file(s) from ${formatResolvedReference(resolved)}. Phase 1 stops here; no dry run or edit was created.`);
+            return resolved;
         }
 
         if (!resolved.asset_ids || resolved.asset_ids.length === 0) {
@@ -864,6 +901,17 @@ function formatResolvedReference(resolved) {
     if (!resolved) return 'the reference';
     if (resolved.kind === 'bin') return `Premiere bin ${resolved.bin_path || resolved.resolved_path}`;
     return resolved.resolved_path || resolved.bin_path || 'the reference';
+}
+
+function formatBinSummaries(bins) {
+    if (!Array.isArray(bins) || bins.length === 0) return 'No bins were indexed.';
+    const lines = bins.slice(0, 12).map(bin => {
+        const mediaCount = bin.media_count || 0;
+        const itemCount = bin.item_count || 0;
+        return `${bin.bin_path}: ${mediaCount} media / ${itemCount} item(s)`;
+    });
+    const suffix = bins.length > lines.length ? ` (${bins.length - lines.length} more)` : '';
+    return 'Bins: ' + lines.join(' | ') + suffix;
 }
 
 function formatSuggestions(suggestions) {
@@ -1008,6 +1056,11 @@ async function ingestV2VisualMap() {
 }
 
 async function createV2DryRun() {
+    if (featureFlags.phase1_reference_only || !featureFlags.enable_v2_edit_planning) {
+        addMessage('system', 'Phase 1 is reference-check only. Verify a Premiere bin first; dry runs come in Phase 2.');
+        return null;
+    }
+
     if (!v2State.assetId) {
         const asset = await registerV2RawAsset();
         if (!asset) return null;
@@ -1050,6 +1103,11 @@ async function createV2DryRun() {
 }
 
 async function executeV2Plan() {
+    if (featureFlags.phase1_reference_only || !featureFlags.enable_v2_edit_planning) {
+        addMessage('system', 'Phase 1 is reference-check only. Execution is disabled until the reference workflow is verified.');
+        return;
+    }
+
     const planId = currentV2PlanId || v2State.planId;
     if (!planId) {
         addMessage('system', 'Create a v2 dry run first.');
@@ -1647,6 +1705,7 @@ function showScriptPreview(script) {
     currentScriptId = script.id;
     refineBtn.style.display = '';
     executeBtn.textContent = 'Execute';
+    executeBtn.disabled = false;
     scriptTitle.textContent = script.title || 'Generated Script';
 
     let content = '';
@@ -1665,11 +1724,47 @@ function showScriptPreview(script) {
     scriptContent.textContent = content;
 }
 
+function showV2ReferencePreview(resolved) {
+    scriptPreview.classList.remove('hidden');
+    currentV2PlanId = null;
+    currentV2DryRun = null;
+    currentScriptId = null;
+    refineBtn.style.display = 'none';
+    executeBtn.textContent = 'Phase 2 Disabled';
+    executeBtn.disabled = true;
+    scriptTitle.textContent = 'Reference Check';
+
+    const items = resolved.items || [];
+    let content = '';
+    content += `Reference: ${formatResolvedReference(resolved)}\n`;
+    content += `Kind: ${resolved.kind || 'unknown'}\n`;
+    content += `Media files: ${resolved.media_count || 0}\n\n`;
+    if (items.length) {
+        content += 'Items:\n';
+        items.forEach((item, index) => {
+            const name = item.name || item.media_path || 'unknown';
+            const mediaPath = item.media_path || '(no media path)';
+            content += `${index + 1}. ${name}\n   ${mediaPath}\n`;
+        });
+    } else if (resolved.media_paths && resolved.media_paths.length) {
+        content += 'Files:\n';
+        resolved.media_paths.forEach((path, index) => {
+            content += `${index + 1}. ${path}\n`;
+        });
+    }
+    if (resolved.warnings && resolved.warnings.length) {
+        content += `\nWarnings:\n${resolved.warnings.join('\n')}\n`;
+    }
+    content += '\nPhase 1 mode: no dry run, import, sequence creation, or execution is allowed yet.';
+    scriptContent.textContent = content;
+}
+
 function showV2DryRunPreview(dryRun) {
     scriptPreview.classList.remove('hidden');
     currentScriptId = null;
     scriptTitle.textContent = 'V2 Dry Run';
     executeBtn.textContent = 'Execute';
+    executeBtn.disabled = false;
     refineBtn.style.display = 'none';
 
     const coverage = dryRun.script_coverage || [];

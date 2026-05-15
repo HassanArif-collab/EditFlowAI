@@ -1,8 +1,9 @@
+from backend.config import Settings
 from backend.services.chat_engine import ChatEngine
 
 
 def test_label_clear_command_routes_to_premiere_action():
-    engine = ChatEngine()
+    engine = ChatEngine(Settings(ENABLE_LEGACY_PREMIERE_COMMANDS=True))
     parsed = engine._deterministic_command(
         "remove mango label color from the whole sequence of WhatsApp Video 2026-04-15"
     )
@@ -12,6 +13,15 @@ def test_label_clear_command_routes_to_premiere_action():
     assert parsed["parameters"]["labelName"] == "Mango"
     assert action["command"] == "clearTimelineLabels"
     assert "already" not in parsed["response"].lower()
+
+
+def test_phase1_blocks_legacy_label_action_by_default():
+    engine = ChatEngine()
+    parsed = engine._deterministic_command("remove mango label color from the sequence")
+    action = engine._build_action(parsed["intent"], parsed["parameters"])
+
+    assert parsed["intent"] == "clear_labels"
+    assert action is None
 
 
 def test_unknown_copy_selected_clip_does_not_fake_execution():

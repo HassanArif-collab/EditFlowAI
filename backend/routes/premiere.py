@@ -21,6 +21,15 @@ class ProjectContext(BaseModel):
     items: List[Dict[str, Any]]
     bins: List[Dict[str, Any]] = []
     sequences: List[Dict[str, Any]] = []
+
+
+@router.post("/context/clear")
+async def clear_project_context():
+    """Clear cached Premiere project references so stale bins cannot be reused."""
+    global PROJECT_CONTEXT
+    PROJECT_CONTEXT = {}
+    cleared = premiere_context_service.clear_project_context()
+    return {"status": "success", "message": "Project context cleared", "registry": cleared}
     
 @router.post("/context")
 async def update_project_context(context: ProjectContext):

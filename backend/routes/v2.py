@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from ..config import feature_flags, get_settings
 from ..models.v2_schemas import (
     AssetAnalyzeRequest,
     AssetRegisterRequest,
@@ -50,6 +51,7 @@ async def system_status():
     recent_jobs = v2_registry_service.recent_jobs(limit=5)
     return {
         "server": "running",
+        "feature_flags": feature_flags(),
         "capabilities": v2_registry_service.capabilities(),
         "database": v2_registry_service.health(),
         "providers": provider_health,
@@ -72,7 +74,7 @@ async def system_status():
 
 @router.get("/system/capabilities")
 async def system_capabilities():
-    return {"capabilities": v2_registry_service.capabilities()}
+    return {"capabilities": v2_registry_service.capabilities(), "feature_flags": feature_flags()}
 
 
 @router.get("/references/roots")
@@ -95,7 +97,14 @@ async def resolve_reference(request: ReferenceResolveRequest):
 
 @router.get("/references/premiere-bins")
 async def list_premiere_bins(limit: int = 200):
-    return {"bins": premiere_context_service.list_bins(limit=limit)}
+    return {"bins": premiere_context_service.list_bin_summaries(limit=limit)}
+
+
+@router.post("/references/verify-bin")
+async def verify_premiere_bin(request: ReferenceResolveRequest):
+    request.register_assets = False
+    request.kind = request.kind or "bin"
+    return reference_resolver_service.resolve(request)
 
 
 @router.post("/assets/register")
@@ -222,6 +231,11 @@ async def get_visual_map_entries(visual_map_id: str):
 
 @router.post("/edit-plans/create")
 async def create_edit_plan(request: EditPlanCreateRequest):
+    if not get_settings().ENABLE_V2_EDIT_PLANNING:
+        raise HTTPException(
+            status_code=403,
+            detail="V2 edit planning is disabled in Phase 1. Verify Premiere bin references first.",
+        )
     try:
         return v2_registry_service.create_edit_plan(request)
     except Exception as e:
@@ -235,6 +249,11 @@ async def chat_plan_alias(request: EditPlanCreateRequest):
 
 @router.post("/jobs/{plan_id}/dry-run")
 async def dry_run_job(plan_id: str):
+    if not get_settings().ENABLE_V2_EDIT_PLANNING:
+        raise HTTPException(
+            status_code=403,
+            detail="V2 dry-run is disabled in Phase 1. Verify Premiere bin references first.",
+        )
     try:
         return v2_registry_service.dry_run_plan(plan_id)
     except KeyError as e:
@@ -250,6 +269,11 @@ async def dry_run_plan_alias(plan_id: str):
 
 @router.post("/jobs/{plan_id}/execute")
 async def execute_job(plan_id: str):
+    if not get_settings().ENABLE_V2_EDIT_PLANNING:
+        raise HTTPException(
+            status_code=403,
+            detail="V2 execution is disabled in Phase 1. Verify Premiere bin references first.",
+        )
     try:
         return v2_registry_service.execute_plan(plan_id)
     except KeyError as e:

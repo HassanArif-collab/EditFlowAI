@@ -10,7 +10,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .config import Settings, init_dirs
+from .config import Settings, feature_flags, init_dirs
 from .routes import chat, models_routes, media, catalog, sequence
 from .routes import providers, premiere, cleanspeech, v2
 
@@ -140,6 +140,7 @@ async def status():
         "active_chat": active_chat,
         "active_vision": active_vision,
         "whisper_loaded": whisper_loaded,
+        "feature_flags": feature_flags(),
         # Legacy compat
         "ollama_local": providers_summary.get("ollama-local", {}).get("connected", False),
         "ollama_cloud": any(
