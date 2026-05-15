@@ -1,0 +1,176 @@
+{
+  "providers": {
+    "ollama-local": {
+      "id": "ollama-local",
+      "name": "Ollama (Local)",
+      "type": "ollama",
+      "base_url": "http://localhost:11434",
+      "api_key": "",
+      "is_default": true,
+      "enabled": true,
+      "models": [
+        "minimax-m2.5:cloud",
+        "gemma4:31b-cloud",
+        "kimi-k2.5:cloud",
+        "gemma4:26b-a4b-it-q4_K_M",
+        "nemotron-3-super:cloud",
+        "minimax-m2.7:cloud",
+        "deepseek-v4-flash:cloud",
+        "deepseek-v4-pro:cloud",
+        "glm-5:cloud",
+        "kimi-k2.6:cloud",
+        "glm-5.1:cloud",
+        "gemma4:e4b",
+        "gemma3:4b"
+      ],
+      "status": "connected",
+      "last_checked": "2026-05-15T03:09:44.509848",
+      "error": null,
+      "timeout": 10,
+      "chat_model": "gemma4:31b-cloud",
+      "vision_model": ""
+    }
+  },
+  "active_chat_provider": "ollama-local",
+  "active_chat_model": "gemma4:31b-cloud",
+  "active_vision_provider": "ollama-local",
+  "active_vision_model": "gemma3:4b",
+  "model_cache": {
+    "ollama-local": [
+      {
+        "id": "minimax-m2.5:cloud",
+        "name": "minimax-m2.5:cloud",
+        "size": "0.0 GB",
+        "size_bytes": 337,
+        "provider_type": "ollama",
+        "is_vision": false,
+        "is_local": true,
+        "modified_at": "2026-05-08T05:21:01.0890483+05:00"
+      },
+      {
+        "id": "gemma4:31b-cloud",
+        "name": "gemma4:31b-cloud",
+        "size": "0.0 GB",
+        "size_bytes": 342,
+        "provider_type": "ollama",
+        "is_vision": false,
+        "is_local": true,
+        "modified_at": "2026-05-06T20:02:38.3306557+05:00"
+      },
+      {
+        "id": "kimi-k2.5:cloud",
+        "name": "kimi-k2.5:cloud",
+        "size": "0.0 GB",
+        "size_bytes": 340,
+        "provider_type": "ollama",
+        "is_vision": false,
+        "is_local": true,
+        "modified_at": "2026-05-06T19:55:55.4313308+05:00"
+      },
+      {
+        "id": "gemma4:26b-a4b-it-q4_K_M",
+        "name": "gemma4:26b-a4b-it-q4_K_M",
+        "size": "16.8 GB",
+        "size_bytes": 17987581215,
+        "provider_type": "ollama",
+        "is_vision": false,
+        "is_local": true,
+        "modified_at": "2026-05-06T05:25:53.9202637+05:00"
+      },
+      {
+        "id": "nemotron-3-super:cloud",
+        "name": "nemotron-3-super:cloud",
+        "size": "0.0 GB",
+        "size_bytes": 345,
+        "provider_type": "ollama",
+        "is_vision": false,
+        "is_local": true,
+        "modified_at": "2026-05-06T05:14:23.0325193+05:00"
+      },
+      {
+        "id": "minimax-m2.7:cloud",
+        "name": "minimax-m2.7:cloud",
+        "size": "0.0 GB",
+        "size_bytes": 375,
+        "provider_type": "ollama",
+        "is_vision": false,
+        "is_local": true,
+        "modified_at": "2026-05-06T05:10:16.5574115+05:00"
+      },
+      {
+        "id": "deepseek-v4-flash:cloud",
+        "name": "deepseek-v4-flash:cloud",
+        "size": "0.0 GB",
+        "size_bytes": 348,
+        "provider_type": "ollama",
+        "is_vision": false,
+        "is_local": true,
+        "modified_at": "2026-05-06T05:09:23.8607362+05:00"
+      },
+      {
+        "id": "deepseek-v4-pro:cloud",
+        "name": "deepseek-v4-pro:cloud",
+        "size": "0.0 GB",
+        "size_bytes": 344,
+        "provider_type": "ollama",
+        "is_vision": false,
+        "is_local": true,
+        "modified_at": "2026-05-06T05:08:47.6945584+05:00"
+      },
+      {
+        "id": "glm-5:cloud",
+        "name": "glm-5:cloud",
+        "size": "0.0 GB",
+        "size_bytes": 323,
+        "provider_type": "ollama",
+        "is_vision": false,
+        "is_local": true,
+        "modified_at": "2026-05-06T05:08:16.8219964+05:00"
+      },
+      {
+        "id": "kimi-k2.6:cloud",
+        "name": "kimi-k2.6:cloud",
+        "size": "0.0 GB",
+        "size_bytes": 384,
+        "provider_type": "ollama",
+        "is_vision": false,
+        "is_local": true,
+        "modified_at": "2026-05-06T05:07:09.2223402+05:00"
+      },
+      {
+        "id": "glm-5.1:cloud",
+        "name": "glm-5.1:cloud",
+        "size": "0.0 GB",
+        "size_bytes": 327,
+        "provider_type": "ollama",
+        "is_vision": false,
+        "is_local": true,
+        "modified_at": "2026-05-06T05:06:17.4340564+05:00"
+      },
+      {
+        "id": "gemma4:e4b",
+        "name": "gemma4:e4b",
+        "size": "8.9 GB",
+        "size_bytes": 9608350718,
+        "provider_type": "ollama",
+        "is_vision": false,
+        "is_local": true,
+        "modified_at": "2026-05-05T03:41:23.5856102+05:00"
+      },
+      {
+        "id": "gemma3:4b",
+        "name": "gemma3:4b",
+        "size": "",
+        "size_bytes": 0,
+        "provider_type": "ollama",
+        "is_vision": true,
+        "is_local": true,
+        "modified_at": ""
+      }
+    ]
+  },
+  "cache_timestamps": {
+    "ollama-local": 1778814584.5164516
+  },
+  "saved_at": "2026-05-15T03:09:44.516451"
+}

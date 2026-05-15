@@ -1,0 +1,68 @@
+{
+  "name": "Jamia Masjid Documentary",
+  "description": "7-act narrative arc for mosque construction documentary ads",
+  "target_duration": 90,
+  "aspect_ratio": "9:16",
+  "resolution": {
+    "width": 1080,
+    "height": 1920
+  },
+  "fps": 60,
+  "acts": [
+    {
+      "name": "Hook",
+      "description": "Cinematic fast-cut hook to grab attention",
+      "duration_pct": 0.05,
+      "micro_cuts": true,
+      "micro_cut_interval": 1.0,
+      "style": "fast-paced"
+    },
+    {
+      "name": "Context",
+      "description": "Establish the project and community",
+      "duration_pct": 0.15,
+      "micro_cuts": true,
+      "micro_cut_interval": 1.5,
+      "style": "informative"
+    },
+    {
+      "name": "Challenge",
+      "description": "Present the obstacle or need",
+      "duration_pct": 0.15,
+      "micro_cuts": true,
+      "micro_cut_interval": 2.0,
+      "style": "emotional"
+    },
+    {
+      "name": "Progress",
+      "description": "Show the construction progress",
+      "duration_pct": 0.2,
+      "micro_cuts": true,
+      "micro_cut_interval": 1.5,
+      "style": "inspiring"
+    },
+    {
+      "name": "Community",
+      "description": "Show community impact and prayers",
+      "duration_pct": 0.15,
+      "micro_cuts": true,
+      "micro_cut_interval": 2.0,
+      "style": "heartwarming"
+    },
+    {
+      "name": "Vision",
+      "description": "Future vision and call to action",
+      "duration_pct": 0.15,
+      "micro_cuts": true,
+      "micro_cut_interval": 1.5,
+      "style": "aspirational"
+    },
+    {
+      "name": "Closing",
+      "description": "Powerful closing with contact info",
+      "duration_pct": 0.15,
+      "micro_cuts": false,
+      "style": "impactful"
+    }
+  ]
+}

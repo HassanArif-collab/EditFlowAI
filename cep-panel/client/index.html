@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EditFlow AI</title>
+    <link rel="stylesheet" href="styles/chat.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-left">
+                <span class="logo">EF</span>
+                <h1>EditFlow AI</h1>
+            </div>
+            <div class="header-right">
+                <span id="connection-status" class="status-dot disconnected" title="Disconnected"></span>
+                <select id="model-selector" class="model-select">
+                    <option value="">Loading models...</option>
+                </select>
+                <button id="v2-toggle-btn" class="btn btn-small btn-secondary" title="Script-aware editor">V2</button>
+                <button id="settings-btn" class="icon-btn" title="Settings">&#9881;</button>
+            </div>
+        </header>
+
+        <!-- Provider Status Bar (shows when providers have issues) -->
+        <div id="provider-bar" class="provider-bar hidden">
+            <span id="provider-bar-text">No LLM providers connected</span>
+            <button id="provider-bar-settings" class="btn btn-small">Configure</button>
+        </div>
+
+        <!-- V2 Script-Aware Workbench -->
+        <section id="v2-panel" class="v2-panel hidden">
+            <div class="v2-panel-header">
+                <span>Script-Aware Draft</span>
+                <span id="v2-state-text">No draft</span>
+            </div>
+            <div class="v2-grid">
+                <label class="v2-field">
+                    <span>Raw root folder</span>
+                    <input id="v2-raw-root-path" type="text" placeholder="F:\Project\raw">
+                </label>
+                <label class="v2-field">
+                    <span>Raw video path</span>
+                    <input id="v2-raw-path" type="text" placeholder="F:\Raw\camera_take.mp4">
+                </label>
+                <label class="v2-field">
+                    <span>Script</span>
+                    <textarea id="v2-script-text" rows="3" placeholder="Paste script or outline"></textarea>
+                </label>
+                <label class="v2-field">
+                    <span>Visual map</span>
+                    <textarea id="v2-visual-map-text" rows="3" placeholder="line or keyword | folder | type | note | priority"></textarea>
+                </label>
+            </div>
+            <div class="v2-actions">
+                <button id="v2-set-raw-root-btn" class="btn btn-secondary">Set Raw Root</button>
+                <button id="v2-scan-project-btn" class="btn btn-secondary">Scan Project</button>
+                <button id="v2-register-btn" class="btn btn-secondary">Register</button>
+                <button id="v2-analyze-btn" class="btn btn-secondary">Analyze</button>
+                <button id="v2-ingest-script-btn" class="btn btn-secondary">Script</button>
+                <button id="v2-ingest-map-btn" class="btn btn-secondary">Visual Map</button>
+                <button id="v2-dry-run-btn" class="btn btn-primary">Dry Run</button>
+                <button id="v2-execute-btn" class="btn btn-primary">Execute</button>
+            </div>
+        </section>
+
+        <!-- Chat Messages -->
+        <main id="chat-messages" class="chat-messages">
+            <div class="welcome-message">
+                <div class="welcome-icon">EF</div>
+                <h2>Welcome to EditFlow AI</h2>
+                <p>I'm your AI video editing assistant. I can help you:</p>
+                <ul>
+                    <li>Analyze and transcribe your clips</li>
+                    <li>Organize B-roll footage</li>
+                    <li>Generate edit scripts</li>
+                    <li>Apply edits directly to your timeline</li>
+                </ul>
+                <p class="hint">Just tell me what you want to do in your own words!</p>
+            </div>
+        </main>
+
+        <!-- Script Preview Panel (hidden by default) -->
+        <div id="script-preview" class="script-preview hidden">
+            <div class="script-header">
+                <h3 id="script-title">Generated Script</h3>
+                <div class="script-actions">
+                    <button id="refine-btn" class="btn btn-secondary">Refine</button>
+                    <button id="execute-btn" class="btn btn-primary">Execute</button>
+                    <button id="close-script-btn" class="btn btn-ghost">X</button>
+                </div>
+            </div>
+            <div id="script-content" class="script-content"></div>
+        </div>
+
+        <!-- Input Area -->
+        <footer class="input-area">
+            <div class="input-wrapper">
+                <textarea
+                    id="message-input"
+                    class="message-input"
+                    placeholder="Tell me what you want to do..."
+                    rows="1"
+                ></textarea>
+                <button id="send-btn" class="send-btn" title="Send">&#10148;</button>
+            </div>
+        </footer>
+    </div>
+
+    <!-- Settings Panel (slide-in overlay) -->
+    <div id="settings-overlay" class="settings-overlay hidden">
+        <div class="settings-panel">
+            <div class="settings-header">
+                <h2>Settings</h2>
+                <button id="settings-close" class="icon-btn" title="Close">&times;</button>
+            </div>
+            <div class="settings-body">
+                <!-- Active Model Section -->
+                <div class="settings-section">
+                    <h3>Active Model</h3>
+                    <div class="settings-field">
+                        <label for="active-chat-select">Chat Model</label>
+                        <select id="active-chat-select" class="settings-input">
+                            <option value="">No model selected</option>
+                        </select>
+                    </div>
+                    <div class="settings-field">
+                        <label for="active-vision-select">Vision Model</label>
+                        <select id="active-vision-select" class="settings-input">
+                            <option value="">No model selected</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Providers Section -->
+                <div class="settings-section">
+                    <div class="settings-section-header">
+                        <h3>LLM Providers</h3>
+                        <button id="add-provider-btn" class="btn btn-primary btn-small">+ Add Provider</button>
+                    </div>
+                    <div id="providers-list" class="providers-list">
+                        <!-- Provider cards are rendered here -->
+                    </div>
+                </div>
+
+                <!-- Add/Edit Provider Form (hidden by default) -->
+                <div id="provider-form" class="provider-form hidden">
+                    <h3 id="provider-form-title">Add Provider</h3>
+                    <div class="settings-field">
+                        <label for="pf-name">Provider Name</label>
+                        <input id="pf-name" type="text" class="settings-input" placeholder="e.g. My OpenAI" />
+                    </div>
+                    <div class="settings-field">
+                        <label for="pf-type">Provider Type</label>
+                        <select id="pf-type" class="settings-input">
+                            <option value="ollama">Ollama (Local)</option>
+                            <option value="openai_compatible">OpenAI Compatible</option>
+                            <option value="custom">Custom</option>
+                        </select>
+                    </div>
+                    <div class="settings-field">
+                        <label for="pf-base-url">Base URL</label>
+                        <input id="pf-base-url" type="text" class="settings-input" placeholder="e.g. http://localhost:11434" />
+                    </div>
+                    <div class="settings-field">
+                        <label for="pf-api-key">API Key <span class="optional">(optional for Ollama)</span></label>
+                        <input id="pf-api-key" type="password" class="settings-input" placeholder="sk-..." />
+                    </div>
+                    <div class="settings-field">
+                        <label for="pf-timeout">Timeout (seconds)</label>
+                        <input id="pf-timeout" type="number" class="settings-input" value="10" min="3" max="120" />
+                    </div>
+                    <div class="settings-field">
+                        <label for="pf-chat-model">Default Chat Model <span class="optional">(optional)</span></label>
+                        <input id="pf-chat-model" type="text" class="settings-input" placeholder="e.g. gpt-4o, llama3" />
+                    </div>
+                    <div class="settings-field">
+                        <label for="pf-vision-model">Default Vision Model <span class="optional">(optional)</span></label>
+                        <input id="pf-vision-model" type="text" class="settings-input" placeholder="e.g. gpt-4o, llava" />
+                    </div>
+                    <div class="provider-form-actions">
+                        <button id="pf-test" class="btn btn-secondary">Test Connection</button>
+                        <button id="pf-save" class="btn btn-primary">Save Provider</button>
+                        <button id="pf-cancel" class="btn btn-ghost">Cancel</button>
+                    </div>
+                    <div id="pf-test-result" class="test-result hidden"></div>
+                </div>
+
+                <!-- Backend Connection -->
+                <div class="settings-section">
+                    <h3>Backend Connection</h3>
+                    <div class="settings-field">
+                        <label for="backend-url-input">Backend URL</label>
+                        <input id="backend-url-input" type="text" class="settings-input" value="http://localhost:8765" />
+                    </div>
+                    <div class="settings-field">
+                        <button id="test-backend-btn" class="btn btn-secondary">Test Connection</button>
+                        <span id="backend-status" class="backend-status"></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="lib/CSInterface.js"></script>
+    <script src="src/main.js"></script>
+</body>
+</html>

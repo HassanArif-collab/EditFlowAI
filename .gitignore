@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+.venv/
+env/
+venv/
+ENV/
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# CEP / Web
+node_modules/
+.DS_Store
+
+# Project specific
+data/media_cache/
+data/sequence_state.json
+data/sessions.json
+data/edl/
+data/catalogs/
+logs/
+*.log

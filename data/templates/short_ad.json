@@ -1,0 +1,36 @@
+{
+  "name": "Short Ad (15-30s)",
+  "description": "Fast-paced short advertisement",
+  "target_duration": 30,
+  "aspect_ratio": "9:16",
+  "resolution": {
+    "width": 1080,
+    "height": 1920
+  },
+  "fps": 30,
+  "acts": [
+    {
+      "name": "Hook",
+      "description": "Attention grabber",
+      "duration_pct": 0.15,
+      "micro_cuts": true,
+      "micro_cut_interval": 0.8,
+      "style": "punchy"
+    },
+    {
+      "name": "Message",
+      "description": "Core message",
+      "duration_pct": 0.5,
+      "micro_cuts": true,
+      "micro_cut_interval": 1.5,
+      "style": "clear"
+    },
+    {
+      "name": "CTA",
+      "description": "Call to action",
+      "duration_pct": 0.35,
+      "micro_cuts": false,
+      "style": "direct"
+    }
+  ]
+}
