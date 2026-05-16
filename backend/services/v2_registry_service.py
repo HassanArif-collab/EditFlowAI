@@ -27,6 +27,7 @@ from ..models.v2_schemas import (
 )
 from ..services.whisper_service import whisper_service
 from ..utils.ffmpeg_utils import get_media_info, scan_directory
+from ..utils.path_safety import assert_not_test_like_path
 
 
 MEDIA_EXTS = {
@@ -89,6 +90,7 @@ class V2RegistryService:
     def register_asset(self, request: AssetRegisterRequest) -> Dict[str, Any]:
         path = Path(request.path).expanduser()
         resolved = path.resolve() if path.exists() else path
+        assert_not_test_like_path(resolved, "asset path")
         suffix = resolved.suffix.lower()
         asset_type = request.asset_type or MEDIA_EXTS.get(suffix, "file")
         name = request.name or resolved.name
@@ -147,6 +149,7 @@ class V2RegistryService:
 
     def scan_folder(self, request: FolderScanRequest) -> Dict[str, Any]:
         root = Path(request.path).expanduser().resolve()
+        assert_not_test_like_path(root, "folder scan path")
         extensions = request.extensions or sorted(MEDIA_EXTS.keys())
         files = scan_directory(root, extensions) if request.recursive else [
             p for p in root.iterdir() if p.is_file() and p.suffix.lower() in extensions
@@ -271,6 +274,7 @@ class V2RegistryService:
         return db.fetch_all("SELECT * FROM script_lines WHERE script_id = ? ORDER BY line_index", (script_id,))
 
     def ingest_visual_map(self, request: VisualMapIngestRequest) -> Dict[str, Any]:
+        assert_not_test_like_path(request.content, "visual map content")
         visual_map_id = self._id("vmap")
         now = utc_now()
         db.execute(
@@ -936,6 +940,7 @@ class V2RegistryService:
         if not folder:
             return []
         path = Path(folder.strip().strip('"'))
+        assert_not_test_like_path(path, "visual folder path")
         if not path.exists() or not path.is_dir():
             return []
         assets = []

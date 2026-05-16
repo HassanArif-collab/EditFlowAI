@@ -8,6 +8,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from ..config import get_settings
 from ..models.sqlite_registry import sqlite_registry as db
 from ..models.v2_schemas import (
     AssetRegisterRequest,
@@ -18,6 +19,7 @@ from ..models.v2_schemas import (
 )
 from ..services.premiere_context_service import premiere_context_service
 from ..services.v2_registry_service import MEDIA_EXTS, v2_registry_service
+from ..utils.path_safety import assert_not_test_like_path
 
 
 class ReferenceResolverService:
@@ -30,6 +32,7 @@ class ReferenceResolverService:
         alias = self._normalize_alias(request.alias)
         path = Path(request.path).expanduser()
         resolved = path.resolve() if path.exists() else path
+        assert_not_test_like_path(resolved, "reference root path")
         now = utc_now()
         existing = db.fetch_one("SELECT * FROM reference_roots WHERE alias = ?", (alias,))
         db.execute(
@@ -74,6 +77,12 @@ class ReferenceResolverService:
         explicit_bin = self._extract_explicit_bin(text)
         if explicit_bin:
             return self._resolve_bin_path(explicit_bin, request)
+
+        if self._phase1_reference_only():
+            bin_result = self._resolve_bin_reference(request)
+            if bin_result.get("success"):
+                return bin_result
+            return bin_result
 
         explicit_path = self._extract_explicit_path(text)
         if explicit_path and request.kind not in {"bin", "premiere_bin"}:
@@ -195,7 +204,9 @@ class ReferenceResolverService:
             return self._unresolved(
                 text,
                 ["bin_reference"],
-                "I could not resolve the Premiere bin. Use @bin:Raw/6 or mention the parent bin and child folder.",
+                self._phase1_message(
+                    "I could not resolve the Premiere bin. Use @bin:Raw/6 or mention the parent bin and child folder."
+                ),
             )
 
         bin_row = premiere_context_service.find_bin_fuzzy(parent, folder_name)
@@ -203,7 +214,9 @@ class ReferenceResolverService:
             return self._unresolved(
                 text,
                 [f"bin:{parent}/{folder_name}"],
-                f"I could not find Premiere bin {parent}/{folder_name}. Click Scan Project first or check the bin name.",
+                self._phase1_message(
+                    f"I could not find Premiere bin {parent}/{folder_name}. Click Scan Project first or check the bin name."
+                ),
                 root_alias=parent,
             )
         return self._resolve_bin_path(bin_row["bin_path"], request)
@@ -214,7 +227,9 @@ class ReferenceResolverService:
             return self._unresolved(
                 request.text,
                 [f"bin:{bin_path}"],
-                f"I could not find Premiere bin {bin_path}. Click Scan Project first or check the bin path.",
+                self._phase1_message(
+                    f"I could not find Premiere bin {bin_path}. Click Scan Project first or check the bin path."
+                ),
             )
 
         items = premiere_context_service.items_in_bin(found["bin_path"], recursive=request.recursive)
@@ -251,6 +266,16 @@ class ReferenceResolverService:
         root_alias: str = "",
         root_path: str = "",
     ) -> Dict[str, Any]:
+        suggestions = [
+            "Click Scan Project in the V2 panel so Premiere bins are indexed.",
+            "Use an exact Premiere bin reference, for example @bin:Raw/6.",
+        ]
+        if not self._phase1_reference_only():
+            suggestions.extend([
+                "Set the raw root in the V2 panel.",
+                "Use an exact folder path, for example F:\\Project\\raw\\6.",
+                "Use @folder:path when chatting, for example @folder:F:\\Project\\raw\\6.",
+            ])
         return {
             "success": False,
             "kind": "unresolved",
@@ -259,13 +284,7 @@ class ReferenceResolverService:
             "root_path": root_path,
             "missing": missing,
             "message": message,
-            "suggestions": [
-                "Click Scan Project in the V2 panel so Premiere bins are indexed.",
-                "Use an exact Premiere bin reference, for example @bin:Raw/6.",
-                "Set the raw root in the V2 panel.",
-                "Use an exact folder path, for example F:\\Project\\raw\\6.",
-                "Use @folder:path when chatting, for example @folder:F:\\Project\\raw\\6.",
-            ],
+            "suggestions": suggestions,
         }
 
     def _extract_explicit_path(self, text: str) -> Optional[Path]:
@@ -306,6 +325,14 @@ class ReferenceResolverService:
         if match:
             return match.group(1)
         return ""
+
+    def _phase1_reference_only(self) -> bool:
+        return bool(get_settings().ENABLE_PHASE1_REFERENCE_ONLY)
+
+    def _phase1_message(self, message: str) -> str:
+        if not self._phase1_reference_only():
+            return message
+        return f"{message} Phase 1 is Premiere-bin reference verification only, so no local folder fallback was used."
 
     def _normalize_alias(self, alias: Optional[str]) -> str:
         value = (alias or "").strip().lower()

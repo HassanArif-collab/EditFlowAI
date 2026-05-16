@@ -103,6 +103,16 @@ async def root():
     }
 
 
+@app.get("/api/ping")
+async def ping():
+    """Cheap liveness check that never waits on model providers."""
+    return {
+        "server": "running",
+        "version": "0.2.0",
+        "feature_flags": feature_flags(),
+    }
+
+
 @app.get("/api/status")
 async def status():
     """Full system status check."""

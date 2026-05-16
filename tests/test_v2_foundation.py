@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from backend.models.v2_schemas import (
     AssetRegisterRequest,
     EditPlanCreateRequest,
@@ -37,6 +39,18 @@ def test_asset_register_and_search(tmp_path: Path):
     assert asset["id"].startswith("asset_")
     assert asset["name"] == "assetsearchtoken-demo.mp4"
     assert any(hit["entity_id"] == asset["id"] for hit in search["results"])
+
+
+def test_registry_rejects_test_paths_outside_test_mode(monkeypatch):
+    monkeypatch.delenv("EDITFLOW_TEST_MODE", raising=False)
+
+    service = V2RegistryService()
+    with pytest.raises(ValueError, match="Refusing to store test/temp"):
+        service.register_asset(
+            AssetRegisterRequest(
+                path=r"C:\Users\Hassan Arif\AppData\Local\Temp\pytest-of-Hassan Arif\bad.mp4"
+            )
+        )
 
 
 def test_visual_map_parses_structured_rows(tmp_path: Path):
@@ -138,7 +152,7 @@ def test_job_update_records_background_progress():
     assert updated["result"]["step"] == "transcribing"
 
 
-def test_reference_resolver_maps_raw_folder_number_to_assets(tmp_path: Path):
+def test_phase1_resolver_ignores_stale_local_raw_root_when_bin_not_scanned(tmp_path: Path):
     raw = tmp_path / "raw"
     folder = raw / "6"
     folder.mkdir(parents=True)
@@ -149,16 +163,18 @@ def test_reference_resolver_maps_raw_folder_number_to_assets(tmp_path: Path):
     resolver.set_root(ReferenceRootRequest(alias="raw", path=str(raw)))
     resolved = resolver.resolve(
         ReferenceResolveRequest(
-            text="use folder 6 in the raw folder",
-            kind="folder",
+            text="find videos in raw in folder 6",
+            kind="bin_or_folder",
             root_alias="raw",
             folder_name="6",
+            register_assets=False,
         )
     )
 
-    assert resolved["success"] is True
-    assert resolved["media_count"] == 2
-    assert len(resolved["asset_ids"]) == 2
+    assert resolved["success"] is False
+    assert "bin:raw/6" in [item.lower() for item in resolved["missing"]]
+    assert "Phase 1" in resolved["message"]
+    assert str(raw) not in resolved.get("root_path", "")
 
 
 def test_reference_resolver_prefers_premiere_bin_for_raw_folder_request(tmp_path: Path):
@@ -198,6 +214,54 @@ def test_reference_resolver_prefers_premiere_bin_for_raw_folder_request(tmp_path
     assert resolved["bin_path"] == "Raw/6"
     assert resolved["media_count"] == 1
     assert len(resolved["asset_ids"]) == 1
+
+
+def test_phase1_resolver_verifies_raw_bin_with_two_mp4_items(tmp_path: Path):
+    media_a = tmp_path / "one.mp4"
+    media_b = tmp_path / "two.mp4"
+    media_a.write_bytes(b"fake video")
+    media_b.write_bytes(b"fake video")
+
+    premiere = PremiereContextService()
+    premiere.save_project_context(
+        {
+            "bins": [{"name": "6", "binPath": "Raw/6", "itemId": "bin_raw_6"}],
+            "items": [
+                {
+                    "name": "one.mp4",
+                    "itemId": "item_one",
+                    "mediaPath": str(media_a),
+                    "mediaType": "VIDEO",
+                    "binPath": "Raw/6",
+                },
+                {
+                    "name": "two.mp4",
+                    "itemId": "item_two",
+                    "mediaPath": str(media_b),
+                    "mediaType": "VIDEO",
+                    "binPath": "Raw/6",
+                },
+            ],
+        }
+    )
+
+    resolver = ReferenceResolverService()
+    resolved = resolver.resolve(
+        ReferenceResolveRequest(
+            text="find videos in raw folder 6",
+            kind="bin",
+            root_alias="raw",
+            folder_name="6",
+            register_assets=False,
+        )
+    )
+
+    assert resolved["success"] is True
+    assert resolved["kind"] == "bin"
+    assert resolved["bin_path"] == "Raw/6"
+    assert resolved["media_count"] == 2
+    assert [item["name"] for item in resolved["items"]] == ["one.mp4", "two.mp4"]
+    assert resolved["asset_ids"] == []
 
 
 def test_reference_resolver_supports_explicit_premiere_bin_reference(tmp_path: Path):

@@ -408,20 +408,44 @@ class ChatEngine:
         folder_name = self._extract_folder_name(message)
         bin_path = self._extract_bin_path(message)
 
-        if (folder_name or bin_path) and ("raw" in msg or "@folder:" in msg or "@bin:" in msg or "bin" in msg) and re.search(r"\b(combine|polish|polished|make|create|sequence|edit)\b", msg):
+        phase1 = self.settings.ENABLE_PHASE1_REFERENCE_ONLY
+        reference_phrase = (folder_name or bin_path) and (
+            "raw" in msg
+            or "@folder:" in msg
+            or "@bin:" in msg
+            or "bin" in msg
+        )
+        wants_reference_check = re.search(
+            r"\b(find|show|list|check|verify|take|use|videos?|files?|mp4|both|folder|combine|polish|polished|make|create|sequence|edit)\b",
+            msg,
+        )
+        if reference_phrase and (phase1 or wants_reference_check):
+            response = (
+                "I'll verify the exact Premiere bin/media first. Phase 1 only checks references, so no dry run or edit will be created."
+                if phase1
+                else "I'll resolve that folder or Premiere bin first, create a v2 dry run, and only execute after the exact media is known."
+            )
             return {
                 "intent": "v2_folder_sequence",
                 "confidence": 0.98,
                 "parameters": {
                     "request": message,
-                    "kind": "bin" if bin_path else "bin_or_folder",
+                    "kind": "bin" if (phase1 or bin_path) else "bin_or_folder",
                     "rootAlias": "raw" if "raw" in msg else "",
                     "folderName": folder_name,
                     "binPath": bin_path,
                     "operation": "combine_folder_videos_new_sequence",
                     "target": "@new_sequence",
                 },
-                "response": "I'll resolve that folder or Premiere bin first, create a v2 dry run, and only execute after the exact media is known.",
+                "response": response,
+            }
+
+        if phase1 and re.search(r"\b(mp4|files?|both videos?|spoken|whatever is spoken|transcribe|rough cut|polished)\b", msg):
+            return {
+                "intent": "chat",
+                "confidence": 0.92,
+                "parameters": {},
+                "response": "Phase 1 is only verifying Premiere bin references right now. Scan Project, then use an exact reference like @bin:Raw/6 so I can show the real media files.",
             }
 
         if label_name and re.search(r"\b(remove|clear|reset)\b", msg) and ("label" in msg or "color" in msg):

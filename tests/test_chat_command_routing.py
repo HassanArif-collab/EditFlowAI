@@ -45,6 +45,35 @@ def test_folder_sequence_request_routes_to_v2_planning():
     assert action["type"] == "v2_folder_sequence"
 
 
+def test_phase1_find_raw_folder_routes_to_reference_check():
+    engine = ChatEngine()
+    parsed = engine._deterministic_command("find videos in raw in folder 6")
+    action = engine._build_action(parsed["intent"], parsed["parameters"])
+
+    assert parsed["intent"] == "v2_folder_sequence"
+    assert parsed["parameters"]["kind"] == "bin"
+    assert parsed["parameters"]["rootAlias"] == "raw"
+    assert parsed["parameters"]["folderName"] == "6"
+    assert "verify" in parsed["response"].lower()
+    assert action["type"] == "v2_folder_sequence"
+
+
+def test_phase1_mp4_followup_does_not_route_to_old_import():
+    engine = ChatEngine()
+    parsed = engine._deterministic_command("no this is not two.mp4 but two mp4 files")
+
+    assert parsed["intent"] == "chat"
+    assert "Phase 1" in parsed["response"]
+
+
+def test_phase1_spoken_followup_does_not_route_to_old_generate_script():
+    engine = ChatEngine()
+    parsed = engine._deterministic_command("no just take whatever is spoken")
+
+    assert parsed["intent"] == "chat"
+    assert "Phase 1" in parsed["response"]
+
+
 def test_explicit_bin_sequence_request_routes_to_v2_planning():
     engine = ChatEngine()
     parsed = engine._deterministic_command("take videos from @bin:Raw/6 and make a new sequence")

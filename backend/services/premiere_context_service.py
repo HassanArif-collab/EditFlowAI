@@ -10,6 +10,7 @@ from typing import Any, Dict, List
 from ..models.sqlite_registry import sqlite_registry as db
 from ..models.v2_schemas import AssetRegisterRequest, utc_now
 from ..services.v2_registry_service import v2_registry_service
+from ..utils.path_safety import assert_not_test_like_path
 
 
 class PremiereContextService:
@@ -62,6 +63,8 @@ class PremiereContextService:
         for item in items:
             name = str(item.get("name") or "")
             media_path = str(item.get("mediaPath") or item.get("media_path") or "")
+            if media_path:
+                assert_not_test_like_path(media_path, "Premiere media path")
             bin_path = self._normalize_bin_path(item.get("bin_path") or item.get("binPath") or "")
             item_id = str(item.get("itemId") or item.get("item_id") or "")
             stable = item_id or media_path or f"{bin_path}/{name}"

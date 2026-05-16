@@ -103,7 +103,7 @@ async def list_premiere_bins(limit: int = 200):
 @router.post("/references/verify-bin")
 async def verify_premiere_bin(request: ReferenceResolveRequest):
     request.register_assets = False
-    request.kind = request.kind or "bin"
+    request.kind = "bin"
     return reference_resolver_service.resolve(request)
 
 

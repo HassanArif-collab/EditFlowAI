@@ -373,16 +373,24 @@ async function apiPut(path, body, timeoutMs = 10000) {
 
 async function checkBackendHealth() {
     try {
-        const data = await apiGet('/api/status', 3000);
-        featureFlags = data.feature_flags || featureFlags;
+        const ping = await apiGet('/api/ping', 1500);
+        featureFlags = ping.feature_flags || featureFlags;
         applyFeatureFlags();
         isConnected = true;
         connectionStatus.className = 'status-dot connected';
         connectionStatus.title = 'Connected';
 
-        // Update provider bar
-        updateProviderBar(data);
-        return data;
+        try {
+            const data = await apiGet('/api/status', 6000);
+            featureFlags = data.feature_flags || featureFlags;
+            applyFeatureFlags();
+            updateProviderBar(data);
+            return data;
+        } catch(statusError) {
+            providerBar.classList.remove('hidden', 'connected', 'partial');
+            providerBarText.textContent = 'Backend running - provider status unavailable';
+            return ping;
+        }
     } catch(e) {
         isConnected = false;
         connectionStatus.className = 'status-dot disconnected';
@@ -837,15 +845,24 @@ async function handleV2FolderSequence(options) {
     try {
         await scanProjectContext(false);
         const referenceOnly = featureFlags.phase1_reference_only || !featureFlags.enable_v2_edit_planning;
+        let binSummaries = null;
+        if (referenceOnly) {
+            binSummaries = await apiGet('/api/references/premiere-bins?limit=200', 5000).catch(e => null);
+            if (!binSummaries || !Array.isArray(binSummaries.bins) || binSummaries.bins.length === 0) {
+                addMessage('system', 'Project scan did not reach backend. No Premiere bins are indexed, so I will not use old local folder data.');
+                return null;
+            }
+            addMessage('system', formatBinSummaries(binSummaries.bins));
+        }
         const explicitBinRef = options.binPath
             ? (/\s/.test(options.binPath) ? `@bin:"${options.binPath}"` : `@bin:${options.binPath}`)
             : '';
         const requestText = options.binPath
             ? `${options.request || ''} ${explicitBinRef}`
             : (options.request || '');
-        const resolved = await apiPost('/api/references/resolve', {
+        const resolved = await apiPost(referenceOnly ? '/api/references/verify-bin' : '/api/references/resolve', {
             text: requestText,
-            kind: options.kind || 'bin_or_folder',
+            kind: referenceOnly ? 'bin' : (options.kind || 'bin_or_folder'),
             root_alias: options.rootAlias || 'raw',
             folder_name: options.folderName || '',
             register_assets: !referenceOnly,
@@ -904,7 +921,7 @@ function formatResolvedReference(resolved) {
 }
 
 function formatBinSummaries(bins) {
-    if (!Array.isArray(bins) || bins.length === 0) return 'No bins were indexed.';
+    if (!Array.isArray(bins) || bins.length === 0) return 'Project scan did not reach backend. No bins were indexed.';
     const lines = bins.slice(0, 12).map(bin => {
         const mediaCount = bin.media_count || 0;
         const itemCount = bin.item_count || 0;
