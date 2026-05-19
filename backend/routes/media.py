@@ -1,16 +1,15 @@
 """
 EditFlow AI - Media Analysis API Routes
+Video scanning and transcription endpoints.
 """
-import asyncio
 import logging
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, HTTPException
 
-from ..models.schemas import APIResponse, MediaInfo, TranscriptResult
+from ..models.schemas import TranscriptResult
 from ..services.whisper_service import whisper_service
-from ..services.catalog_service import catalog_service
 from ..utils.ffmpeg_utils import get_media_info, scan_directory
 from ..utils.progress import ProgressReporter
 
@@ -52,7 +51,7 @@ async def scan_for_videos(directory: str, extensions: Optional[List[str]] = None
                 "size": f.stat().st_size,
                 "extension": f.suffix,
             }
-            for f in files[:100]  # Limit response size
+            for f in files[:100]
         ],
     }
 

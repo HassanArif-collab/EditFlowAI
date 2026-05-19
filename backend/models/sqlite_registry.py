@@ -1,6 +1,7 @@
 """
-SQLite registry for EditFlow AI v2.
-Stores assets, transcripts, speech candidates, scripts, visual maps, edit plans, and jobs.
+SQLite registry for EditFlow AI.
+Stores assets, transcripts, scripts, visual maps, cutting results, and jobs.
+Simplified from the original - no Premiere/CEP tables.
 """
 from __future__ import annotations
 
@@ -43,8 +44,8 @@ class SQLiteRegistry:
                 id TEXT PRIMARY KEY,
                 path TEXT NOT NULL UNIQUE,
                 name TEXT NOT NULL,
-                asset_type TEXT NOT NULL,
-                source_type TEXT NOT NULL,
+                asset_type TEXT NOT NULL DEFAULT 'video',
+                source_type TEXT NOT NULL DEFAULT 'local_file',
                 duration REAL DEFAULT 0,
                 width INTEGER DEFAULT 0,
                 height INTEGER DEFAULT 0,
@@ -53,6 +54,7 @@ class SQLiteRegistry:
                 file_size INTEGER DEFAULT 0,
                 fingerprint TEXT DEFAULT '',
                 status TEXT DEFAULT 'registered',
+                language TEXT DEFAULT '',
                 tags TEXT DEFAULT '[]',
                 metadata TEXT DEFAULT '{}',
                 created_at TEXT NOT NULL,
@@ -82,17 +84,6 @@ class SQLiteRegistry:
                 FOREIGN KEY(asset_id) REFERENCES assets(id) ON DELETE CASCADE
             );
 
-            CREATE TABLE IF NOT EXISTS scenes (
-                id TEXT PRIMARY KEY,
-                asset_id TEXT NOT NULL,
-                start REAL NOT NULL,
-                end REAL NOT NULL,
-                scene_type TEXT NOT NULL,
-                confidence REAL DEFAULT 1,
-                metadata TEXT DEFAULT '{}',
-                FOREIGN KEY(asset_id) REFERENCES assets(id) ON DELETE CASCADE
-            );
-
             CREATE TABLE IF NOT EXISTS speech_candidates (
                 id TEXT PRIMARY KEY,
                 asset_id TEXT NOT NULL,
@@ -101,6 +92,10 @@ class SQLiteRegistry:
                 transcript_excerpt TEXT NOT NULL,
                 cleaned_excerpt TEXT NOT NULL,
                 reason TEXT NOT NULL,
+                filler_words TEXT DEFAULT '[]',
+                has_pause INTEGER DEFAULT 0,
+                has_repetition INTEGER DEFAULT 0,
+                delivery_score REAL DEFAULT 0,
                 warnings TEXT DEFAULT '[]',
                 scores TEXT DEFAULT '{}',
                 metadata TEXT DEFAULT '{}',
@@ -111,7 +106,8 @@ class SQLiteRegistry:
                 id TEXT PRIMARY KEY,
                 title TEXT NOT NULL,
                 content TEXT NOT NULL,
-                source_type TEXT NOT NULL,
+                source_type TEXT NOT NULL DEFAULT 'pasted',
+                language TEXT DEFAULT 'en',
                 metadata TEXT DEFAULT '{}',
                 created_at TEXT NOT NULL
             );
@@ -132,7 +128,8 @@ class SQLiteRegistry:
                 id TEXT PRIMARY KEY,
                 title TEXT NOT NULL,
                 content TEXT NOT NULL,
-                source_type TEXT NOT NULL,
+                source_type TEXT NOT NULL DEFAULT 'pasted',
+                script_id TEXT DEFAULT '',
                 metadata TEXT DEFAULT '{}',
                 created_at TEXT NOT NULL
             );
@@ -140,29 +137,28 @@ class SQLiteRegistry:
             CREATE TABLE IF NOT EXISTS visual_map_entries (
                 id TEXT PRIMARY KEY,
                 visual_map_id TEXT NOT NULL,
-                row_index INTEGER NOT NULL,
-                script_line_or_keyword TEXT NOT NULL,
-                visual_folder TEXT NOT NULL,
-                visual_type TEXT DEFAULT '',
+                line_number INTEGER NOT NULL,
+                line_text TEXT DEFAULT '',
+                visual_file TEXT NOT NULL,
                 placement_note TEXT DEFAULT '',
-                priority TEXT DEFAULT 'normal',
-                matched_asset_ids TEXT DEFAULT '[]',
                 FOREIGN KEY(visual_map_id) REFERENCES visual_maps(id) ON DELETE CASCADE
             );
 
-            CREATE TABLE IF NOT EXISTS edit_plans (
+            CREATE TABLE IF NOT EXISTS cutting_results (
                 id TEXT PRIMARY KEY,
-                operation TEXT NOT NULL,
-                sources TEXT DEFAULT '[]',
-                script_id TEXT,
-                visual_map_id TEXT,
-                target TEXT DEFAULT '@new_sequence',
-                cleanup_style TEXT DEFAULT 'natural_clean',
-                matching TEXT DEFAULT 'best_meaning_match',
-                visual_density TEXT DEFAULT 'script_guided_balanced',
-                constraints TEXT DEFAULT '{}',
-                status TEXT DEFAULT 'planned',
-                created_at TEXT NOT NULL
+                script_id TEXT NOT NULL,
+                status TEXT DEFAULT 'pending',
+                total_segments INTEGER DEFAULT 0,
+                matched_segments INTEGER DEFAULT 0,
+                unmatched_lines TEXT DEFAULT '[]',
+                cuts TEXT DEFAULT '[]',
+                output_path TEXT DEFAULT '',
+                duration_before REAL DEFAULT 0,
+                duration_after REAL DEFAULT 0,
+                message TEXT DEFAULT '',
+                metadata TEXT DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS jobs (
@@ -175,60 +171,6 @@ class SQLiteRegistry:
                 result TEXT DEFAULT '{}',
                 error TEXT DEFAULT '',
                 created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS script_runs (
-                id TEXT PRIMARY KEY,
-                job_id TEXT NOT NULL,
-                plan_id TEXT,
-                run_type TEXT NOT NULL,
-                script_body TEXT DEFAULT '',
-                result TEXT DEFAULT '{}',
-                logs TEXT DEFAULT '[]',
-                error TEXT DEFAULT '',
-                created_at TEXT NOT NULL,
-                FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE
-            );
-
-            CREATE TABLE IF NOT EXISTS premiere_snapshots (
-                id TEXT PRIMARY KEY,
-                snapshot_type TEXT NOT NULL,
-                payload TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS reference_roots (
-                alias TEXT PRIMARY KEY,
-                path TEXT NOT NULL,
-                description TEXT DEFAULT '',
-                metadata TEXT DEFAULT '{}',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS premiere_bins (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                bin_path TEXT NOT NULL UNIQUE,
-                item_id TEXT DEFAULT '',
-                child_count INTEGER DEFAULT 0,
-                depth INTEGER DEFAULT 0,
-                metadata TEXT DEFAULT '{}',
-                updated_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS premiere_project_items (
-                id TEXT PRIMARY KEY,
-                item_id TEXT DEFAULT '',
-                name TEXT NOT NULL,
-                media_path TEXT DEFAULT '',
-                media_type TEXT DEFAULT '',
-                bin_path TEXT DEFAULT '',
-                duration REAL DEFAULT 0,
-                has_video INTEGER DEFAULT 0,
-                has_audio INTEGER DEFAULT 0,
-                metadata TEXT DEFAULT '{}',
                 updated_at TEXT NOT NULL
             );
 

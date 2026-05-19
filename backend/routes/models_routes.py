@@ -1,6 +1,6 @@
 """
 EditFlow AI - Model Management API Routes
-Updated to use the multi-provider service.
+Uses the multi-provider service for all model operations.
 """
 import asyncio
 import logging
@@ -8,11 +8,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException
 
-from ..models.schemas import (
-    APIResponse, ModelInfo, ModelListResponse, OllamaModel,
-    ProviderInfo, SetActiveModelRequest,
-)
-from ..services.ollama_service import ollama_service
+from ..models.schemas import SetActiveModelRequest
 from ..services.provider_service import provider_service
 
 logger = logging.getLogger(__name__)
@@ -27,19 +23,14 @@ async def check_health():
 
 @router.get("/list")
 async def list_models():
-    """List all available models from all providers.
-
-    Returns both the legacy format (local_models, cloud_models)
-    and the new multi-provider format (providers with their models).
-    """
+    """List all available models from all providers."""
     await provider_service.initialize()
 
     active_chat = provider_service.get_active_chat()
     active_vision = provider_service.get_active_vision()
     providers = await _get_providers_with_models()
 
-    # Legacy format for backward compatibility, derived from the provider list
-    # without triggering a second round of network discovery.
+    # Build flat model lists for backward compatibility
     local = []
     cloud = []
     for provider in providers:
@@ -56,12 +47,10 @@ async def list_models():
             })
 
     return {
-        # Legacy format
         "local_models": local,
         "cloud_models": cloud,
         "active_chat_model": active_chat.get("model", ""),
         "active_vision_model": active_vision.get("model", ""),
-        # New multi-provider format
         "active_chat_provider": active_chat.get("provider_id"),
         "active_vision_provider": active_vision.get("provider_id"),
         "providers": providers,
@@ -74,12 +63,7 @@ async def _get_providers_with_models() -> List[dict]:
     enabled_providers = [p for p in providers if p.get("enabled", True)]
 
     async def build_provider_info(p: dict) -> dict:
-        # Prefer cached/configured models so the selector stays responsive.
         models = provider_service.get_cached_or_configured_models(p["id"])
-
-        # If there is no cache or manual model yet, allow a short best-effort
-        # discovery. Full refresh remains available via /models/refresh or the
-        # provider Refresh button.
         if not models:
             try:
                 timeout = min(float(p.get("timeout", 10)), 3.0)
@@ -107,17 +91,11 @@ async def _get_providers_with_models() -> List[dict]:
 
 @router.post("/set-chat")
 async def set_chat_model(model_name: str, provider_id: Optional[str] = None):
-    """Set the active chat model.
-
-    Args:
-        model_name: Name of the model
-        provider_id: Provider ID (defaults to active chat provider)
-    """
+    """Set the active chat model."""
     pid = provider_id or provider_service.get_active_chat().get("provider_id")
     if pid:
         provider_service.set_active_chat(pid, model_name)
     else:
-        # Fallback to ollama-local for backward compat
         provider_service.set_active_chat("ollama-local", model_name)
     return {"success": True, "active_chat_model": model_name, "provider_id": pid}
 
@@ -199,19 +177,6 @@ async def test_model(
         if pid:
             result = await provider_service.test_provider(pid, prompt)
             return result
-        else:
-            # Use old fallback
-            result = await ollama_service.chat_with_fallback(
-                messages=[{"role": "user", "content": prompt}],
-                model=model_name,
-                temperature=0.3,
-                max_tokens=100,
-            )
-            return {
-                "success": bool(result["response"]),
-                "response": result["response"],
-                "source": result["source"],
-                "error": result.get("error"),
-            }
+        return {"success": False, "error": "No provider configured"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
