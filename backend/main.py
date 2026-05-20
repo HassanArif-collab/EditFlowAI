@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import init_dirs
-from .routes import chat, media, models_routes, pipeline, providers
+from .routes import chat, media, models_routes, pipeline, premiere, providers
 
 # Configure logging
 logging.basicConfig(
@@ -84,6 +84,7 @@ app.include_router(models_routes.router, prefix="/api")
 app.include_router(media.router, prefix="/api")
 app.include_router(providers.router, prefix="/api")
 app.include_router(pipeline.router, prefix="/api")
+app.include_router(premiere.router, prefix="/api")
 
 
 @app.get("/")
@@ -98,6 +99,7 @@ async def root():
             "Visual placement from mapping documents",
             "Multi-provider LLM management",
             "AI chat for editing decisions",
+            "Premiere Pro CEP panel integration",
         ],
         "docs": "/docs",
     }

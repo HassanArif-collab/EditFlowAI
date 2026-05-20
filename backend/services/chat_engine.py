@@ -18,36 +18,49 @@ logger = logging.getLogger(__name__)
 
 CUTTING_SYSTEM_PROMPT = """You are EditFlow AI, an intelligent video editing assistant.
 Your primary job is to help users cut and clean up their videos using AI.
+You are integrated with Adobe Premiere Pro via a CEP panel extension.
 
 CORE CAPABILITIES:
 1. **Analyze Videos**: Scan folders of video files, transcribe speech, detect fillers/pauses/repetitions.
 2. **Script-Based Cutting**: Given a script (English) and Urdu video recordings, find the best takes for each line and remove bad takes, fillers, pauses, and repetitions.
 3. **Visual Placement**: Place visuals (images/video clips) at specific points in the cut video based on a mapping document.
 4. **Provider Management**: Help users configure and manage LLM providers (Ollama, OpenAI-compatible APIs).
+5. **Premiere Pro Control**: Interact with the user's Premiere Pro timeline — read sequences, scan project bins, and apply cuts directly to the timeline.
 
 HOW TO RESPOND:
 - Be helpful, concise, and actionable.
-- When users ask to analyze videos, suggest using the /api/pipeline/analyze endpoint.
-- When users provide a script, suggest the /api/pipeline/cut endpoint.
-- When users want to place visuals, suggest the /api/pipeline/visuals endpoint.
+- When users ask to analyze videos, suggest using the Analyze tab or /api/pipeline/analyze endpoint.
+- When users provide a script, suggest the Cut tab or /api/pipeline/cut endpoint.
+- When users want to place visuals, suggest the Visuals tab or /api/pipeline/visuals endpoint.
+- When users want to apply cuts to Premiere Pro, mention the "Send to Premiere" button or /api/premiere/edl endpoints.
 - For technical questions about the pipeline, explain clearly.
 - If unsure, ask for clarification.
 
 CUTTING PIPELINE WORKFLOW:
-1. First, analyze the video folder: POST /api/pipeline/analyze with {"folder_path": "/path/to/videos", "language": "ur"}
-2. Then, provide the English script to match: POST /api/pipeline/cut with {"script_content": "...", "script_language": "en", "video_language": "ur"}
-3. Optionally, place visuals: POST /api/pipeline/visuals with the mapping document and visual folder.
+1. First, analyze the video folder: POST /api/pipeline/analyze with {{"folder_path": "/path/to/videos", "language": "ur"}}
+2. Then, provide the English script to match: POST /api/pipeline/cut with {{"script_content": "...", "script_language": "en", "video_language": "ur"}}
+3. Apply cuts to Premiere Pro timeline: POST /api/premiere/edl/from-cuts generates an EDL file that the CEP panel executes.
+4. Optionally, place visuals: POST /api/pipeline/visuals with the mapping document and visual folder.
 
 CROSS-LINGUAL MATCHING:
 - Videos are in Urdu, scripts are in English
 - The AI understands both languages and matches by semantic meaning
 - Best takes are selected based on delivery quality (fewer fillers, no pauses, no repetitions)
 
+PREMIERE PRO INTEGRATION:
+- The CEP panel can scan the project, read sequence state, and apply EDL operations
+- Use "Sync Sequence" in settings to update the AI's context about the current timeline
+- Use "Scan Project" to load all project bins and media into the AI's context
+- Cuts from the pipeline can be sent directly to the Premiere timeline via EDL
+
 CONVERSATION CONTEXT:
 {history}
 
 ANALYZED VIDEOS CONTEXT:
 {video_context}
+
+PREMIERE PRO CONTEXT:
+{premiere_context}
 """
 
 
@@ -113,6 +126,29 @@ class ChatEngine:
         except Exception:
             return "Video analysis data not available."
 
+    def _get_premiere_context(self) -> str:
+        """Get context about the current Premiere Pro state."""
+        try:
+            from ..routes.premiere import _project_context
+            if not _project_context.get("last_updated"):
+                return "Premiere Pro panel not connected or no context synced yet."
+            items_count = len(_project_context.get("items", []))
+            bins_count = len(_project_context.get("bins", []))
+            sequences = _project_context.get("sequences", [])
+
+            lines = [f"Project: {items_count} items, {bins_count} bins"]
+            if sequences:
+                for seq in sequences:
+                    name = seq.get("name", "Unknown")
+                    vt = len(seq.get("videoTracks", []))
+                    at = len(seq.get("audioTracks", []))
+                    total_clips = sum(len(t.get("clips", [])) for t in seq.get("videoTracks", []))
+                    total_clips += sum(len(t.get("clips", [])) for t in seq.get("audioTracks", []))
+                    lines.append(f"Sequence '{name}': {vt} video tracks, {at} audio tracks, {total_clips} clips")
+            return "Premiere Pro context:\n" + "\n".join(lines)
+        except Exception:
+            return "Premiere Pro context not available."
+
     async def process_message(
         self,
         message: str,
@@ -134,9 +170,11 @@ class ChatEngine:
             try:
                 history = self._format_history(session.messages)
                 video_context = self._get_video_context()
+                premiere_context = self._get_premiere_context()
                 system = CUTTING_SYSTEM_PROMPT.format(
                     history=history,
                     video_context=video_context,
+                    premiere_context=premiere_context,
                 )
 
                 result = await provider_service.chat(
@@ -168,7 +206,8 @@ class ChatEngine:
                 "1. Analyze video folders (transcribe, detect fillers/pauses)\n"
                 "2. Cut videos based on a script (match Urdu video to English script)\n"
                 "3. Place visuals at specific script lines\n"
-                "4. Manage your AI providers\n\n"
+                "4. Manage your AI providers\n"
+                "5. Control Premiere Pro (scan project, apply cuts to timeline)\n\n"
                 "What would you like to do?"
             )
 
@@ -179,7 +218,8 @@ class ChatEngine:
                 "**Video Analysis**: Send a folder path to analyze videos\n"
                 "**Script Cutting**: Provide an English script to match against Urdu video\n"
                 "**Visual Placement**: Upload a mapping document (docx/txt) with visual folder\n"
-                "**Provider Settings**: Configure LLM providers (Ollama, OpenAI, etc.)\n\n"
+                "**Provider Settings**: Configure LLM providers (Ollama, OpenAI, etc.)\n"
+                "**Premiere Pro**: Scan project, sync sequence, apply cuts to timeline\n\n"
                 "You can also just describe what you want in natural language!"
             )
 
@@ -200,6 +240,9 @@ class ChatEngine:
 
         if any(w in msg for w in ["provider", "model", "ollama", "openai"]):
             return "To manage providers, use the /api/providers endpoints. Check /api/models/list for available models."
+
+        if any(w in msg for w in ["premiere", "timeline", "sequence", "project", "edl"]):
+            return "To control Premiere Pro, use the CEP panel's Sync Sequence / Scan Project buttons, or the /api/premiere endpoints."
 
         return (
             "I'm currently in offline mode. For full AI capabilities, please configure an LLM provider. "
