@@ -2,22 +2,35 @@
 EditFlow AI - Progress Reporter
 WebSocket-based real-time progress reporting.
 """
-import asyncio
-import json
 import time
 import uuid
-from typing import Any, Callable, Dict, List, Optional
+from typing import Dict, Optional
 
 from fastapi import WebSocket
 
 
+_MAX_CONNECTIONS = 64
+
+
 class ConnectionManager:
-    """Manages active WebSocket connections."""
+    """Manages active WebSocket connections with a hard cap."""
 
     def __init__(self):
         self.active_connections: Dict[str, WebSocket] = {}
 
-    async def connect(self, websocket: WebSocket, client_id: Optional[str] = None):
+    async def connect(
+        self,
+        websocket: WebSocket,
+        client_id: Optional[str] = None,
+    ) -> Optional[str]:
+        """Accept a new WebSocket. Returns the client_id, or None if refused."""
+        if len(self.active_connections) >= _MAX_CONNECTIONS:
+            try:
+                # Code 1013 = "Try Again Later"
+                await websocket.close(code=1013, reason="Server connection limit reached")
+            except Exception:
+                pass
+            return None
         await websocket.accept()
         client_id = client_id or str(uuid.uuid4())
         self.active_connections[client_id] = websocket
@@ -35,8 +48,9 @@ class ConnectionManager:
                 self.disconnect(client_id)
 
     async def broadcast(self, message: Dict):
+        # Snapshot first — sending may yield to the loop, which can mutate the dict
         disconnected = []
-        for cid, ws in self.active_connections.items():
+        for cid, ws in list(self.active_connections.items()):
             try:
                 await ws.send_json(message)
             except Exception:
@@ -82,7 +96,7 @@ class ProgressReporter:
                 "message": message,
                 "elapsed": round(time.time() - self.start_time, 1),
                 "data": data,
-            }
+            },
         }
         if self.client_id:
             await manager.send_to(self.client_id, event)

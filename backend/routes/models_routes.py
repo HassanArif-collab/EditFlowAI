@@ -30,20 +30,27 @@ async def list_models():
     active_vision = provider_service.get_active_vision()
     providers = await _get_providers_with_models()
 
-    # Build flat model lists for backward compatibility
+    # Build flat model lists for backward compatibility.
+    # A provider is "local" if it's Ollama OR any of its models reports
+    # is_local=True (covers custom local servers that aren't Ollama).
     local = []
     cloud = []
     for provider in providers:
-        target = local if provider.get("type") == "ollama" else cloud
+        is_local_provider = (
+            provider.get("type") == "ollama"
+            or any(m.get("is_local") for m in provider.get("models", []))
+        )
+        target = local if is_local_provider else cloud
         for model in provider.get("models", []):
+            model_is_local = bool(model.get("is_local")) or is_local_provider
             target.append({
                 "name": model.get("id") or model.get("name", ""),
                 "size": model.get("size", ""),
                 "modified_at": model.get("modified_at", ""),
-                "is_local": provider.get("type") == "ollama",
+                "is_local": model_is_local,
                 "is_vision": model.get("is_vision", False),
-                "is_downloaded": provider.get("type") == "ollama",
-                "status": "ready" if provider.get("type") == "ollama" else "available",
+                "is_downloaded": model_is_local,
+                "status": "ready" if model_is_local else "available",
             })
 
     return {

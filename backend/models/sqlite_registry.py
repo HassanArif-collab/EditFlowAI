@@ -11,12 +11,12 @@ import threading
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
-from ..config import Settings
+from ..config import Settings, get_settings
 
 
 class SQLiteRegistry:
     def __init__(self, settings: Optional[Settings] = None):
-        self.settings = settings or Settings()
+        self.settings = settings or get_settings()
         self.db_path = Path(self.settings.DB_PATH)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
@@ -231,12 +231,22 @@ class SQLiteRegistry:
                     (query, limit),
                 ).fetchall()
             except sqlite3.OperationalError:
-                like_query = f"%{query}%"
+                # FTS5 isn't available — fall back to LIKE. Escape the LIKE
+                # metacharacters (%, _) so a user query like "100%" doesn't
+                # turn into an unbounded wildcard scan.
+                escaped = (
+                    query.replace("\\", "\\\\")
+                    .replace("%", "\\%")
+                    .replace("_", "\\_")
+                )
+                like_query = f"%{escaped}%"
                 rows = conn.execute(
                     """
                     SELECT entity_type, entity_id, title, body, tags, 0 AS rank
                     FROM editflow_fts
-                    WHERE title LIKE ? OR body LIKE ? OR tags LIKE ?
+                    WHERE title LIKE ? ESCAPE '\\'
+                       OR body LIKE ? ESCAPE '\\'
+                       OR tags LIKE ? ESCAPE '\\'
                     LIMIT ?
                     """,
                     (like_query, like_query, like_query, limit),

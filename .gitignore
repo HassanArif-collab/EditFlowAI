@@ -23,7 +23,11 @@ data/sequence_state.json
 data/sessions.json
 data/edl/
 data/catalogs/
+data/provider_config.json
+data/provider_config.tmp
+data/output/
 logs/
 *.log
 *.sqlite3-shm
 *.sqlite3-wal
+*.sqlite3

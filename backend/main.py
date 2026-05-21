@@ -40,11 +40,25 @@ async def lifespan(app: FastAPI):
         status = "connected" if info.get("connected") else f"unavailable ({info.get('error', 'unknown')})"
         logger.info(f"Provider '{pid}': {status}")
 
-    # Background model discovery
+    # Background model discovery — keep a strong reference so the task
+    # isn't garbage-collected and so we can cancel it on shutdown.
     import asyncio
-    asyncio.create_task(_background_discover())
+    discovery_task = asyncio.create_task(_background_discover())
+    app.state.discovery_task = discovery_task
 
     yield
+
+    if not discovery_task.done():
+        discovery_task.cancel()
+        try:
+            await discovery_task
+        except (asyncio.CancelledError, Exception):
+            pass
+
+    try:
+        await provider_service.shutdown()
+    except Exception as e:
+        logger.warning(f"Provider service shutdown error: {e}")
 
     logger.info("EditFlow AI shutting down...")
 
@@ -68,14 +82,18 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS - allow local connections
+# CORS — only allow local browser tooling.
+# "null" origin (sandboxed iframes / file://) and a broad file:// regex were
+# removed because they let any local HTML page hit the API. If the CEP panel
+# can't reach the backend after this change, serve its index.html from the same
+# host (app.mount("/panel", StaticFiles(...))) rather than weakening CORS.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8765", "http://127.0.0.1:8765", "null"],
-    allow_origin_regex=r"^(https?://(localhost|127\.0\.0\.1)(:\d+)?|file://.*)$",
+    allow_origins=["http://localhost:8765", "http://127.0.0.1:8765"],
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-Client-Id"],
 )
 
 # Register routes
@@ -152,8 +170,8 @@ async def status():
 def run_server():
     """Run the development server."""
     import uvicorn
-    from .config import Settings
-    settings = Settings()
+    from .config import get_settings
+    settings = get_settings()
     uvicorn.run(
         "backend.main:app",
         host=settings.HOST,

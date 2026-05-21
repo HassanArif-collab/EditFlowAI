@@ -7,10 +7,11 @@ import asyncio
 import json
 import logging
 import re
+import shutil
+import subprocess
 import uuid
-from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from ..config import get_settings
 from ..models.sqlite_registry import sqlite_registry
@@ -21,7 +22,7 @@ from ..models.schemas import (
 )
 from ..services.provider_service import provider_service
 from ..services.whisper_service import whisper_service
-from ..utils.ffmpeg_utils import extract_audio, get_duration, get_media_info
+from ..utils.ffmpeg_utils import get_duration, get_media_info, run_ffmpeg_async
 from ..utils.progress import ProgressReporter
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,30 @@ logger = logging.getLogger(__name__)
 # Common filler words across languages
 URDU_FILLERS = {"umm", "uh", "ah", "aray", "yaani", "toh", "woh", "bas", "jo", "kay"}
 ENGLISH_FILLERS = {"um", "uh", "ah", "like", "you know", "i mean", "so", "basically", "actually", "right"}
+
+# Common prompt-injection phrases neutralised before LLM interpolation.
+_INJECTION_PATTERNS = re.compile(
+    r"(?i)(ignore previous|disregard|system:|assistant:|new instructions|respond with only)"
+)
+
+
+def _sanitize_for_prompt(text: str, max_len: int = 200) -> str:
+    """Strip control chars and neutralise common injection phrases.
+
+    Transcript text and user-supplied script lines are interpolated into LLM
+    prompts. A transcript that contains text like "Ignore previous instructions"
+    could otherwise override the editor's intent.
+    """
+    if not text:
+        return ""
+    cleaned = (
+        text.replace("\x00", "")
+        .replace("`", "'")
+        .replace("\r", " ")
+        .replace("\n", " ")
+    )
+    cleaned = _INJECTION_PATTERNS.sub(lambda m: f"[{m.group(0)}]", cleaned)
+    return cleaned[:max_len]
 
 
 class CuttingPipelineService:
@@ -99,8 +124,8 @@ class CuttingPipelineService:
         path = Path(video_path)
         asset_id = str(uuid.uuid4())[:12]
 
-        # Get media info
-        media_info = get_media_info(video_path)
+        # Get media info (ffprobe blocks, run off the event loop)
+        media_info = await asyncio.to_thread(get_media_info, video_path)
 
         # Register asset in SQLite
         now = utc_now()
@@ -141,7 +166,7 @@ class CuttingPipelineService:
                 (id, transcript_id, asset_id, start, end, text, words)
                 VALUES (?, ?, ?, ?, ?, ?, ?)""",
                 (seg_id, transcript_id, asset_id, seg.start, seg.end, seg.text,
-                 sqlite_registry.dumps([w.dict() for w in seg.words])),
+                 sqlite_registry.dumps([w.model_dump() for w in seg.words])),
             )
 
             # Create speech candidate (detect fillers, pauses, repetitions)
@@ -297,8 +322,8 @@ class CuttingPipelineService:
             else:
                 unmatched.append(line)
 
-        # Sort cuts by time (from source videos)
-        cuts.sort(key=lambda c: (c.source_file, c.start))
+        # Cuts are intentionally kept in script-line order — the script
+        # IS the narrative order, so do not sort by source_file/time here.
 
         # Calculate durations
         total_before = sum(c.end - c.start for c in cuts)
@@ -326,7 +351,7 @@ class CuttingPipelineService:
             VALUES (?, '', ?, ?, ?, ?, ?, '', ?, ?, ?, '{}', ?, ?)""",
             (result_id, result.status.value, result.total_segments, result.matched_segments,
              sqlite_registry.dumps(result.unmatched_lines),
-             sqlite_registry.dumps([c.dict() for c in result.cuts]),
+             sqlite_registry.dumps([c.model_dump() for c in result.cuts]),
              result.duration_before, result.duration_after, result.message, now, now),
         )
 
@@ -367,15 +392,15 @@ class CuttingPipelineService:
         """
         matches = {}
 
-        # Build candidate summaries for LLM context
+        # Build candidate summaries for LLM context (sanitised — see _sanitize_for_prompt)
         candidate_summaries = []
         for i, c in enumerate(candidates[:200]):  # Limit to prevent token overflow
             candidate_summaries.append(
-                f"  [{i}] File: {c.get('asset_name', 'unknown')} | "
+                f"  [{i}] File: {_sanitize_for_prompt(c.get('asset_name', 'unknown'), 80)} | "
                 f"Time: {c.get('start', 0):.1f}-{c.get('end', 0):.1f}s | "
                 f"Score: {c.get('delivery_score', 0):.2f} | "
-                f"Text: {c.get('transcript_excerpt', '')[:100]} | "
-                f"Reason: {c.get('reason', '')}"
+                f"Text: {_sanitize_for_prompt(c.get('transcript_excerpt', ''), 100)} | "
+                f"Reason: {_sanitize_for_prompt(c.get('reason', ''), 80)}"
             )
 
         # Process in batches of script lines to avoid token limits
@@ -426,7 +451,10 @@ class CuttingPipelineService:
         request: ScriptMatchRequest,
     ) -> str:
         """Build the cross-lingual matching prompt for the LLM."""
-        lines_text = "\n".join(f"  Line {batch_start + i + 1}: {line}" for i, line in enumerate(batch_lines))
+        lines_text = "\n".join(
+            f"  Line {batch_start + i + 1}: {_sanitize_for_prompt(line, 300)}"
+            for i, line in enumerate(batch_lines)
+        )
         candidates_text = "\n".join(candidate_summaries)
 
         return f"""You are an expert video editor who understands both English and Urdu.
@@ -537,9 +565,6 @@ Respond with valid JSON only, no other text."""
         Returns:
             Path to the output video
         """
-        import subprocess
-        import tempfile
-
         if not cuts:
             raise ValueError("No cut segments to process")
 
@@ -571,9 +596,13 @@ Respond with valid JSON only, no other text."""
                     str(seg_path),
                 ]
 
-                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                try:
+                    proc = await run_ffmpeg_async(cmd, timeout=300)
+                except subprocess.TimeoutExpired:
+                    logger.warning(f"FFmpeg segment extraction timed out for cut {i}")
+                    continue
                 if proc.returncode != 0:
-                    logger.warning(f"FFmpeg segment extraction failed: {proc.stderr[:200]}")
+                    logger.warning(f"FFmpeg segment extraction failed: {(proc.stderr or '')[:200]}")
                     continue
                 segment_files.append(str(seg_path))
 
@@ -582,9 +611,11 @@ Respond with valid JSON only, no other text."""
 
             # Create concat list file
             concat_file = temp_dir / "concat.txt"
-            with open(concat_file, "w") as f:
+            with open(concat_file, "w", encoding="utf-8") as f:
                 for seg_path in segment_files:
-                    f.write(f"file '{seg_path}'\n")
+                    # Escape single quotes for ffmpeg concat demuxer
+                    safe = seg_path.replace("'", "'\\''")
+                    f.write(f"file '{safe}'\n")
 
             # Concatenate all segments
             if progress:
@@ -602,9 +633,9 @@ Respond with valid JSON only, no other text."""
                 str(output),
             ]
 
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            proc = await run_ffmpeg_async(cmd, timeout=600)
             if proc.returncode != 0:
-                raise RuntimeError(f"FFmpeg concatenation failed: {proc.stderr[:500]}")
+                raise RuntimeError(f"FFmpeg concatenation failed: {(proc.stderr or '')[:500]}")
 
             if progress:
                 await progress.complete(f"Clean cut video saved to {output_path}")
@@ -613,7 +644,6 @@ Respond with valid JSON only, no other text."""
 
         finally:
             # Clean up temp files
-            import shutil
             try:
                 shutil.rmtree(temp_dir, ignore_errors=True)
             except Exception:
@@ -639,9 +669,6 @@ Respond with valid JSON only, no other text."""
         Returns:
             VisualPlacementResult with placement details
         """
-        import subprocess
-        import tempfile
-
         if progress:
             await progress.start("Processing visual map...")
 
@@ -892,55 +919,16 @@ Respond with valid JSON only, no other text."""
         output_path: str,
         progress: Optional[ProgressReporter] = None,
     ) -> str:
-        """Apply visual overlays to a video using FFmpeg.
+        """Apply visual overlays to a video using FFmpeg via sequential passes.
 
-        For image overlays: displays the image over the video during the specified time range.
-        For video overlays: plays the video as a cutaway or overlay.
+        For image overlays: displays the image over the video during the time range.
+        For video overlays: cuts away to the overlay video for the time range.
         """
-        import subprocess
-
-        # Build complex FFmpeg filter for overlays
-        video_duration = get_duration(video_path)
-        if video_duration <= 0:
+        # Probe duration once off the event loop; it only changes after a successful pass.
+        current_duration = await asyncio.to_thread(get_duration, video_path)
+        if current_duration <= 0:
             raise ValueError("Cannot determine video duration")
 
-        # Start with base video input
-        inputs = ["-i", video_path]
-        filter_parts = ["[0:v]"]
-        input_idx = 1
-
-        for overlay in overlays:
-            visual_path = overlay["visual_path"]
-            start = overlay["start"]
-            end = min(overlay["end"], video_duration)
-            duration = end - start
-
-            if duration <= 0:
-                continue
-
-            is_video = Path(visual_path).suffix.lower() in [".mp4", ".mov", ".mkv", ".avi", ".webm"]
-
-            if is_video:
-                # Video overlay: use as cutaway (replace the section)
-                inputs.extend(["-i", visual_path])
-                # Trim overlay video to fit
-                filter_parts.append(
-                    f"; [{input_idx}:v]trim=0:{duration},setpts=PTS-STARTPTS[v{input_idx}];"
-                    f"[0:v]trim=start={start}:end={end},setpts=PTS-STARTPTS[base{input_idx}]"
-                )
-            else:
-                # Image overlay: display over the video section
-                inputs.extend(["-i", visual_path])
-                # Scale image to video size, loop for duration, overlay at timestamp
-                filter_parts.append(
-                    f"; [{input_idx}:v]scale=main_w:main_h,format=yuva420p,"
-                    f"trim=duration={duration},setpts=PTS-STARTPTS[img{input_idx}]"
-                )
-
-            input_idx += 1
-
-        # For simplicity with multiple overlays, use a sequential approach
-        # Apply one overlay at a time in separate FFmpeg passes
         current_video = video_path
         temp_dir = Path(self.settings.MEDIA_CACHE_DIR) / f"visuals_{uuid.uuid4().hex[:8]}"
         temp_dir.mkdir(parents=True, exist_ok=True)
@@ -949,13 +937,13 @@ Respond with valid JSON only, no other text."""
             for i, overlay in enumerate(overlays):
                 if progress:
                     await progress.update(
-                        0.6 + 0.3 * (i / len(overlays)),
+                        0.6 + 0.3 * (i / max(len(overlays), 1)),
                         f"Applying visual {i+1}/{len(overlays)}...",
                     )
 
                 visual_path = overlay["visual_path"]
-                start = overlay["start"]
-                end = min(overlay["end"], get_duration(current_video))
+                start = float(overlay.get("start", 0) or 0)
+                end = min(float(overlay.get("end", 0) or 0), current_duration)
                 duration = end - start
 
                 if duration <= 0:
@@ -1000,22 +988,27 @@ Respond with valid JSON only, no other text."""
                         str(temp_output),
                     ]
 
-                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+                try:
+                    proc = await run_ffmpeg_async(cmd, timeout=600)
+                except subprocess.TimeoutExpired:
+                    logger.warning(f"Visual overlay step {i} timed out")
+                    continue
+
                 if proc.returncode == 0 and temp_output.exists():
                     current_video = str(temp_output)
+                    # Duration may have changed after a cutaway pass; refresh once.
+                    if is_video_file:
+                        current_duration = await asyncio.to_thread(get_duration, current_video)
                 else:
-                    logger.warning(f"Visual overlay step {i} failed: {proc.stderr[:200]}")
+                    logger.warning(f"Visual overlay step {i} failed: {(proc.stderr or '')[:200]}")
 
             # Final copy to output path
-            import shutil
             Path(output_path).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(current_video, output_path)
 
             return output_path
 
         finally:
-            # Clean up temp files
-            import shutil
             try:
                 shutil.rmtree(temp_dir, ignore_errors=True)
             except Exception:

@@ -2,11 +2,12 @@
 EditFlow AI - Chat Engine (Simplified)
 AI chat focused on video cutting decisions and pipeline control.
 """
-import json
 import logging
-import re
+import time
 import uuid
-from datetime import datetime
+from collections import OrderedDict
+from datetime import datetime, timezone
+from string import Template
 from typing import Any, Dict, List, Optional
 
 from ..config import get_settings
@@ -16,7 +17,17 @@ from ..services.provider_service import provider_service
 logger = logging.getLogger(__name__)
 
 
-CUTTING_SYSTEM_PROMPT = """You are EditFlow AI, an intelligent video editing assistant.
+# ── Bounds (constants, tuned for a single-user dev tool) ──
+_MAX_SESSIONS = 500
+_SESSION_TTL_SECONDS = 60 * 60  # 1 hour
+_MAX_MESSAGES_PER_SESSION = 100
+_MAX_USER_MESSAGE_LEN = 8000
+
+
+# Using string.Template + safe_substitute so user content with literal '{' or '}'
+# characters does not raise KeyError out of str.format(). The body keeps the JSON
+# examples readable because $-placeholders are unambiguous.
+CUTTING_SYSTEM_PROMPT = Template("""You are EditFlow AI, an intelligent video editing assistant.
 Your primary job is to help users cut and clean up their videos using AI.
 You are integrated with Adobe Premiere Pro via a CEP panel extension.
 
@@ -25,7 +36,7 @@ CORE CAPABILITIES:
 2. **Script-Based Cutting**: Given a script (English) and Urdu video recordings, find the best takes for each line and remove bad takes, fillers, pauses, and repetitions.
 3. **Visual Placement**: Place visuals (images/video clips) at specific points in the cut video based on a mapping document.
 4. **Provider Management**: Help users configure and manage LLM providers (Ollama, OpenAI-compatible APIs).
-5. **Premiere Pro Control**: Interact with the user's Premiere Pro timeline — read sequences, scan project bins, and apply cuts directly to the timeline.
+5. **Premiere Pro Control**: Interact with the user's Premiere Pro timeline - read sequences, scan project bins, and apply cuts directly to the timeline.
 
 HOW TO RESPOND:
 - Be helpful, concise, and actionable.
@@ -37,8 +48,8 @@ HOW TO RESPOND:
 - If unsure, ask for clarification.
 
 CUTTING PIPELINE WORKFLOW:
-1. First, analyze the video folder: POST /api/pipeline/analyze with {{"folder_path": "/path/to/videos", "language": "ur"}}
-2. Then, provide the English script to match: POST /api/pipeline/cut with {{"script_content": "...", "script_language": "en", "video_language": "ur"}}
+1. First, analyze the video folder: POST /api/pipeline/analyze with a folder_path and language hint.
+2. Then, provide the English script to match: POST /api/pipeline/cut with script_content, script_language and video_language.
 3. Apply cuts to Premiere Pro timeline: POST /api/premiere/edl/from-cuts generates an EDL file that the CEP panel executes.
 4. Optionally, place visuals: POST /api/pipeline/visuals with the mapping document and visual folder.
 
@@ -54,14 +65,14 @@ PREMIERE PRO INTEGRATION:
 - Cuts from the pipeline can be sent directly to the Premiere timeline via EDL
 
 CONVERSATION CONTEXT:
-{history}
+$history
 
 ANALYZED VIDEOS CONTEXT:
-{video_context}
+$video_context
 
 PREMIERE PRO CONTEXT:
-{premiere_context}
-"""
+$premiere_context
+""")
 
 
 class ChatSession:
@@ -71,7 +82,7 @@ class ChatSession:
         self.session_id = session_id or str(uuid.uuid4())[:8]
         self.messages: List[Dict[str, str]] = []
         self.context: Dict[str, Any] = {}
-        self.created_at = datetime.utcnow()
+        self.created_at = datetime.now(timezone.utc)
 
     def to_dict(self) -> Dict:
         return {
@@ -86,30 +97,74 @@ class ChatSession:
         session = cls(session_id=data.get("session_id"))
         session.messages = data.get("messages", [])
         session.context = data.get("context", {})
-        session.created_at = datetime.fromisoformat(
-            data.get("created_at", datetime.utcnow().isoformat())
-        )
+        created_str = data.get("created_at") or datetime.now(timezone.utc).isoformat()
+        try:
+            session.created_at = datetime.fromisoformat(created_str)
+        except ValueError:
+            session.created_at = datetime.now(timezone.utc)
         return session
+
+    def append_message(self, role: str, content: str) -> None:
+        """Append a message and enforce the per-session cap."""
+        self.messages.append({"role": role, "content": content})
+        if len(self.messages) > _MAX_MESSAGES_PER_SESSION:
+            # Drop oldest, keep the most recent N — preserves recency for the LLM
+            self.messages = self.messages[-_MAX_MESSAGES_PER_SESSION:]
 
 
 class ChatEngine:
     def __init__(self):
         self.settings = get_settings()
-        self._sessions: Dict[str, ChatSession] = {}
+        # OrderedDict gives us O(1) LRU bumps via move_to_end and popitem(last=False)
+        self._sessions: "OrderedDict[str, ChatSession]" = OrderedDict()
+
+    # ── Session lifecycle ──
+
+    def _evict_stale(self) -> None:
+        """Drop sessions past the TTL, then enforce the size cap."""
+        now = time.time()
+        stale = [
+            sid for sid, s in self._sessions.items()
+            if (now - s.created_at.timestamp()) > _SESSION_TTL_SECONDS
+        ]
+        for sid in stale:
+            self._sessions.pop(sid, None)
+        while len(self._sessions) > _MAX_SESSIONS:
+            self._sessions.popitem(last=False)
 
     def _get_or_create_session(self, session_id: Optional[str] = None) -> ChatSession:
         if session_id and session_id in self._sessions:
+            self._sessions.move_to_end(session_id)
+            self._evict_stale()
             return self._sessions[session_id]
         session = ChatSession(session_id)
         self._sessions[session.session_id] = session
+        self._evict_stale()
         return session
+
+    def get_session(self, session_id: str) -> Optional[ChatSession]:
+        """Public accessor used by the chat routes. Bumps LRU on hit."""
+        session = self._sessions.get(session_id)
+        if session:
+            self._sessions.move_to_end(session_id)
+        self._evict_stale()
+        return session
+
+    def create_new_session(self) -> ChatSession:
+        """Public factory used by the chat routes."""
+        session = ChatSession()
+        self._sessions[session.session_id] = session
+        self._evict_stale()
+        return session
+
+    # ── Context helpers ──
 
     def _format_history(self, messages: List[Dict[str, str]]) -> str:
         if not messages:
             return "No previous messages."
         return "\n".join(
             f"{m.get('role', 'user').upper()}: {m.get('content', '')}"
-            for m in messages[-20:]  # Keep last 20 messages
+            for m in messages[-20:]
         )
 
     def _get_video_context(self) -> str:
@@ -121,7 +176,10 @@ class ChatEngine:
             )
             if not assets:
                 return "No videos have been analyzed yet."
-            lines = [f"  - {a['name']} ({a.get('duration', 0):.1f}s, {a.get('language', '?')})" for a in assets]
+            lines = [
+                f"  - {a.get('name', '?')} ({a.get('duration', 0):.1f}s, {a.get('language', '?')})"
+                for a in assets
+            ]
             return f"Analyzed videos ({len(assets)}):\n" + "\n".join(lines)
         except Exception:
             return "Video analysis data not available."
@@ -149,6 +207,8 @@ class ChatEngine:
         except Exception:
             return "Premiere Pro context not available."
 
+    # ── Message processing ──
+
     async def process_message(
         self,
         message: str,
@@ -156,22 +216,25 @@ class ChatEngine:
         context: Optional[Dict[str, Any]] = None,
     ) -> ChatResponse:
         """Process a chat message and return an AI response about cutting/editing."""
+        # Length cap — protects the LLM, our memory, and the WebSocket frame size
+        if message and len(message) > _MAX_USER_MESSAGE_LEN:
+            message = message[:_MAX_USER_MESSAGE_LEN]
+
         session = self._get_or_create_session(session_id)
         if context:
             session.context.update(context)
-        session.messages.append({"role": "user", "content": message})
+        session.append_message("user", message)
 
-        # Try deterministic commands first
         deterministic = self._try_deterministic(message)
         if deterministic:
             response_text = deterministic
         else:
-            # Use LLM for natural conversation
             try:
                 history = self._format_history(session.messages)
                 video_context = self._get_video_context()
                 premiere_context = self._get_premiere_context()
-                system = CUTTING_SYSTEM_PROMPT.format(
+                # safe_substitute ignores stray '{' / '}' in user content
+                system = CUTTING_SYSTEM_PROMPT.safe_substitute(
                     history=history,
                     video_context=video_context,
                     premiere_context=premiere_context,
@@ -183,12 +246,15 @@ class ChatEngine:
                     temperature=0.4,
                     max_tokens=1024,
                 )
-                response_text = result.get("response", "I'm having trouble connecting to an AI model. Please check your provider settings.")
+                response_text = result.get("response") or (
+                    "I'm having trouble connecting to an AI model. "
+                    "Please check your provider settings."
+                )
             except Exception as e:
                 logger.error(f"Chat LLM call failed: {e}")
                 response_text = self._fallback_response(message)
 
-        session.messages.append({"role": "assistant", "content": response_text})
+        session.append_message("assistant", response_text)
 
         return ChatResponse(
             message=ChatMessage(role=MessageRole.ASSISTANT, content=response_text),
@@ -196,10 +262,9 @@ class ChatEngine:
         )
 
     def _try_deterministic(self, message: str) -> Optional[str]:
-        """Try to handle common queries with deterministic responses."""
+        """Handle common queries with deterministic responses."""
         msg = message.lower().strip()
 
-        # Greeting
         if msg in ["hello", "hi", "hey", "salam", "assalam"]:
             return (
                 "Hello! I'm EditFlow AI, your video editing assistant. I can help you:\n"
@@ -211,7 +276,6 @@ class ChatEngine:
                 "What would you like to do?"
             )
 
-        # Status
         if any(w in msg for w in ["status", "what can you", "help", "commands"]):
             return (
                 "EditFlow AI - Available Commands:\n\n"

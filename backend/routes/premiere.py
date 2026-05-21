@@ -6,6 +6,7 @@ import json
 import logging
 import tempfile
 import time
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -24,7 +25,9 @@ _project_context: Dict[str, Any] = {
     "last_updated": None,
 }
 
-_sequence_snapshots: Dict[str, Dict] = {}
+# Capped LRU — uncapped dict would grow forever as users save snapshots.
+_MAX_SNAPSHOTS = 50
+_sequence_snapshots: "OrderedDict[str, Dict]" = OrderedDict()
 
 
 # ── Models ──
@@ -98,13 +101,17 @@ async def clear_project_context():
 @router.post("/snapshot")
 async def save_sequence_snapshot(snapshot: SequenceSnapshot):
     """Store a sequence state snapshot for reference."""
-    snapshot_id = f"snap_{int(time.time())}"
+    # Millisecond precision — second-precision IDs collided when two snapshots
+    # were saved in the same second, silently overwriting one another.
+    snapshot_id = f"snap_{int(time.time() * 1000)}"
     _sequence_snapshots[snapshot_id] = {
         "id": snapshot_id,
         "sequence_name": snapshot.sequence_name,
         "state": snapshot.state,
         "created_at": time.time(),
     }
+    while len(_sequence_snapshots) > _MAX_SNAPSHOTS:
+        _sequence_snapshots.popitem(last=False)
     logger.info(f"Sequence snapshot saved: {snapshot_id} ({snapshot.sequence_name})")
     return {"success": True, "snapshot_id": snapshot_id}
 
@@ -141,17 +148,39 @@ async def generate_edl(request: EDLRequest):
     The EDL file is written to a temporary location and returned as a path.
     The CEP panel then calls processEDL(edlJsonPath) in ExtendScript to apply it.
     """
+    # Reject any operation pointing at a non-existent file. Premiere will
+    # silently no-op or crash later otherwise.
+    missing: List[str] = []
+    for op in request.operations:
+        if op.action in {"add", "modify", "move"} and op.mediaPath:
+            try:
+                if not Path(op.mediaPath).is_file():
+                    missing.append(op.mediaPath)
+            except OSError:
+                missing.append(op.mediaPath)
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "One or more mediaPath entries do not point at an existing file",
+                "missing": missing[:10],
+                "missing_count": len(missing),
+            },
+        )
+
     try:
         edl_data = {
             "sequence_name": request.sequence_name,
-            "operations": [op.dict(exclude_none=True) for op in request.operations],
+            "operations": [op.model_dump(exclude_none=True) for op in request.operations],
         }
 
         # Write to a temp file that ExtendScript can read
         output_dir = Path(tempfile.gettempdir()) / "editflow_edl"
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        filename = f"edl_{int(time.time())}.json"
+        # ms-precision filename — second-precision collided when two EDLs
+        # were generated in the same second.
+        filename = f"edl_{int(time.time() * 1000)}.json"
         edl_path = output_dir / filename
 
         with open(edl_path, 'w', encoding='utf-8') as f:
@@ -164,6 +193,8 @@ async def generate_edl(request: EDLRequest):
             "operation_count": len(request.operations),
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"EDL generation error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -227,7 +258,7 @@ async def generate_edl_from_cuts(cut_id: Optional[str] = None):
         output_dir = Path(tempfile.gettempdir()) / "editflow_edl"
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        filename = f"edl_cut_{int(time.time())}.json"
+        filename = f"edl_cut_{int(time.time() * 1000)}.json"
         edl_path = output_dir / filename
 
         with open(edl_path, 'w', encoding='utf-8') as f:

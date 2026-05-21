@@ -4,7 +4,7 @@ Core data models for the video cutting pipeline, AI chat, and provider managemen
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
@@ -234,4 +234,4 @@ class APIResponse(BaseModel):
 
 
 def utc_now() -> str:
-    return datetime.utcnow().isoformat()
+    return datetime.now(timezone.utc).isoformat()

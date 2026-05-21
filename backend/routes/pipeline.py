@@ -3,17 +3,18 @@ EditFlow AI - Pipeline API Routes
 Video analysis, script-based cutting, and visual placement endpoints.
 """
 import logging
-import tempfile
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 
+from ..config import get_settings
 from ..models.schemas import (
-    APIResponse, CuttingResult, ScriptMatchRequest,
+    CuttingResult, ScriptMatchRequest,
     VideoAnalysisRequest, VisualMapRequest, VisualPlacementResult,
 )
 from ..services.cutting_pipeline import cutting_pipeline
+from ..utils.path_safety import safe_dir_path, safe_output_path
 from ..utils.progress import ProgressReporter
 
 logger = logging.getLogger(__name__)
@@ -31,16 +32,12 @@ async def analyze_videos(
     (e.g., your raw Urdu recordings) and it will transcribe everything and
     identify the best takes.
     """
-    folder = Path(request.folder_path)
-    if not folder.exists():
-        raise HTTPException(status_code=404, detail=f"Folder not found: {request.folder_path}")
-    if not folder.is_dir():
-        raise HTTPException(status_code=400, detail="Path must be a directory")
+    folder = safe_dir_path(request.folder_path, label="folder_path")
 
     progress = ProgressReporter(task_type="analyze", client_id=client_id)
     try:
         results = await cutting_pipeline.analyze_videos(
-            folder_path=request.folder_path,
+            folder_path=str(folder),
             language=request.language,
             recursive=request.recursive,
             progress=progress,
@@ -106,9 +103,11 @@ async def execute_cut(
     if not cuts:
         raise HTTPException(status_code=400, detail="No cuts provided")
 
+    resolved_output = safe_output_path(output_path, get_settings().OUTPUT_DIR)
+
     progress = ProgressReporter(task_type="execute_cut", client_id=client_id)
     try:
-        result_path = await cutting_pipeline.execute_cut(cuts, output_path, progress)
+        result_path = await cutting_pipeline.execute_cut(cuts, str(resolved_output), progress)
         return {"success": True, "output_path": result_path}
     except Exception as e:
         logger.error(f"Cut execution error: {e}")

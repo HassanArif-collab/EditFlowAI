@@ -14,7 +14,8 @@ class Settings(BaseSettings):
     # ── Server ──
     HOST: str = "127.0.0.1"
     PORT: int = 8765
-    DEBUG: bool = True
+    # Hot-reload is opt-in. Set EDITFLOW_DEBUG=true in your local env to enable.
+    DEBUG: bool = False
 
     # ── Default LLM ──
     DEFAULT_CHAT_MODEL: str = "gemma3:4b"
