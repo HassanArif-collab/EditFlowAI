@@ -1,7 +1,7 @@
 /*
  * marker_manager.jsx - Manage sequence markers in Premiere Pro.
  */
-var markerManager = (function() {
+markerManager = (function() {
     "use strict";
 
     function addMarkerToSequence(options) {

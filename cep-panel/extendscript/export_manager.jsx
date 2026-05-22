@@ -1,7 +1,7 @@
 /*
  * export_manager.jsx - Export sequences via Adobe Media Encoder.
  */
-var exportManager = (function() {
+exportManager = (function() {
     "use strict";
 
     function exportCurrentSequence(options) {

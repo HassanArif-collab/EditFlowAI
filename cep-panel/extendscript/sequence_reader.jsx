@@ -2,7 +2,7 @@
  * sequence_reader.jsx - Read sequence state from the active Premiere Pro sequence.
  * Provides full state: name, dimensions, fps, tracks, all clips with timing.
  */
-var sequenceReader = (function() {
+sequenceReader = (function() {
     "use strict";
 
     var LABEL_COLORS = {

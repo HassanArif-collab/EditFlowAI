@@ -3,7 +3,7 @@
  * Handles adding, removing, moving, and organizing clips.
  * Also processes EDL (Edit Decision List) JSON files for batch operations.
  */
-var clipManager = (function() {
+clipManager = (function() {
     "use strict";
 
     // ── EDL Processing ──

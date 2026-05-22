@@ -11,7 +11,13 @@
 
     CSInterface.prototype.evalScript = function(script, callback) {
         if (!global.__adobe_cep__ || typeof global.__adobe_cep__.evalScript !== 'function') {
-            if (callback) callback('EvalScript error.');
+            if (callback) {
+                callback(JSON.stringify({
+                    success: false,
+                    error: 'Adobe CEP bridge unavailable. Open EditFlow AI inside Premiere Pro from Window > Extensions, not in a normal browser.',
+                    bridgeAvailable: false
+                }));
+            }
             return;
         }
         global.__adobe_cep__.evalScript(script, callback || function() {});

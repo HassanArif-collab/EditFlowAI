@@ -2,7 +2,7 @@
  * project_scanner.jsx - Scan the Premiere Pro project tree.
  * Recursively walks bins, items, and sequences for full project context.
  */
-var projectScanner = (function() {
+projectScanner = (function() {
     "use strict";
 
     function scanAll() {

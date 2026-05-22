@@ -1,7 +1,7 @@
 /*
  * track_manager.jsx - Manage tracks in the Premiere Pro sequence.
  */
-var trackManager = (function() {
+trackManager = (function() {
     "use strict";
 
     function ensureTracks(seq, requiredVideoTracks, requiredAudioTracks) {

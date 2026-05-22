@@ -2,7 +2,7 @@
  * audio_manager.jsx - Audio level and fade management for EditFlow AI.
  * Controls clip volume, normalization, and fade in/out keyframes.
  */
-var audioManager = (function() {
+audioManager = (function() {
     "use strict";
 
     function setClipLevel(clip, levelDB) {

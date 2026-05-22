@@ -2,7 +2,7 @@
  * effects_manager.jsx - Apply effects and transitions in Premiere Pro.
  * Uses QE DOM for effects that aren't accessible via the standard API.
  */
-var effectsManager = (function() {
+effectsManager = (function() {
     "use strict";
 
     function applyTransition(seq, trackIndex, transitionName, duration) {

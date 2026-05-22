@@ -6,38 +6,163 @@
  * This is the bridge between the HTML/JS panel and Premiere Pro's DOM.
  */
 // ── Load Dependencies ──
+var editflowLoadErrors = [];
+var editflowConfiguredScriptDir = "";
+var editflowModuleNames = [
+    "json2.jsx",
+    "utils.jsx",
+    "sequence_reader.jsx",
+    "project_scanner.jsx",
+    "clip_manager.jsx",
+    "audio_manager.jsx",
+    "marker_manager.jsx",
+    "track_manager.jsx",
+    "export_manager.jsx",
+    "effects_manager.jsx"
+];
+
+function editflowEscapeJSON(value) {
+    return String(value)
+        .replace(/\\/g, "\\\\")
+        .replace(/"/g, "\\\"")
+        .replace(/\r/g, "\\r")
+        .replace(/\n/g, "\\n");
+}
+
+function editflowErrorResult(error, command) {
+    var message = error && error.toString ? error.toString() : String(error);
+    var cmd = command || "";
+    try {
+        if (typeof editflowUtils !== "undefined" && editflowUtils.safeStringify) {
+            return editflowUtils.safeStringify({
+                success: false,
+                error: message,
+                command: cmd
+            });
+        }
+    } catch (ignore) {}
+
+    return '{"success":false,"error":"' + editflowEscapeJSON(message) +
+        '","command":"' + editflowEscapeJSON(cmd) + '"}';
+}
+
+function editflowSuccessResult(obj) {
+    try {
+        if (typeof editflowUtils !== "undefined" && editflowUtils.safeStringify) {
+            return editflowUtils.safeStringify(obj);
+        }
+    } catch (ignore) {}
+
+    var scriptDir = obj && obj.scriptDir ? obj.scriptDir : "";
+    return '{"success":true,"scriptDir":"' + editflowEscapeJSON(scriptDir) + '"}';
+}
+
+function editflowGetScriptDir(scriptFile) {
+    var slashIndex = scriptFile.lastIndexOf('/');
+    var backslashIndex = scriptFile.lastIndexOf('\\');
+    var separatorIndex = Math.max(slashIndex, backslashIndex);
+    if (separatorIndex >= 0) {
+        return scriptFile.substring(0, separatorIndex).replace(/\\/g, '/');
+    }
+
+    try {
+        return File(scriptFile).parent.fsName.replace(/\\/g, '/');
+    } catch (e) {
+        return "";
+    }
+}
+
+function editflowNormalizePath(path) {
+    return String(path || "").replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
+function editflowGetExtendScriptDir(extensionRoot) {
+    var root = editflowNormalizePath(extensionRoot);
+    if (!root) return "";
+    if (/\/extendscript$/i.test(root)) return root;
+    return root + '/extendscript';
+}
+
 function editflowLoadModule(path) {
     try {
         var file = new File(path);
         if (file.exists) {
-            file.open('r');
-            var content = file.read();
-            file.close();
-            eval(content);
+            $.evalFile(file);
+        } else {
+            throw new Error("module not found: " + path);
         }
     } catch (e) {
-        $.writeln("EditFlow: Failed to load module " + path + ": " + e.toString());
+        var message = "Failed to load module " + path + ": " + e.toString();
+        editflowLoadErrors.push(message);
+        try {
+            $.writeln("EditFlow: " + message);
+        } catch (ignore) {}
     }
+}
+
+function editflowLoadAllModules(baseDir) {
+    var normalizedBaseDir = editflowNormalizePath(baseDir);
+    editflowLoadErrors = [];
+    editflowConfiguredScriptDir = normalizedBaseDir;
+
+    for (var i = 0; i < editflowModuleNames.length; i++) {
+        editflowLoadModule(normalizedBaseDir + '/' + editflowModuleNames[i]);
+    }
+
+    return editflowLoadErrors.length === 0;
+}
+
+function editflowConfigureExtensionRoot(extensionRoot) {
+    var baseDir = editflowGetExtendScriptDir(extensionRoot);
+    if (!baseDir) {
+        editflowLoadErrors = ["CEP extension root was empty."];
+        return editflowErrorResult(new Error(editflowLoadErrors[0]), "configureExtensionRoot");
+    }
+
+    if (
+        baseDir === editflowConfiguredScriptDir &&
+        editflowLoadErrors.length === 0 &&
+        typeof projectScanner !== "undefined"
+    ) {
+        return editflowSuccessResult({ success: true, scriptDir: baseDir });
+    }
+
+    editflowLoadAllModules(baseDir);
+    if (editflowLoadErrors.length > 0) {
+        return editflowErrorResult(
+            new Error("ExtendScript modules failed to load from " + baseDir + ": " + editflowLoadErrors.join(" | ")),
+            "configureExtensionRoot"
+        );
+    }
+
+    return editflowSuccessResult({ success: true, scriptDir: baseDir });
 }
 
 // Load modules relative to this script's location
 var scriptFile = $.fileName;
-var scriptDir = scriptFile.substring(0, scriptFile.lastIndexOf('/'));
+var scriptDir = editflowGetScriptDir(scriptFile);
 
-editflowLoadModule(scriptDir + '/json2.jsx');
-editflowLoadModule(scriptDir + '/utils.jsx');
-editflowLoadModule(scriptDir + '/sequence_reader.jsx');
-editflowLoadModule(scriptDir + '/project_scanner.jsx');
-editflowLoadModule(scriptDir + '/clip_manager.jsx');
-editflowLoadModule(scriptDir + '/audio_manager.jsx');
-editflowLoadModule(scriptDir + '/marker_manager.jsx');
-editflowLoadModule(scriptDir + '/track_manager.jsx');
-editflowLoadModule(scriptDir + '/export_manager.jsx');
-editflowLoadModule(scriptDir + '/effects_manager.jsx');
+editflowLoadAllModules(scriptDir);
 
 
 // ── Command Dispatcher ──
 var _undoCounter = 0;
+
+function editflowAssertReady(command) {
+    if (editflowLoadErrors.length > 0) {
+        throw new Error(
+            "ExtendScript modules failed to load for " + (command || "command") +
+            ": " + editflowLoadErrors.join(" | ")
+        );
+    }
+}
+
+function editflowArrayContains(items, value) {
+    for (var i = 0; i < items.length; i++) {
+        if (items[i] === value) return true;
+    }
+    return false;
+}
 
 function editflowDispatch(command, payloadData) {
     /*
@@ -47,16 +172,19 @@ function editflowDispatch(command, payloadData) {
      * @param {string} payloadData - JSON string with command parameters
      * @returns {string} - JSON string with the result
      */
-    var options = {};
-    if (payloadData) {
-        try {
-            options = JSON.parse(payloadData);
-        } catch (e) {
-            options = {};
-        }
-    }
+    try {
+        editflowAssertReady(command);
 
-    var result;
+        var options = {};
+        if (payloadData) {
+            try {
+                options = JSON.parse(payloadData);
+            } catch (e) {
+                options = {};
+            }
+        }
+
+        var result;
 
     switch (command) {
         // ── Project Scanning ──
@@ -200,18 +328,21 @@ function editflowDispatch(command, payloadData) {
             });
     }
 
-    // Track undo level for timeline-modifying operations
-    var modifyingCommands = [
-        "addMediaToTimeline", "insertClipAtTime", "moveClip", "modifyClip",
-        "removeTimelineClips", "clearTimelineLabels", "manageTracks",
-        "setAudioLevel", "normalizeAudio", "audioFade", "addMarker",
-        "applyEffect", "applyTransitionToAll", "setClipLabel"
-    ];
-    if (modifyingCommands.indexOf(command) >= 0) {
-        _undoCounter++;
-    }
+        // Track undo level for timeline-modifying operations
+        var modifyingCommands = [
+            "addMediaToTimeline", "insertClipAtTime", "moveClip", "modifyClip",
+            "removeTimelineClips", "clearTimelineLabels", "manageTracks",
+            "setAudioLevel", "normalizeAudio", "audioFade", "addMarker",
+            "applyEffect", "applyTransitionToAll", "setClipLabel"
+        ];
+        if (editflowArrayContains(modifyingCommands, command)) {
+            _undoCounter++;
+        }
 
-    return result;
+        return result;
+    } catch (e) {
+        return editflowErrorResult(e, command);
+    }
 }
 
 
@@ -220,33 +351,63 @@ function editflowDispatch(command, payloadData) {
 // for backward compatibility and convenience.
 
 function processEDL(edlJsonPath) {
-    return clipManager.processEDL(edlJsonPath);
+    try {
+        editflowAssertReady("processEDL");
+        return clipManager.processEDL(edlJsonPath);
+    } catch (e) {
+        return editflowErrorResult(e, "processEDL");
+    }
 }
 
 function getSequenceState() {
-    return sequenceReader.readCurrentSequence();
+    try {
+        editflowAssertReady("getSequenceState");
+        return sequenceReader.readCurrentSequence();
+    } catch (e) {
+        return editflowErrorResult(e, "getSequenceState");
+    }
 }
 
 function scanProjectMedia() {
-    return projectScanner.scanAll();
+    try {
+        editflowAssertReady("scanProject");
+        return projectScanner.scanAll();
+    } catch (e) {
+        return editflowErrorResult(e, "scanProject");
+    }
 }
 
 function removeTimelineClips() {
-    return clipManager.removeTimelineClips({ mode: "broll" });
+    try {
+        editflowAssertReady("removeTimelineClips");
+        return clipManager.removeTimelineClips({ mode: "broll" });
+    } catch (e) {
+        return editflowErrorResult(e, "removeTimelineClips");
+    }
 }
 
 function clearTimelineLabels() {
-    return clipManager.clearTimelineLabels({ label: "Iris" });
+    try {
+        editflowAssertReady("clearTimelineLabels");
+        return clipManager.clearTimelineLabels({ label: "Iris" });
+    } catch (e) {
+        return editflowErrorResult(e, "clearTimelineLabels");
+    }
 }
 
 function undoLastAction() {
-    var undone = 0;
     try {
-        if (typeof qe !== 'undefined') {
-            qe.project.undoAction();
-            undone = 1;
-        }
-    } catch (e) {}
-    _undoCounter = Math.max(0, _undoCounter - 1);
-    return editflowUtils.safeStringify({ success: undone > 0 });
+        editflowAssertReady("undoAction");
+        var undone = 0;
+        try {
+            if (typeof qe !== 'undefined') {
+                qe.project.undoAction();
+                undone = 1;
+            }
+        } catch (e) {}
+        _undoCounter = Math.max(0, _undoCounter - 1);
+        return editflowUtils.safeStringify({ success: undone > 0 });
+    } catch (e) {
+        return editflowErrorResult(e, "undoAction");
+    }
 }

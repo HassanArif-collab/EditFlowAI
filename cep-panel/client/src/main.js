@@ -312,6 +312,12 @@
             }
 
             const result = await evalExtendScript('processEDL', JSON.stringify({ edlData: edl }));
+            if (result) {
+                const parsed = JSON.parse(result);
+                if (parsed && parsed.success === false) {
+                    throw new Error(parsed.error || 'Unknown processEDL error');
+                }
+            }
             addChatMessage('assistant', 'Cut plan has been applied to the Premiere Pro timeline!');
         } catch (e) {
             addChatMessage('error', 'Failed to send to Premiere: ' + e.message);
@@ -376,7 +382,7 @@
             formData.append('visual_folder', visualFolder);
             formData.append('video_output_path', outputPath || 'output_with_visuals.mp4');
 
-            const resp = await fetch(CONFIG.serverUrl + '/pipeline/visuals/upload-map', {
+            const resp = await fetch(CONFIG.serverUrl + '/api/pipeline/visuals/upload-map', {
                 method: 'POST',
                 body: formData,
             });
@@ -428,6 +434,29 @@
         $('#settings-server-url').addEventListener('change', () => {
             CONFIG.serverUrl = $('#settings-server-url').value.trim();
             localStorage.setItem('editflow_server_url', CONFIG.serverUrl);
+        });
+
+        // ── Sync model selection to backend when user changes dropdown ──
+        $('#settings-chat-model').addEventListener('change', async (e) => {
+            const model = e.target.value;
+            if (!model) return;
+            try {
+                await apiPost('/models/set-chat?model_name=' + encodeURIComponent(model), {});
+                console.log('Active chat model set to:', model);
+            } catch (err) {
+                console.warn('Failed to set chat model:', err);
+            }
+        });
+
+        $('#settings-vision-model').addEventListener('change', async (e) => {
+            const model = e.target.value;
+            if (!model) return;
+            try {
+                await apiPost('/models/set-vision?model_name=' + encodeURIComponent(model), {});
+                console.log('Active vision model set to:', model);
+            } catch (err) {
+                console.warn('Failed to set vision model:', err);
+            }
         });
     }
 
@@ -550,6 +579,9 @@
             const result = await evalExtendScript('getSequenceState');
             if (result) {
                 state.sequenceState = JSON.parse(result);
+                if (state.sequenceState && state.sequenceState.success === false) {
+                    throw new Error(state.sequenceState.error || 'Unknown sequence sync error');
+                }
                 $('#premiere-status').textContent = `Sequence: ${state.sequenceState.name || 'Active'} (${state.sequenceState.videoTracks?.length || 0}V / ${state.sequenceState.audioTracks?.length || 0}A)`;
                 $('#premiere-status').className = 'status-line connected';
 
@@ -573,6 +605,9 @@
             const result = await evalExtendScript('scanProject');
             if (result) {
                 state.projectState = JSON.parse(result);
+                if (state.projectState && state.projectState.success === false) {
+                    throw new Error(state.projectState.error || 'Unknown project scan error');
+                }
 
                 // Sync to backend
                 await apiPost('/premiere/context', {
@@ -603,22 +638,14 @@
                 return;
             }
 
-            let script;
-            if (command === 'processEDL') {
-                // processEDL needs a file path; we'll write the data to a temp file first
-                // For now, use editflowDispatch for in-memory operations
-                script = `editflowDispatch('${command}', '${payload || ''}')`;
-            } else if (command === 'getSequenceState') {
-                script = 'getSequenceState()';
-            } else if (command === 'scanProject') {
-                script = 'scanProjectMedia()';
-            } else {
-                script = `editflowDispatch('${command}', '${payload || ''}')`;
-            }
+            const extensionRoot = getExtensionRoot();
+            const script = buildExtendScriptCall(command, payload || '', extensionRoot);
 
             state.csInterface.evalScript(script, (result) => {
-                if (result === 'EvalScript error.' || result === 'undefined') {
-                    reject(new Error(result));
+                if (result === 'EvalScript error.') {
+                    reject(new Error('Premiere Pro could not evaluate EditFlow ExtendScript. Reload the panel or restart Premiere Pro.'));
+                } else if (result === 'undefined' || !result) {
+                    reject(new Error('Premiere Pro returned no result from EditFlow ExtendScript.'));
                 } else {
                     resolve(result);
                 }
@@ -626,9 +653,64 @@
         });
     }
 
+    function getExtensionRoot() {
+        try {
+            if (
+                state.csInterface &&
+                typeof state.csInterface.getSystemPath === 'function'
+            ) {
+                const extensionPathType = (state.csInterface.SYSTEM_PATH && state.csInterface.SYSTEM_PATH.EXTENSION) || 'extension';
+                return state.csInterface.getSystemPath(extensionPathType) || '';
+            }
+        } catch (e) {
+            console.warn('Unable to read CEP extension path:', e);
+        }
+        return '';
+    }
+
+    function buildExtendScriptCall(command, payload, extensionRoot) {
+        const commandLiteral = JSON.stringify(command);
+        const payloadLiteral = JSON.stringify(payload || '');
+        const extensionRootLiteral = JSON.stringify(extensionRoot || '');
+        return `(function() {
+            var command = ${commandLiteral};
+            var payload = ${payloadLiteral};
+            var extensionRoot = ${extensionRootLiteral};
+            function editflowRuntimeEscape(value) {
+                return String(value)
+                    .replace(/\\\\/g, '\\\\\\\\')
+                    .replace(/"/g, '\\\\"')
+                    .replace(/\\r/g, '\\\\r')
+                    .replace(/\\n/g, '\\\\n');
+            }
+            function editflowRuntimeError(message) {
+                return '{"success":false,"error":"' + editflowRuntimeEscape(message) +
+                    '","command":"' + editflowRuntimeEscape(command) + '"}';
+            }
+            try {
+                if (typeof editflowConfigureExtensionRoot !== 'function') {
+                    return editflowRuntimeError('EditFlow ExtendScript loader is not available. Reload the EditFlow AI panel or restart Premiere Pro.');
+                }
+                var configureResult = editflowConfigureExtensionRoot(extensionRoot);
+                try {
+                    var configureState = JSON.parse(configureResult);
+                    if (configureState && configureState.success === false) {
+                        return configureResult;
+                    }
+                } catch (parseError) {}
+                if (typeof editflowDispatch !== 'function') {
+                    return editflowRuntimeError('EditFlow ExtendScript dispatcher is not loaded. Reload the EditFlow AI panel or restart Premiere Pro.');
+                }
+                return editflowDispatch(command, payload);
+            } catch (e) {
+                return editflowRuntimeError(e && e.toString ? e.toString() : e);
+            }
+        })()`;
+    }
+
     // ═══════ API Helpers ═══════
     async function apiGet(path) {
-        const resp = await fetch(CONFIG.serverUrl + path);
+        const resp = await fetch(CONFIG.serverUrl + '/api' + path);
         if (!resp.ok) {
             const err = await resp.json().catch(() => ({ detail: resp.statusText }));
             throw new Error(err.detail || resp.statusText);
@@ -637,7 +719,7 @@
     }
 
     async function apiPost(path, body) {
-        const resp = await fetch(CONFIG.serverUrl + path, {
+        const resp = await fetch(CONFIG.serverUrl + '/api' + path, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body),

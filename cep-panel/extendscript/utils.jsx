@@ -2,7 +2,7 @@
  * utils.jsx - Common utility functions for EditFlow AI ExtendScript modules.
  * Provides tick/time conversions and helpers for working with Premiere's DOM.
  */
-var editflowUtils = (function() {
+editflowUtils = (function() {
     "use strict";
 
     // Premiere Pro uses ticks internally (254016000000 ticks per second)
