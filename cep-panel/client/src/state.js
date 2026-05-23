@@ -41,13 +41,20 @@ const TRANSITIONS = {
   idle:            { scan_clicked:    { to: 'scanned' } },
   scanned:         { source_provided: { to: 'source_picked' } },
   source_picked:   { transcription_started: { to: 'transcribing' } },
-  transcribing:    { all_jobs_complete:     { to: 'script_needed' } },
-  script_needed:   { script_provided:  { to: 'matching' } },
-  script_needed:   { script_ambiguous: { to: 'script_understood' } },
+  transcribing:    {
+    all_jobs_complete: { to: 'script_needed' },
+    source_provided:   { to: 'transcribing' },  // add more sources while transcribing
+  },
+  script_needed:   {
+    script_provided:  { to: 'matching' },
+    script_ambiguous: { to: 'script_understood' },
+  },
   script_understood: { script_confirmed: { to: 'matching' } },
   matching:        { dry_run_ready:    { to: 'plan_ready' } },
-  plan_ready:      { approve_clicked:  { to: 'applying' } },
-  plan_ready:      { regenerate_clicked: { to: 'matching' } },
+  plan_ready:      {
+    approve_clicked:    { to: 'applying' },
+    regenerate_clicked: { to: 'matching' },
+  },
   applying:        { extendscript_done: { to: 'done' } },
   done:            { new_edit:         { to: 'idle' } },
 };

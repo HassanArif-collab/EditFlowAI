@@ -531,9 +531,43 @@ async function _startTranscription(source) {
 }
 
 async function _addTranscriptionJobs(source) {
-  // Similar to _startTranscription but adds jobs to an existing transcription session
+  // Already in transcribing state — just resolve + start new jobs without re-triggering transitions
   appendMessage('agent-text', { text: `Adding ${source.name} to transcription queue...` });
-  await _startTranscription(source);
+
+  // Resolve the reference and start additional transcription jobs
+  let resolvedClips = [];
+  try {
+    const resolveResult = await apiPost('/api/v2/references/resolve', {
+      text: source.name,
+      kind: source.type,
+    }, { timeoutMs: 10000 });
+    resolvedClips = resolveResult.clips || resolveResult.items || resolveResult.assets || [];
+  } catch (err) {
+    if (source.mediaPath) {
+      try {
+        const regResult = await apiPost('/api/v2/assets/register', {
+          path: source.mediaPath,
+          name: source.name,
+        });
+        resolvedClips = [regResult];
+      } catch (_) {}
+    }
+  }
+
+  // Start additional async transcription jobs
+  for (const clip of resolvedClips) {
+    const assetId = clip.id || clip.asset_id;
+    if (!assetId) continue;
+    try {
+      const jobResult = await apiPost(`/api/v2/assets/${assetId}/analyze-async`, {}, { timeoutMs: 10000 });
+      const jobId = jobResult.job_id || jobResult.id;
+      if (jobId) {
+        _jobStatuses[jobId] = { status: 'pending', assetId, clipName: clip.name || clip.original_name || '' };
+      }
+    } catch (err) {
+      console.warn(`[orchestrator] Failed to start transcription for ${assetId}:`, err);
+    }
+  }
 }
 
 function _pollJobs(jobIds) {

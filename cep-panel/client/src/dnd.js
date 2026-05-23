@@ -167,7 +167,9 @@ function setupSelectionChip(chipEl, onUseSelected, getStateFn) {
   _selectionPollTimer = setInterval(async () => {
     const state = getStateFn();
     // Only poll in idle or scanned state
-    if (state.current !== 'idle' && state.current !== 'scanned' && state.current !== 'source_picked') {
+    // Plan says: hide when state moves past script_needed
+    const hiddenStates = ['matching', 'plan_ready', 'applying', 'done', 'error'];
+    if (hiddenStates.includes(state.current)) {
       chipEl.classList.add('hidden');
       return;
     }
@@ -181,7 +183,7 @@ function setupSelectionChip(chipEl, onUseSelected, getStateFn) {
       const result = await getSelectedProjectItems();
       if (result && result.success && result.items && result.items.length > 0) {
         chipEl.classList.remove('hidden');
-        chipEl.textContent = `Use ${result.items.length} selected item${result.items.length > 1 ? 's' : ''}`;
+        chipEl.textContent = `\u{1F4E5} Use ${result.items.length} selected item${result.items.length > 1 ? 's' : ''}`;
       } else {
         chipEl.classList.add('hidden');
       }

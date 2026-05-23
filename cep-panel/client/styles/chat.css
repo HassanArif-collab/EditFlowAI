@@ -562,7 +562,8 @@ body {
   border-radius: var(--radius);
 }
 
-.drop-target-active .drop-overlay { display: flex; }
+/* .drop-target-active class is added to <main> during drag — 
+   overlay visibility is managed by toggling .hidden in JS */
 
 /* ── Overlays & popovers ───────────────────────────────────────── */
 .overlay {
@@ -683,10 +684,25 @@ body {
 ::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
 
 /* ── Responsive ────────────────────────────────────────────────── */
+@media (max-width: 480px) {
+  .plan-actions { flex-wrap: wrap; }
+}
+
 @media (max-width: 360px) {
   .logo { font-size: 12px; }
   .hero-btn { font-size: 14px; padding: 10px 20px; }
   .msg { max-width: 96%; padding: 8px 10px; }
   .plan-actions { flex-direction: column; }
   .btn-approve, .btn-regenerate { width: 100%; text-align: center; }
+}
+
+@media (max-width: 320px) {
+  .logo { font-size: 11px; }
+  .hero-btn { font-size: 13px; padding: 8px 16px; }
+  .hero-subtitle { font-size: 10px; }
+  .msg { max-width: 98%; padding: 6px 8px; font-size: 12px; }
+  .icon-btn { font-size: 14px; padding: 2px 4px; }
+  #chat-input { font-size: 12px; padding: 6px 8px; }
+  .send-btn { padding: 6px 10px; font-size: 12px; }
+  .selection-chip { font-size: 10px; padding: 3px 8px; }
 }

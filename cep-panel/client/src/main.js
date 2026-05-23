@@ -28,9 +28,6 @@ const $ = (sel) => document.querySelector(sel);
 const CLIENT_ID = 'cep-' + Math.random().toString(36).substring(2, 8);
 setSession({ clientId: CLIENT_ID });
 
-// Debug global (removed in T12)
-window.__editflow_state = getState;
-
 // ── DOM references ────────────────────────────────────────────
 const hero = $('#hero');
 const chatScroll = $('#chat-scroll');
