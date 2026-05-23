@@ -62,12 +62,6 @@ class SQLiteRegistry:
                 updated_at TEXT NOT NULL
             );
 
-            CREATE INDEX IF NOT EXISTS idx_assets_fingerprint
-                ON assets(fingerprint);
-
-            CREATE INDEX IF NOT EXISTS idx_assets_audio_fingerprint
-                ON assets(audio_fingerprint);
-
             CREATE TABLE IF NOT EXISTS transcripts (
                 id TEXT PRIMARY KEY,
                 asset_id TEXT NOT NULL UNIQUE,
@@ -132,12 +126,6 @@ class SQLiteRegistry:
                 probability REAL DEFAULT 0,
                 FOREIGN KEY(sequence_transcript_id) REFERENCES sequence_transcripts(id) ON DELETE CASCADE
             );
-
-            CREATE INDEX IF NOT EXISTS idx_sequence_words_lookup
-                ON sequence_words(sequence_id, sequence_name, timeline_start);
-
-            CREATE INDEX IF NOT EXISTS idx_sequence_words_media_path
-                ON sequence_words(media_path);
 
             CREATE TABLE IF NOT EXISTS speech_candidates (
                 id TEXT PRIMARY KEY,
@@ -271,12 +259,6 @@ class SQLiteRegistry:
                 updated_at TEXT NOT NULL
             );
 
-            CREATE INDEX IF NOT EXISTS idx_source_files_path
-                ON source_files(path);
-
-            CREATE INDEX IF NOT EXISTS idx_source_files_fingerprint
-                ON source_files(fingerprint);
-
             -- Phase B: Transcript persistence (replaces old transcripts table)
             -- One row per unique transcription of a (content_hash, range, engine, model).
             CREATE TABLE IF NOT EXISTS source_transcripts (
@@ -298,9 +280,6 @@ class SQLiteRegistry:
                 FOREIGN KEY(content_hash) REFERENCES source_files(content_hash)
             );
 
-            CREATE INDEX IF NOT EXISTS idx_source_transcripts_cache_key
-                ON source_transcripts(content_hash, range_in, range_out, engine, model);
-
             -- Phase B: Word-level transcript data
             CREATE TABLE IF NOT EXISTS transcript_words (
                 id TEXT PRIMARY KEY,
@@ -317,12 +296,6 @@ class SQLiteRegistry:
                 FOREIGN KEY(transcript_id) REFERENCES source_transcripts(id) ON DELETE CASCADE
             );
 
-            CREATE INDEX IF NOT EXISTS idx_transcript_words_lookup
-                ON transcript_words(content_hash, start);
-
-            CREATE INDEX IF NOT EXISTS idx_transcript_words_transcript
-                ON transcript_words(transcript_id, word_index);
-
             -- Phase B: VAD segments from silero-vad (produced alongside transcription)
             CREATE TABLE IF NOT EXISTS transcript_vad (
                 id TEXT PRIMARY KEY,
@@ -336,9 +309,6 @@ class SQLiteRegistry:
                 confidence REAL DEFAULT 1.0,
                 created_at TEXT NOT NULL
             );
-
-            CREATE INDEX IF NOT EXISTS idx_transcript_vad_lookup
-                ON transcript_vad(content_hash, range_in, range_out);
 
             -- Phase B: Cut plan persistence
             -- Plans are also saved as JSON files, but the DB table enables
@@ -356,12 +326,6 @@ class SQLiteRegistry:
                 updated_at TEXT NOT NULL
             );
 
-            CREATE INDEX IF NOT EXISTS idx_cut_plans_bin
-                ON cut_plans(bin_reference);
-
-            CREATE INDEX IF NOT EXISTS idx_cut_plans_status
-                ON cut_plans(status);
-
             -- Take favouriting and exclusion (cross-cutting)
             -- Per-bin persistent flags: pin (preferred), mute (never use), note.
             CREATE TABLE IF NOT EXISTS take_user_flags (
@@ -373,6 +337,71 @@ class SQLiteRegistry:
                 updated_at TEXT NOT NULL,
                 PRIMARY KEY (take_id, project_path)
             );
+            """
+        )
+        self._migrate_schema(conn)
+        self._create_indexes(conn)
+
+    def _migrate_schema(self, conn: sqlite3.Connection):
+        """Apply lightweight migrations for databases created by older builds."""
+        self._add_column_if_missing(conn, "assets", "audio_fingerprint", "TEXT DEFAULT ''")
+        self._add_column_if_missing(conn, "audio_cache", "audio_fingerprint", "TEXT DEFAULT ''")
+        self._add_column_if_missing(conn, "source_files", "audio_fingerprint", "TEXT DEFAULT ''")
+
+    def _add_column_if_missing(
+        self,
+        conn: sqlite3.Connection,
+        table_name: str,
+        column_name: str,
+        column_definition: str,
+    ):
+        columns = {
+            row["name"]
+            for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+        }
+        if column_name not in columns:
+            conn.execute(
+                f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_definition}"
+            )
+
+    def _create_indexes(self, conn: sqlite3.Connection):
+        conn.executescript(
+            """
+            CREATE INDEX IF NOT EXISTS idx_assets_fingerprint
+                ON assets(fingerprint);
+
+            CREATE INDEX IF NOT EXISTS idx_assets_audio_fingerprint
+                ON assets(audio_fingerprint);
+
+            CREATE INDEX IF NOT EXISTS idx_sequence_words_lookup
+                ON sequence_words(sequence_id, sequence_name, timeline_start);
+
+            CREATE INDEX IF NOT EXISTS idx_sequence_words_media_path
+                ON sequence_words(media_path);
+
+            CREATE INDEX IF NOT EXISTS idx_source_files_path
+                ON source_files(path);
+
+            CREATE INDEX IF NOT EXISTS idx_source_files_fingerprint
+                ON source_files(fingerprint);
+
+            CREATE INDEX IF NOT EXISTS idx_source_transcripts_cache_key
+                ON source_transcripts(content_hash, range_in, range_out, engine, model);
+
+            CREATE INDEX IF NOT EXISTS idx_transcript_words_lookup
+                ON transcript_words(content_hash, start);
+
+            CREATE INDEX IF NOT EXISTS idx_transcript_words_transcript
+                ON transcript_words(transcript_id, word_index);
+
+            CREATE INDEX IF NOT EXISTS idx_transcript_vad_lookup
+                ON transcript_vad(content_hash, range_in, range_out);
+
+            CREATE INDEX IF NOT EXISTS idx_cut_plans_bin
+                ON cut_plans(bin_reference);
+
+            CREATE INDEX IF NOT EXISTS idx_cut_plans_status
+                ON cut_plans(status);
             """
         )
 

@@ -19,6 +19,7 @@ node_modules/
 
 # Project specific
 data/media_cache/
+data/tools/
 data/sequence_state.json
 data/sessions.json
 data/edl/

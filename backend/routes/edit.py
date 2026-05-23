@@ -34,7 +34,8 @@ router = APIRouter(prefix="/edit", tags=["edit"])
 
 
 class AnalyzeRequest(BaseModel):
-    bin_references: List[str]
+    bin_references: List[str] = Field(default_factory=list)
+    bin: Optional[str] = None
     script: str
     language: Optional[str] = None
     user_hint: Optional[str] = None
@@ -47,7 +48,8 @@ class ApplyRequest(BaseModel):
 
 
 class RegenerateRequest(BaseModel):
-    bin_references: List[str]
+    bin_references: List[str] = Field(default_factory=list)
+    bin: Optional[str] = None
     script: str
     language: Optional[str] = None
     user_hint: Optional[str] = None
@@ -61,21 +63,11 @@ class RegenerateRequest(BaseModel):
 
 def _get_project_scan() -> dict:
     """Fetch the latest project scan from the premiere context endpoint."""
-    from ..models.sqlite_registry import sqlite_registry
-    # For now, read from DB or return empty. In production, this comes
-    # from the CEP panel's latest scan posted to /api/premiere/context.
-    # We store it in the DB when the panel POSTs it.
     try:
-        row = sqlite_registry.fetch_one(
-            "SELECT * FROM assets ORDER BY created_at DESC LIMIT 1"
-        )
-        # This is a placeholder — the real project scan is stored by
-        # the /api/premiere/context endpoint. We'll use a simpler approach.
+        from . import premiere
+        return premiere._project_context
     except Exception:
-        pass
-
-    # Return the scan stored in memory from the last scan request
-    return getattr(_get_project_scan, "_cache", {})
+        return getattr(_get_project_scan, "_cache", {})
 
 
 def _store_project_scan(scan: dict) -> None:
@@ -104,15 +96,17 @@ async def analyze(req: AnalyzeRequest):
     Returns the plan ID and summary. The full plan can be fetched via
     GET /api/edit/plan/{plan_id}.
     """
-    if not req.bin_references:
+    bin_references = req.bin_references or ([req.bin] if req.bin else [])
+    if not bin_references:
         raise HTTPException(status_code=400, detail="bin_references is required")
     if not req.script.strip():
         raise HTTPException(status_code=400, detail="script is required")
 
     # Step 1: Resolve bin references
     project_scan = _get_project_scan()
+    all_warnings: list[str] = []
     try:
-        clips = resolve_bins(req.bin_references, project_scan)
+        clips = resolve_bins(bin_references, project_scan)
     except AmbiguousReferenceError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -131,7 +125,6 @@ async def analyze(req: AnalyzeRequest):
     # Step 2: Transcribe each unique source file
     transcripts: dict[str, Any] = {}
     all_takes = []
-    all_warnings: list[str] = []
 
     for i, clip in enumerate(clips):
         try:
@@ -210,7 +203,7 @@ async def analyze(req: AnalyzeRequest):
             break
 
     plan = build_plan(
-        bin_reference=", ".join(req.bin_references),
+        bin_reference=", ".join(bin_references),
         script=req.script,
         user_hint=req.user_hint,
         matcher_model=matcher_model,
@@ -327,6 +320,7 @@ async def regenerate(req: RegenerateRequest):
     # and the previous_plan_id for reference
     analyze_req = AnalyzeRequest(
         bin_references=req.bin_references,
+        bin=req.bin,
         script=req.script,
         language=req.language,
         user_hint=req.user_hint,

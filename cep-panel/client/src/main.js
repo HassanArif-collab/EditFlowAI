@@ -64,6 +64,7 @@
 
         // Try to connect, then run preflight
         checkConnection().then(() => {
+            loadProjectContext();
             runPreflight();
             probeCapabilities();
         });
@@ -478,6 +479,11 @@
             }
 
             const bin = $('#sc-bin').value.trim();
+            if (!bin) {
+                $('#sc-progress').classList.remove('hidden');
+                $('#sc-progress').textContent = 'Please enter a source bin reference, for example @bin:MyTakes.';
+                return;
+            }
             const language = $('#sc-language').value;
 
             $('#sc-progress').classList.remove('hidden');
@@ -487,8 +493,8 @@
 
             try {
                 const resp = await apiPost('/edit/analyze', {
+                    bin_references: [bin],
                     script,
-                    bin: bin || undefined,
                     language: language !== 'auto' ? language : undefined,
                     client_id: CONFIG.clientId,
                 });
@@ -569,30 +575,31 @@
     }
 
     function initScriptCutTab() {
-        // Populate bin autocomplete from project scan data
-        const populate = () => {
-            const datalist = $('#sc-bin-options');
-            if (!datalist || !state.projectState || !state.projectState.bins) return;
-
-            datalist.innerHTML = '';
-            state.projectState.bins.forEach(bin => {
-                const opt = document.createElement('option');
-                opt.value = '@bin:' + (bin.name || bin);
-                datalist.appendChild(opt);
-            });
-        };
-
         // Populate immediately if project state already loaded
-        populate();
+        populateScriptCutBins();
 
         // Re-populate whenever project is scanned
-        const origScanProject = scanProject;
         // We watch for projectState changes via a MutationObserver-free approach:
         // simply re-populate when the Scan Project button is clicked
         const scanBtn = $('#btn-scan-project');
         if (scanBtn) {
-            scanBtn.addEventListener('click', () => setTimeout(populate, 2000));
+            scanBtn.addEventListener('click', () => setTimeout(populateScriptCutBins, 2000));
         }
+    }
+
+    function populateScriptCutBins() {
+        const datalist = $('#sc-bin-options');
+        if (!datalist) return;
+
+        datalist.innerHTML = '';
+        const bins = (state.projectState && state.projectState.bins) || [];
+        bins.forEach(bin => {
+            const opt = document.createElement('option');
+            const value = bin.path || bin.name || bin;
+            opt.value = '@bin:' + value;
+            opt.label = bin.path || bin.name || value;
+            datalist.appendChild(opt);
+        });
     }
 
     function renderPlan(plan) {
@@ -786,6 +793,21 @@
         }
     }
 
+    async function loadProjectContext() {
+        try {
+            const context = await apiGet('/premiere/context');
+            if (!context) return;
+            state.projectState = {
+                items: context.items || [],
+                bins: context.bins || [],
+                sequences: context.sequences || [],
+            };
+            populateScriptCutBins();
+        } catch (e) {
+            console.warn('Failed to load Premiere context:', e);
+        }
+    }
+
     function renderPreflightChecks(checks) {
         const container = $('#preflight-checks');
         if (!container) return;
@@ -867,6 +889,41 @@
             }
         } catch (e) {
             console.warn('Capability probe failed:', e);
+        }
+    }
+
+    async function postPremiereStatusCapabilities() {
+        const projectOpen = !!(
+            (state.projectState && (
+                state.projectState.path ||
+                (state.projectState.bins && state.projectState.bins.length) ||
+                (state.projectState.items && state.projectState.items.length) ||
+                (state.projectState.sequences && state.projectState.sequences.length)
+            )) ||
+            state.sequenceState
+        );
+        const activeSequence = !!(
+            state.sequenceState ||
+            (state.projectState && state.projectState.sequences && state.projectState.sequences.length)
+        );
+
+        if (!projectOpen) return;
+
+        try {
+            await apiPost('/preflight/capabilities', {
+                qe_available: false,
+                qe_razor: false,
+                marker_seconds: false,
+                frame_size: false,
+                project_has_path: true,
+                active_sequence: activeSequence,
+                premiere_version: 'unknown',
+                panel_version: '2',
+                source: 'project_context'
+            });
+            await runPreflight();
+        } catch (e) {
+            console.warn('Failed to post Premiere status capabilities:', e);
         }
     }
 
@@ -1047,6 +1104,7 @@
                     bins: [],
                     sequences: [state.sequenceState],
                 });
+                await postPremiereStatusCapabilities();
 
                 addChatMessage('assistant', `Synced sequence **${state.sequenceState.name || 'Active'}** with ${state.sequenceState.videoTracks?.length || 0} video and ${state.sequenceState.audioTracks?.length || 0} audio tracks.`);
             }
@@ -1074,6 +1132,8 @@
 
                 const itemCount = (state.projectState.items || []).length;
                 const binCount = (state.projectState.bins || []).length;
+                populateScriptCutBins();
+                await postPremiereStatusCapabilities();
                 addChatMessage('assistant', `Scanned project: **${binCount}** bins, **${itemCount}** items. Context synced with the AI.`);
             }
         } catch (e) {
