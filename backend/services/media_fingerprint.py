@@ -6,7 +6,14 @@ Computes deterministic fingerprints for media files so that:
 2. Identical files in different folders are recognised as duplicates.
 3. A file whose content has changed gets a new fingerprint, invalidating caches.
 
-The fingerprint is a SHA-256 hex digest of the file's byte content.
+The content hash (the "identity" of a source file) is:
+    SHA-256( first_16MB || size_bytes || duration_seconds )
+
+This is stable across renames/moves, and cheap for large files (we only
+read the first 16 MiB, not the entire file).  The size and duration are
+appended as decimal ASCII so that truncating a file produces a different
+hash even if the first 16 MiB happen to be identical.
+
 For audio files we also compute a "waveform fingerprint" — the SHA-256 of
 the raw PCM data after decoding to 16 kHz mono — so that files with
 different containers but identical audio content share the same audio
@@ -15,7 +22,7 @@ fingerprint.
 Phase B deliverable: every media file that enters the pipeline gets
 fingerprinted before any expensive work (audio extraction, transcription)
 is done.  All downstream caches (audio WAV cache, transcript cache) are
-keyed by fingerprint, not by file path.
+keyed by content hash, not by file path.
 """
 from __future__ import annotations
 
@@ -30,17 +37,25 @@ logger = logging.getLogger(__name__)
 # Buffer size for streaming hash computation — 1 MiB.
 _BUF_SIZE = 1 << 20
 
+# How many bytes of the file to read for the content hash.
+# Plan says "first 16 MB" — large enough to be unique, small enough
+# to be fast even on slow disks.
+_HEAD_SIZE = 16 * (1 << 20)  # 16 MiB
 
-def compute_file_fingerprint(path: str | Path) -> str:
-    """Compute a SHA-256 fingerprint of a file's byte content.
 
-    This is a *file-level* fingerprint: two files with identical byte content
-    (even if they live at different paths) produce the same fingerprint.
-    Two files with different byte content produce different fingerprints
-    (barring a SHA-256 collision, which is computationally infeasible).
+def compute_content_hash(path: str | Path, duration: float | None = None) -> str:
+    """Compute the content-addressed identity hash for a media file.
+
+    Per the plan: ``sha256(first_16MB || size || duration)``.
+
+    This is the *identity* of a source file — stable across renames and
+    moves.  Only reading the first 16 MiB makes this fast for very large
+    files (a 90-minute interview won't keep the disk busy for seconds).
 
     Args:
         path: Path to the file.
+        duration: Duration in seconds.  If None, 0.0 is used (the caller
+            should obtain this from ffprobe for best accuracy).
 
     Returns:
         64-character lowercase hex string (SHA-256 digest).
@@ -53,14 +68,31 @@ def compute_file_fingerprint(path: str | Path) -> str:
     if not path.exists():
         raise FileNotFoundError(f"Cannot fingerprint non-existent file: {path}")
 
+    file_size = path.stat().st_size
     h = hashlib.sha256()
+
+    # 1. Hash the first _HEAD_SIZE bytes (or the whole file if smaller)
+    bytes_to_read = min(_HEAD_SIZE, file_size)
     with open(path, "rb") as f:
-        while True:
-            chunk = f.read(_BUF_SIZE)
+        remaining = bytes_to_read
+        while remaining > 0:
+            chunk = f.read(min(_BUF_SIZE, remaining))
             if not chunk:
                 break
             h.update(chunk)
+            remaining -= len(chunk)
+
+    # 2. Append the file size as decimal ASCII
+    h.update(str(file_size).encode("ascii"))
+
+    # 3. Append the duration as decimal ASCII (0.0 if unknown)
+    h.update(str(duration or 0.0).encode("ascii"))
+
     return h.hexdigest()
+
+
+# Backward-compatible alias: the old name is used throughout the codebase.
+compute_file_fingerprint = compute_content_hash
 
 
 def compute_audio_fingerprint(path: str | Path) -> str:

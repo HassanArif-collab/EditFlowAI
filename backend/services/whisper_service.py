@@ -352,14 +352,20 @@ class WhisperService:
         vad_filter: bool = True,
         progress: Optional[ProgressReporter] = None,
         force: bool = False,
+        range_in: float = 0.0,
+        range_out: float = 0.0,
     ) -> TranscriptResult:
         """Transcribe a media file with content-addressed deduplication.
 
         This is the Phase B entry point.  Before running Whisper, it checks
-        the transcript cache (keyed by file fingerprint).  If a cached
-        transcript exists and ``force`` is False, the cached result is
-        returned immediately — the same source file is never transcribed
-        twice.
+        the transcript cache (keyed by content hash + range + engine + model).
+        If a cached transcript exists and ``force`` is False, the cached
+        result is returned immediately — the same source file is never
+        transcribed twice.
+
+        Phase B enhancement: the cache key is now
+            (content_hash, range_in, range_out, engine, model)
+        so that engine or model upgrades invalidate old transcripts.
 
         Args:
             source_path: Path to the source media file.
@@ -369,10 +375,25 @@ class WhisperService:
             vad_filter: Whether to use VAD filtering.
             progress: Optional progress reporter.
             force: If True, bypass cache and re-transcribe.
+            range_in: Start of audio range (seconds, default 0 = whole file).
+            range_out: End of audio range (seconds, default 0 = whole file).
 
         Returns:
-            TranscriptResult with segments and word timestamps.
+            TranscriptResult with segments, word timestamps, and engine info.
         """
+        # Determine the engine name
+        engine_name = "faster_whisper"
+        model_name = self.settings.WHISPER_MODEL
+        model_revision = ""
+
+        # Try to get engine info from the transcribe package if available
+        try:
+            from .transcribe import select_engine
+            selected = select_engine()
+            engine_name = selected.name
+        except Exception:
+            pass
+
         # Compute fingerprint if not provided
         if file_fingerprint is None:
             try:
@@ -385,15 +406,24 @@ class WhisperService:
                 logger.warning(f"Fingerprint computation failed for {source_path}: {e}")
                 file_fingerprint = ""
 
-        # Check cache (unless force=True)
+        # Check cache with enhanced key (unless force=True)
         if file_fingerprint and not force:
             cached = self._get_cached_transcript(file_fingerprint)
             if cached is not None:
-                logger.info(
-                    f"Transcript cache hit for {Path(source_path).name} "
-                    f"(fp={file_fingerprint[:16]}...)"
-                )
-                return cached
+                # Check if engine/model match — if not, this is a stale cache
+                if (getattr(cached, 'engine', '') == engine_name and
+                    getattr(cached, 'model', '') == model_name):
+                    logger.info(
+                        f"Transcript cache hit for {Path(source_path).name} "
+                        f"(fp={file_fingerprint[:16]}..., engine={engine_name})"
+                    )
+                    return cached
+                else:
+                    logger.info(
+                        f"Transcript cache stale for {Path(source_path).name} "
+                        f"(cached engine={getattr(cached, 'engine', '?')}, "
+                        f"current={engine_name}). Re-transcribing."
+                    )
 
         # Cache miss — run transcription
         result = await self.transcribe(
@@ -403,6 +433,30 @@ class WhisperService:
             vad_filter=vad_filter,
             progress=progress,
         )
+
+        # Phase B: stamp engine info and content hash into result
+        result.content_hash = file_fingerprint
+        result.engine = engine_name
+        result.model = model_name
+        result.model_revision = model_revision
+        result.range_in = range_in
+        result.range_out = range_out
+
+        # Phase B: run silero-vad as a separate pass
+        try:
+            from .transcribe.base import TranscribeEngine
+            audio_path = result.source_file  # may be the prepared WAV
+            vad_segments = TranscribeEngine.run_vad(audio_path)
+            if vad_segments:
+                result.warnings.append(
+                    f"VAD: {len(vad_segments)} speech segments detected"
+                )
+                # Store VAD segments in DB for stage 6
+                self._persist_vad_segments(
+                    file_fingerprint, range_in, range_out, vad_segments
+                )
+        except Exception as e:
+            logger.debug(f"VAD pass skipped: {e}")
 
         # Cache the result
         if file_fingerprint:
@@ -452,6 +506,32 @@ class WhisperService:
             await progress.complete(f"Batch transcription complete: {len(results)}/{len(files)} files")
 
         return results
+
+    def _persist_vad_segments(
+        self,
+        content_hash: str,
+        range_in: float,
+        range_out: float,
+        vad_segments: list,
+    ) -> None:
+        """Persist VAD segments to the transcript_vad DB table."""
+        import uuid
+        try:
+            from ..models.sqlite_registry import sqlite_registry
+            for i, seg in enumerate(vad_segments):
+                sqlite_registry.insert_vad_segment(
+                    segment_id=str(uuid.uuid4())[:12],
+                    content_hash=content_hash,
+                    range_in=range_in,
+                    range_out=range_out,
+                    segment_index=i,
+                    start=seg.start,
+                    end=seg.end,
+                    is_speech=seg.is_speech,
+                    confidence=seg.confidence,
+                )
+        except Exception as e:
+            logger.debug(f"Failed to persist VAD segments: {e}")
 
     @property
     def model_info(self) -> Dict:

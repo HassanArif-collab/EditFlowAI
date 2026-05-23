@@ -83,6 +83,23 @@ class TranscriptResult(BaseModel):
     duration: float = 0.0
     segments: List[TranscriptSegment] = Field(default_factory=list)
     full_text: str = ""
+    # Phase B: content-addressed fields
+    content_hash: str = ""
+    range_in: float = 0.0
+    range_out: float = 0.0
+    audio_offset: float = 0.0
+    engine: str = "faster_whisper"  # "whisperx" | "stable_ts" | "faster_whisper"
+    model: str = ""
+    model_revision: str = ""
+    warnings: List[str] = Field(default_factory=list)
+
+
+class VADSegment(BaseModel):
+    """A single VAD (Voice Activity Detection) segment."""
+    start: float
+    end: float
+    is_speech: bool = True
+    confidence: float = 1.0
 
 
 # ── Provider Models ──

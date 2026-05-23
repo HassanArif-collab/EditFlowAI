@@ -247,6 +247,98 @@ class SQLiteRegistry:
                 probed_at TEXT NOT NULL,
                 PRIMARY KEY (premiere_version, panel_version)
             );
+
+            -- Phase B: Source file registry (content-addressed)
+            -- Replaces the old assets table for pipeline source files.
+            -- Keyed by content_hash so that moving/renaming a file does not
+            -- invalidate downstream caches.
+            CREATE TABLE IF NOT EXISTS source_files (
+                content_hash TEXT PRIMARY KEY,
+                path TEXT NOT NULL,
+                original_name TEXT NOT NULL,
+                file_size INTEGER NOT NULL DEFAULT 0,
+                duration REAL NOT NULL DEFAULT 0,
+                has_audio INTEGER NOT NULL DEFAULT 1,
+                audio_stream_index INTEGER NOT NULL DEFAULT 0,
+                audio_channel_layout TEXT NOT NULL DEFAULT 'mono',
+                clip_kind TEXT NOT NULL DEFAULT 'basic',
+                bin_path TEXT DEFAULT '',
+                fingerprint TEXT DEFAULT '',
+                audio_fingerprint TEXT DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'discovered',
+                warnings TEXT DEFAULT '[]',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_source_files_path
+                ON source_files(path);
+
+            CREATE INDEX IF NOT EXISTS idx_source_files_fingerprint
+                ON source_files(fingerprint);
+
+            -- Phase B: Transcript persistence (replaces old transcripts table)
+            -- One row per unique transcription of a (content_hash, range, engine, model).
+            CREATE TABLE IF NOT EXISTS source_transcripts (
+                id TEXT PRIMARY KEY,
+                content_hash TEXT NOT NULL,
+                range_in REAL NOT NULL DEFAULT 0,
+                range_out REAL NOT NULL DEFAULT 0,
+                audio_offset REAL NOT NULL DEFAULT 0,
+                language TEXT DEFAULT '',
+                engine TEXT NOT NULL DEFAULT 'faster_whisper',
+                model TEXT NOT NULL DEFAULT '',
+                model_revision TEXT DEFAULT '',
+                duration REAL DEFAULT 0,
+                full_text TEXT DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'pending',
+                warnings TEXT DEFAULT '[]',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(content_hash) REFERENCES source_files(content_hash)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_source_transcripts_cache_key
+                ON source_transcripts(content_hash, range_in, range_out, engine, model);
+
+            -- Phase B: Word-level transcript data
+            CREATE TABLE IF NOT EXISTS transcript_words (
+                id TEXT PRIMARY KEY,
+                transcript_id TEXT NOT NULL,
+                content_hash TEXT NOT NULL,
+                word_index INTEGER NOT NULL,
+                word TEXT NOT NULL,
+                normalized_word TEXT NOT NULL,
+                start REAL NOT NULL,
+                end REAL NOT NULL,
+                probability REAL DEFAULT 0,
+                is_filler INTEGER DEFAULT 0,
+                speaker_id TEXT DEFAULT '',
+                FOREIGN KEY(transcript_id) REFERENCES source_transcripts(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_transcript_words_lookup
+                ON transcript_words(content_hash, start);
+
+            CREATE INDEX IF NOT EXISTS idx_transcript_words_transcript
+                ON transcript_words(transcript_id, word_index);
+
+            -- Phase B: VAD segments from silero-vad (produced alongside transcription)
+            CREATE TABLE IF NOT EXISTS transcript_vad (
+                id TEXT PRIMARY KEY,
+                content_hash TEXT NOT NULL,
+                range_in REAL NOT NULL DEFAULT 0,
+                range_out REAL NOT NULL DEFAULT 0,
+                segment_index INTEGER NOT NULL,
+                start REAL NOT NULL,
+                end REAL NOT NULL,
+                is_speech INTEGER NOT NULL DEFAULT 1,
+                confidence REAL DEFAULT 1.0,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_transcript_vad_lookup
+                ON transcript_vad(content_hash, range_in, range_out);
             """
         )
 
@@ -436,6 +528,192 @@ class SQLiteRegistry:
         """
         return self.fetch_one(
             "SELECT * FROM premiere_capabilities ORDER BY probed_at DESC LIMIT 1"
+        )
+
+    # ── Phase B: Source file registry (content-addressed) ──
+
+    def upsert_source_file(
+        self,
+        content_hash: str,
+        path: str,
+        original_name: str,
+        file_size: int = 0,
+        duration: float = 0.0,
+        has_audio: bool = True,
+        audio_stream_index: int = 0,
+        audio_channel_layout: str = "mono",
+        clip_kind: str = "basic",
+        bin_path: str = "",
+        fingerprint: str = "",
+        audio_fingerprint: str = "",
+        status: str = "discovered",
+        warnings: str = "[]",
+    ) -> None:
+        """Insert or update a source file entry keyed by content_hash."""
+        from ..models.schemas import utc_now
+        now = utc_now()
+        self.execute(
+            """INSERT OR REPLACE INTO source_files
+            (content_hash, path, original_name, file_size, duration, has_audio,
+             audio_stream_index, audio_channel_layout, clip_kind, bin_path,
+             fingerprint, audio_fingerprint, status, warnings, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (content_hash, path, original_name, file_size, duration,
+             1 if has_audio else 0, audio_stream_index, audio_channel_layout,
+             clip_kind, bin_path, fingerprint, audio_fingerprint, status,
+             warnings, now, now),
+        )
+
+    def find_source_file(self, content_hash: str) -> Optional[Dict[str, Any]]:
+        """Look up a source file by its content hash."""
+        if not content_hash:
+            return None
+        return self.fetch_one(
+            "SELECT * FROM source_files WHERE content_hash = ? LIMIT 1",
+            (content_hash,),
+        )
+
+    def find_source_file_by_path(self, path: str) -> Optional[Dict[str, Any]]:
+        """Look up a source file by its current filesystem path."""
+        if not path:
+            return None
+        return self.fetch_one(
+            "SELECT * FROM source_files WHERE path = ? LIMIT 1",
+            (path,),
+        )
+
+    # ── Phase B: Transcript persistence ──
+
+    def upsert_source_transcript(
+        self,
+        transcript_id: str,
+        content_hash: str,
+        range_in: float = 0.0,
+        range_out: float = 0.0,
+        audio_offset: float = 0.0,
+        language: str = "",
+        engine: str = "faster_whisper",
+        model: str = "",
+        model_revision: str = "",
+        duration: float = 0.0,
+        full_text: str = "",
+        status: str = "completed",
+        warnings: str = "[]",
+    ) -> None:
+        """Insert or update a source transcript."""
+        from ..models.schemas import utc_now
+        now = utc_now()
+        self.execute(
+            """INSERT OR REPLACE INTO source_transcripts
+            (id, content_hash, range_in, range_out, audio_offset, language,
+             engine, model, model_revision, duration, full_text, status,
+             warnings, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (transcript_id, content_hash, range_in, range_out, audio_offset,
+             language, engine, model, model_revision, duration, full_text,
+             status, warnings, now, now),
+        )
+
+    def find_transcript_by_cache_key(
+        self,
+        content_hash: str,
+        range_in: float = 0.0,
+        range_out: float = 0.0,
+        engine: str = "faster_whisper",
+        model: str = "",
+    ) -> Optional[Dict[str, Any]]:
+        """Look up a transcript by the full cache key.
+
+        This is the primary lookup for the transcribe-once guarantee:
+        the cache key is (content_hash, range_in, range_out, engine, model).
+        """
+        return self.fetch_one(
+            """SELECT * FROM source_transcripts
+            WHERE content_hash = ? AND range_in = ? AND range_out = ?
+              AND engine = ? AND model = ?
+            LIMIT 1""",
+            (content_hash, range_in, range_out, engine, model),
+        )
+
+    # ── Phase B: Word-level transcript data ──
+
+    def insert_transcript_word(
+        self,
+        word_id: str,
+        transcript_id: str,
+        content_hash: str,
+        word_index: int,
+        word: str,
+        normalized_word: str,
+        start: float,
+        end: float,
+        probability: float = 0.0,
+        is_filler: bool = False,
+        speaker_id: str = "",
+    ) -> None:
+        """Insert a single transcript word."""
+        self.execute(
+            """INSERT OR REPLACE INTO transcript_words
+            (id, transcript_id, content_hash, word_index, word, normalized_word,
+             start, end, probability, is_filler, speaker_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (word_id, transcript_id, content_hash, word_index, word,
+             normalized_word, start, end, probability,
+             1 if is_filler else 0, speaker_id),
+        )
+
+    def find_transcript_words(
+        self, content_hash: str, start: float | None = None, end: float | None = None,
+    ) -> List[Dict[str, Any]]:
+        """Look up transcript words for a source file, optionally filtered by time range."""
+        if start is not None and end is not None:
+            return self.fetch_all(
+                """SELECT * FROM transcript_words
+                WHERE content_hash = ? AND start >= ? AND end <= ?
+                ORDER BY word_index""",
+                (content_hash, start, end),
+            )
+        return self.fetch_all(
+            """SELECT * FROM transcript_words
+            WHERE content_hash = ?
+            ORDER BY word_index""",
+            (content_hash,),
+        )
+
+    # ── Phase B: VAD segments ──
+
+    def insert_vad_segment(
+        self,
+        segment_id: str,
+        content_hash: str,
+        range_in: float,
+        range_out: float,
+        segment_index: int,
+        start: float,
+        end: float,
+        is_speech: bool = True,
+        confidence: float = 1.0,
+    ) -> None:
+        """Insert a single VAD segment."""
+        from ..models.schemas import utc_now
+        self.execute(
+            """INSERT OR REPLACE INTO transcript_vad
+            (id, content_hash, range_in, range_out, segment_index,
+             start, end, is_speech, confidence, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (segment_id, content_hash, range_in, range_out, segment_index,
+             start, end, 1 if is_speech else 0, confidence, utc_now()),
+        )
+
+    def find_vad_segments(
+        self, content_hash: str, range_in: float = 0.0, range_out: float = 0.0,
+    ) -> List[Dict[str, Any]]:
+        """Look up VAD segments for a source file + range."""
+        return self.fetch_all(
+            """SELECT * FROM transcript_vad
+            WHERE content_hash = ? AND range_in = ? AND range_out = ?
+            ORDER BY segment_index""",
+            (content_hash, range_in, range_out),
         )
 
     @staticmethod
