@@ -72,9 +72,9 @@ projectScanner = (function() {
                 info.type = "sequence";
             }
 
-            info.mediaPath = item.getMediaPath ? item.getMediaPath() : "";
-            info.hasVideo = editflowUtils.hasVideo(item);
-            info.hasAudio = editflowUtils.hasAudio(item);
+            info.mediaPath = editflowUtils.getMediaPath(item);
+            info.hasVideo = !!editflowUtils.hasVideo(item);
+            info.hasAudio = !!editflowUtils.hasAudio(item);
 
             if (item.getDuration) {
                 info.duration = editflowUtils.ticksToSeconds({ ticks: String(item.getDuration()) });

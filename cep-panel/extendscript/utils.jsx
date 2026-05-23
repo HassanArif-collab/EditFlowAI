@@ -36,12 +36,34 @@ editflowUtils = (function() {
         return 0;
     }
 
+    function getMediaPath(item) {
+        try {
+            return item && item.getMediaPath ? String(item.getMediaPath() || "") : "";
+        } catch (e) {
+            return "";
+        }
+    }
+
     function hasVideo(item) {
-        try { return item && item.hasVideo && item.hasVideo(); } catch (e) { return false; }
+        try {
+            if (item && typeof item.hasVideo === "function") {
+                return !!item.hasVideo();
+            }
+        } catch (e) {}
+
+        var path = getMediaPath(item).toLowerCase();
+        return /\.(mov|mp4|m4v|avi|mxf|mts|m2ts|mpg|mpeg|webm)$/i.test(path);
     }
 
     function hasAudio(item) {
-        try { return item && item.hasAudio && item.hasAudio(); } catch (e) { return false; }
+        try {
+            if (item && typeof item.hasAudio === "function") {
+                return !!item.hasAudio();
+            }
+        } catch (e) {}
+
+        var path = getMediaPath(item).toLowerCase();
+        return /\.(mov|mp4|m4v|avi|mxf|mts|m2ts|mpg|mpeg|webm|wav|mp3|aac|m4a|aif|aiff)$/i.test(path);
     }
 
     function findBin(parent, binName) {
@@ -73,6 +95,7 @@ editflowUtils = (function() {
         addTicks: addTicks,
         subTicks: subTicks,
         getSequenceEnd: getSequenceEnd,
+        getMediaPath: getMediaPath,
         hasVideo: hasVideo,
         hasAudio: hasAudio,
         findBin: findBin,

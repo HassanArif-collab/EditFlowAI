@@ -308,7 +308,7 @@ def _build_resolved_clip(it: dict) -> ResolvedClip:
         name=it.get("name", ""),
         bin_path=it.get("binPath", ""),
         duration=duration,
-        has_audio=it.get("hasAudio", False),
+        has_audio=_item_has_usable_audio(it),
         content_hash=content_hash,
         project_item_node_id=project_item_node_id,
         audio_stream_index=audio_stream_index,
@@ -316,6 +316,24 @@ def _build_resolved_clip(it: dict) -> ResolvedClip:
         clip_kind=clip_kind,
         warnings=warnings,
     )
+
+
+def _item_has_usable_audio(it: dict) -> bool:
+    """Return whether a scanned Premiere item is worth trying as audio media.
+
+    Some Premiere DOM versions do not expose ProjectItem.hasAudio(), so the
+    CEP scan may omit hasAudio entirely. In that case, infer from media path.
+    """
+    explicit = it.get("hasAudio", it.get("has_audio"))
+    if explicit is not None:
+        return bool(explicit)
+
+    media_path = (it.get("mediaPath") or it.get("media_path") or "").lower()
+    return media_path.endswith((
+        ".mov", ".mp4", ".m4v", ".avi", ".mxf", ".mts", ".m2ts",
+        ".mpg", ".mpeg", ".webm", ".wav", ".mp3", ".aac", ".m4a",
+        ".aif", ".aiff",
+    ))
 
 
 def _resolve_bin(
@@ -374,7 +392,7 @@ def _resolve_bin(
 
             # Skip items without mediaPath or without audio
             # Plan: "still image / graphic / title: silently dropped (has_audio == False)"
-            has_audio = it.get("hasAudio", False)
+            has_audio = _item_has_usable_audio(it)
             if not media_path or not has_audio:
                 continue
 
@@ -417,7 +435,7 @@ def _resolve_clip(
     clips: list[ResolvedClip] = []
     for it in matching:
         media_path = it.get("mediaPath", "")
-        if not media_path:
+        if not media_path or not _item_has_usable_audio(it):
             continue
         clips.append(_build_resolved_clip(it))
 

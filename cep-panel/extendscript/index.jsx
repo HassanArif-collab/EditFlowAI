@@ -190,6 +190,7 @@ function editflowDispatch(command, payloadData) {
     switch (command) {
         // ── Project Scanning ──
         case "scanProject":
+        case "scanProjectMedia":
         case "getProjectState":
             result = projectScanner.scanAll();
             break;

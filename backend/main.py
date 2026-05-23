@@ -4,9 +4,11 @@ Simplified video editing pipeline: analyze, cut, place visuals.
 """
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from .config import init_dirs
 from .routes import chat, edit, media, models_routes, pipeline, preflight, premiere, providers, script_extract
@@ -82,14 +84,13 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS — only allow local browser tooling.
-# "null" origin (sandboxed iframes / file://) and a broad file:// regex were
-# removed because they let any local HTML page hit the API. If the CEP panel
-# can't reach the backend after this change, serve its index.html from the same
-# host (app.mount("/panel", StaticFiles(...))) rather than weakening CORS.
+# CORS — allow local browser tooling and Adobe CEP's local-file origin.
+# CEP loads the panel from the extension folder, so fetch() requests can arrive
+# with Origin: null. Without this, the Scan Project button can fail at /api/ping
+# before it ever reaches the Premiere project scanner.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8765", "http://127.0.0.1:8765"],
+    allow_origins=["http://localhost:8765", "http://127.0.0.1:8765", "null"],
     allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=False,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -106,6 +107,10 @@ app.include_router(premiere.router, prefix="/api")
 app.include_router(preflight.router, prefix="/api")
 app.include_router(edit.router, prefix="/api")
 app.include_router(script_extract.router)
+
+panel_dir = Path(__file__).parent.parent / "cep-panel" / "client"
+if panel_dir.exists():
+    app.mount("/panel", StaticFiles(directory=panel_dir, html=True), name="panel")
 
 
 @app.get("/")

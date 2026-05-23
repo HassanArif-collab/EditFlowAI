@@ -2,7 +2,7 @@
  * autocomplete.js — @bin/@clip autocomplete popup for EditFlow input.
  *
  * Attaches to the chat textarea. When the user types @, queries
- * /api/v2/references/premiere-bins and /api/v2/assets/search
+ * /api/premiere/bins and /api/premiere/items (client-side filter)
  * to suggest bins and clips.
  */
 import { apiGet } from './api.js';
@@ -84,39 +84,48 @@ function _createPopup(inputEl) {
 async function _fetchSuggestions(query) {
   try {
     const results = [];
+    const q = (query || '').toLowerCase();
 
-    // Fetch bins
+    // Fetch bins from the actual Premiere context (set by scan)
+    let bins = [];
+    let items = [];
     try {
-      const binsResp = await apiGet(`/api/v2/references/premiere-bins?limit=20`, { timeoutMs: 3000 });
-      const bins = binsResp.bins || binsResp || [];
-      for (const bin of bins) {
-        if (!query || (bin.name && bin.name.toLowerCase().includes(query.toLowerCase()))) {
-          results.push({
-            type: 'bin',
-            name: bin.name,
-            detail: `${bin.item_count || bin.itemCount || '?'} clips`,
-            binPath: bin.path || bin.binPath || '',
-            icon: '&#128193;', // folder
-          });
-        }
-      }
-    } catch (_) { /* bins endpoint may not be available */ }
+      const binsResp = await apiGet(`/api/premiere/bins`, { timeoutMs: 3000 });
+      bins = binsResp.bins || [];
+    } catch (_) { /* premiere context may be empty until scan */ }
 
-    // Fetch clips/assets
-    if (query) {
+    for (const bin of bins) {
+      const name = bin.name || '';
+      if (!q || name.toLowerCase().includes(q)) {
+        results.push({
+          type: 'bin',
+          name,
+          detail: `${bin.itemCount || bin.item_count || '?'} clips`,
+          binPath: bin.path || bin.binPath || '',
+          icon: '&#128193;', // folder
+        });
+      }
+    }
+
+    // Fetch items (clips) from the same context — filter client-side
+    if (q) {
       try {
-        const clipsResp = await apiGet(`/api/v2/assets/search?q=${encodeURIComponent(query)}&limit=10`, { timeoutMs: 3000 });
-        const clips = clipsResp.assets || clipsResp.results || clipsResp || [];
-        for (const clip of clips) {
+        const itemsResp = await apiGet(`/api/premiere/items?limit=200`, { timeoutMs: 3000 });
+        items = itemsResp.items || [];
+      } catch (_) { /* premiere context may be empty until scan */ }
+
+      for (const item of items) {
+        const name = item.name || '';
+        if (name.toLowerCase().includes(q)) {
           results.push({
             type: 'clip',
-            name: clip.name || clip.original_name || 'Unknown',
-            detail: clip.duration ? `${_fmtDur(clip.duration)}` : '',
-            mediaPath: clip.path || clip.media_path || '',
+            name,
+            detail: item.duration ? `${_fmtDur(item.duration)}` : '',
+            mediaPath: item.mediaPath || item.media_path || '',
             icon: '&#127909;', // movie
           });
         }
-      } catch (_) { /* clips endpoint may not be available */ }
+      }
     }
 
     _items = results.slice(0, 8);

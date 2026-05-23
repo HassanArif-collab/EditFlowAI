@@ -121,23 +121,12 @@ async function _handleOSFiles(files) {
 }
 
 async function _handleDirectory(file) {
-  // CEP panels can access file.path for real OS paths
-  const dirPath = file.path;
-  if (!dirPath) {
-    appendMessage('error', { text: 'Cannot determine folder path. Try dropping individual files.' });
-    return;
-  }
-
-  try {
-    const result = await apiPost('/api/v2/assets/scan-folder', { folder_path: dirPath });
-    const count = result.assets_discovered || result.count || 0;
-    appendMessage('agent-text', {
-      text: `Scanned folder: ${count} media file(s) found.`,
-    });
-    _onMediaDrop({ type: 'folder', path: dirPath, result });
-  } catch (err) {
-    appendMessage('error', { text: `Failed to scan folder: ${err.message}` });
-  }
+  // This backend operates on bins already inside the Premiere project, not
+  // on raw OS folders. Tell the user to import the folder into Premiere first.
+  const dirName = file.name || 'this folder';
+  appendMessage('agent-text', {
+    text: `Drag "${dirName}" into a bin inside Premiere first, then drop that bin onto this panel.`,
+  });
 }
 
 async function _handlePProDrop() {

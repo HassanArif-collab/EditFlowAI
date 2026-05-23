@@ -1,7 +1,7 @@
 /**
  * diagnostics.js — Header diagnostics popover for EditFlow.
  *
- * Fetches GET /api/v2/system/status and renders a read-only popover.
+ * Fetches GET /api/status (+ /api/preflight) and renders a read-only popover.
  */
 import { apiGet } from './api.js';
 
@@ -49,14 +49,13 @@ async function _show(popEl) {
   popEl.innerHTML = '<div class="popover-title">Diagnostics</div><div style="color:var(--text-dim)">Loading...</div>';
 
   try {
-    // Try the v2 status endpoint first
-    let data;
+    // /api/status is the canonical status endpoint on this backend.
+    // /api/preflight returns environment checks; merge both for a fuller picture.
+    let data = await apiGet('/api/status', { timeoutMs: 5000 });
     try {
-      data = await apiGet('/api/v2/system/status', { timeoutMs: 5000 });
-    } catch (_) {
-      // Fallback to the /api/status endpoint
-      data = await apiGet('/api/status', { timeoutMs: 5000 });
-    }
+      const preflight = await apiGet('/api/preflight', { timeoutMs: 3000 });
+      data = { ...data, preflight };
+    } catch (_) { /* preflight is bonus; status alone is enough */ }
 
     popEl.innerHTML = _renderDiagnostics(data);
   } catch (err) {

@@ -4,7 +4,7 @@
  * Listens to state transitions and emits chat messages + side effects.
  * Owns the LLM prompts and coordinates the pipeline stages.
  */
-import { getState, setSession, transition, transitionError, transitionBack, subscribe, resetState } from './state.js';
+import { getState, setState, setSession, transition, transitionError, transitionBack, subscribe, resetState } from './state.js';
 import { apiGet, apiPost } from './api.js';
 import { callExtendScript, scanProjectMedia, isExtendScriptAvailable } from './extendscript.js';
 import { appendMessage, updateProgress, clearChat, scrollToBottom } from './chat-ui.js';
@@ -19,7 +19,6 @@ const PROMPT_FIND_SCRIPT = `You are EditFlow, an AI editing assistant. The user 
 
 // ── Progress tracking ────────────────────────────────────────
 let _progressMsgId = null;
-let _jobStatuses = {};
 
 // ── Public API ───────────────────────────────────────────────
 
@@ -58,7 +57,7 @@ async function onScanClicked() {
     } else {
       // Try the REST endpoint (for development/testing outside Premiere)
       try {
-        const resp = await apiGet('/api/project/context', { timeoutMs: 5000 });
+        const resp = await apiGet('/api/premiere/context', { timeoutMs: 5000 });
         scanResult = resp;
       } catch (_) {
         // No project context yet — show a helpful message
@@ -71,7 +70,14 @@ async function onScanClicked() {
 
     // POST scan result to backend
     try {
-      await apiPost('/api/project/context', scanResult, { timeoutMs: 10000 });
+      // The backend's /api/premiere/context expects {items, bins, sequences}.
+      // scanProjectMedia returns the same keys at top level — pass through.
+      const ctx = {
+        items: scanResult.items || [],
+        bins: scanResult.bins || [],
+        sequences: scanResult.sequences || [],
+      };
+      await apiPost('/api/premiere/context', ctx, { timeoutMs: 10000 });
     } catch (err) {
       console.warn('[orchestrator] Failed to POST context:', err);
     }
@@ -98,7 +104,7 @@ function onScanComplete(scanResult) {
     const binItems = items.filter(item =>
       (item.binPath || item.bin_path || '') === (bin.path || bin.binPath || '')
     );
-    const audioItems = binItems.filter(item => item.hasAudio || item.has_audio);
+    const audioItems = binItems.filter(_itemHasUsableAudio);
     const audioDuration = audioItems.reduce((sum, item) => sum + (item.duration || 0), 0);
     const hasAudio = audioItems.length > 0;
 
@@ -141,18 +147,19 @@ function onScanComplete(scanResult) {
  */
 async function onSourceProvided(source) {
   const state = getState();
+  const sourceRef = _sourceToReference(source);
 
   // Show user message
   if (source.type === 'bin') {
-    appendMessage('user-text', { text: `@bin:${source.name}` });
+    appendMessage('user-text', { text: sourceRef });
   } else if (source.type === 'clip') {
-    appendMessage('user-text', { text: `@clip:${source.name}` });
+    appendMessage('user-text', { text: sourceRef });
   } else {
     appendMessage('user-text', { text: source.name || source.path || 'Dropped file(s)' });
   }
 
   // Add to sources list
-  const sources = [...(state.session.sources || []), source];
+  const sources = _addSource(state.session.sources || [], source);
   setSession({ sources });
 
   if (state.current === 'idle') {
@@ -168,7 +175,7 @@ async function onSourceProvided(source) {
     await _addTranscriptionJobs(source);
   } else if (state.current === 'script_needed') {
     // Already past transcription — just add source info
-    appendMessage('agent-text', { text: `Noted: ${source.name}. I'll include this in the edit.` });
+    appendMessage('agent-text', { text: `Noted: ${sourceRef}. I'll include this in the edit.` });
   }
 }
 
@@ -197,16 +204,17 @@ async function onPProItemsProvided(items) {
   appendMessage('user-text', { text: parts.join(' + ') });
 
   // Process each item
+  let sources = state.session.sources || [];
   for (const item of items) {
     const source = {
       type: item.isBin || item.is_bin ? 'bin' : 'clip',
       name: item.name,
       path: item.binPath || item.bin_path || '',
       mediaPath: item.mediaPath || item.media_path || '',
-      hasAudio: item.hasAudio || item.has_audio || false,
+      hasAudio: item.hasAudio ?? item.has_audio,
       duration: item.duration || 0,
     };
-    const sources = [...(state.session.sources || []), source];
+    sources = _addSource(sources, source);
     setSession({ sources });
 
     if (state.current === 'scanned' || state.current === 'source_picked') {
@@ -225,28 +233,12 @@ async function onMediaFileDropped(file) {
 
   appendMessage('user-text', { text: file.name });
 
-  // Register the asset with the backend
-  try {
-    const result = await apiPost('/api/v2/assets/register', {
-      path: filePath,
-      name: file.name,
-    });
-    source.assetId = result.id || result.asset_id;
-  } catch (err) {
-    appendMessage('error', { text: `Failed to register ${file.name}: ${err.message}` });
-    return;
-  }
-
-  const sources = [...(state.session.sources || []), source];
-  setSession({ sources });
-
-  if (state.current === 'scanned' || state.current === 'source_picked' || state.current === 'idle') {
-    // Ensure we're past scan stage
-    if (state.current === 'idle') {
-      transition('scan_clicked');
-    }
-    await _startTranscription(source);
-  }
+  // The MVP backend works against clips already in the Premiere project,
+  // not separately-registered files. Tell the user to drag the file into a
+  // Premiere bin first, then drop that bin onto this panel.
+  appendMessage('agent-text', {
+    text: `I can't add raw files yet. Drag "${file.name}" into a bin inside Premiere first, then drop that bin onto this panel.`,
+  });
 }
 
 /**
@@ -257,7 +249,11 @@ async function onScriptFileDropped(file) {
 
   appendMessage('user-text', { text: `${file.name} — attached` });
 
-  if (state.current === 'script_needed') {
+  const hasSource = (state.session.sources || []).some(source => source.type === 'bin' || source.type === 'clip');
+  if (state.current === 'script_needed' || hasSource) {
+    if (state.current === 'error') {
+      setState({ current: 'script_needed' });
+    }
     await _processScriptFile(file);
   } else {
     // Hold the script for later
@@ -274,20 +270,15 @@ async function onUserMessage(text) {
   text = text.trim();
   if (!text) return;
 
-  // Check for @ references
-  if (text.startsWith('@bin:') || text.startsWith('@clip:')) {
-    const match = text.match(/^@(bin|clip):(.+)/i);
-    if (match) {
-      await onSourceProvided({ type: match[1], name: match[2].trim() });
-      return;
-    }
-  }
+  const sourceRefs = _extractSourceReferences(text);
+  const canPickSource =
+    state.current === 'scanned' ||
+    state.current === 'source_picked' ||
+    (state.current === 'script_needed' && _looksLikeSourceCommand(text));
 
-  // Check for any @mention
-  const atRefs = text.match(/@(\w[^\s@]*)/g);
-  if (atRefs && (state.current === 'scanned' || state.current === 'source_picked')) {
-    for (const ref of atRefs) {
-      await onSourceProvided({ type: 'bin', name: ref.substring(1) });
+  if (sourceRefs.length > 0 && canPickSource) {
+    for (const source of sourceRefs) {
+      await onSourceProvided(source);
     }
     return;
   }
@@ -312,14 +303,12 @@ async function onUserMessage(text) {
   // Try LLM chat as fallback
   try {
     const resp = await apiPost('/api/chat/message', {
-      messages: [
-        { role: 'system', content: 'You are EditFlow, an AI editing assistant. Help the user with their video editing project. Be concise.' },
-        { role: 'user', content: text },
-      ],
+      message: `You are EditFlow, an AI editing assistant. Help the user with their video editing project. Be concise.\n\nUser: ${text}`,
+      session_id: state.session.clientId || 'panel-chat',
     });
     const reply = resp.choices?.[0]?.message?.content || resp.response || resp.message || '';
     if (reply) {
-      appendMessage('agent-text', { text: reply });
+      appendMessage('agent-text', { text: reply.content || reply });
     }
   } catch (_) {
     appendMessage('agent-text', { text: "I'm not sure how to help with that yet. Try scanning your project first." });
@@ -342,37 +331,26 @@ async function onApprovePlan() {
   });
 
   try {
-    // Execute the plan
-    const executeResult = await apiPost(`/api/v2/edit-plans/${planId}/execute`, {}, { timeoutMs: 60000 });
-    const edl = executeResult.virtual_edit_spec || executeResult.edl || executeResult;
+    // Apply the plan: backend builds ExtendScript ops, we dispatch via processEDL.
+    const applyResult = await apiPost(`/api/edit/plan/${planId}/apply`, {}, { timeoutMs: 60000 });
+    const extendscriptOps = applyResult.extendscript_ops || [];
+    const targetSeqName = applyResult.target_sequence_name || `EditFlow Cut`;
+    setSession({ edl: applyResult, targetSequenceName: targetSeqName });
 
-    setSession({ edl });
-
-    // Send EDL to Premiere via ExtendScript
     if (isExtendScriptAvailable()) {
       updateProgress(_progressMsgId, { pct: 50, detail: 'Placing clips in Premiere...' });
-
-      const edlPayload = edl.clips ? { ops: edl.clips } : edl;
-      await callExtendScript('processEDL', JSON.stringify(edlPayload));
-
-      updateProgress(_progressMsgId, { pct: 90, detail: 'Verifying...' });
-
-      // Optional: verify
-      try {
-        await apiPost(`/api/v2/edit-plans/${planId}/verify`, { sequence_state: {} }, { timeoutMs: 10000 });
-      } catch (_) { /* verification is optional */ }
+      await callExtendScript('processEDL', JSON.stringify({ ops: extendscriptOps }));
+      updateProgress(_progressMsgId, { pct: 100, detail: 'Done.' });
 
       transition('extendscript_done');
-      const seqName = state.session.targetSequenceName || `EditFlow Cut - ${new Date().toLocaleString()}`;
       appendMessage('success', {
-        text: `Done. "${seqName}" is in your Premiere project. Switch to Premiere to play it back.`,
+        text: `Done. "${targetSeqName}" is in your Premiere project. Switch to Premiere to play it back.`,
         newEditFn: onNewEdit,
       });
     } else {
-      // No ExtendScript — show the EDL data
       transition('extendscript_done');
       appendMessage('agent-text', {
-        text: `Plan executed. EDL data:\n${JSON.stringify(edl, null, 2).substring(0, 500)}...\n\nTo apply this, open the panel inside Premiere Pro.`,
+        text: `Plan applied. ${extendscriptOps.length} ExtendScript ops generated. To execute, open the panel inside Premiere Pro.`,
       });
     }
   } catch (err) {
@@ -390,14 +368,14 @@ async function onApprovePlan() {
  */
 async function onRegeneratePlan(hint) {
   const state = getState();
-  const scriptId = state.session.scriptId;
+  const scriptText = state.session.scriptText;
   const sources = state.session.sources;
 
   transition('regenerate_clicked');
   appendMessage('agent-text', { text: 'Regenerating plan with your hint...' });
 
   try {
-    await _createEditPlan(sources, scriptId, hint);
+    await _createEditPlan(sources, scriptText, hint);
   } catch (err) {
     transitionError(`Regeneration failed: ${err.message}`);
     appendMessage('error', {
@@ -423,66 +401,35 @@ function onNewEdit() {
   if (footer) footer.classList.add('hidden');
 }
 
-// ── Private: Transcription pipeline ──────────────────────────
+// ── Private: Source pickup (no separate transcribe step on this backend) ──
+//
+// The MVP backend's `/api/edit/analyze` runs the entire pipeline in one call:
+// resolve bin references → transcribe (cached per fingerprint) → match → plan.
+// So at source-pickup time we just collect the bin reference, optionally
+// pre-warm transcripts via `/api/media/transcribe` so the user sees progress,
+// and transition to `script_needed`. The expensive work runs inside
+// `_createEditPlan` when the script arrives.
 
 async function _startTranscription(source) {
   transition('source_provided');
 
-  let resolvedClips = [];
+  const clips = _resolveClipsFromScan(source);
+  const sourceRef = _sourceToReference(source);
 
-  // Resolve the reference to get actual clips
-  try {
-    const resolveResult = await apiPost('/api/v2/references/resolve', {
-      text: source.name,
-      kind: source.type,
-    }, { timeoutMs: 10000 });
-
-    resolvedClips = resolveResult.clips || resolveResult.items || resolveResult.assets || [];
-
-    if (resolvedClips.length === 0 && source.mediaPath) {
-      // If resolve failed but we have a media path, try registering
-      try {
-        const regResult = await apiPost('/api/v2/assets/register', {
-          path: source.mediaPath,
-          name: source.name,
-        });
-        resolvedClips = [regResult];
-      } catch (_) {}
-    }
-  } catch (err) {
-    // Resolve failed — try to register directly
-    if (source.mediaPath) {
-      try {
-        const regResult = await apiPost('/api/v2/assets/register', {
-          path: source.mediaPath,
-          name: source.name,
-        });
-        resolvedClips = [regResult];
-      } catch (regErr) {
-        appendMessage('agent-text', {
-          text: `Got it. Transcribing ${source.name}.`,
-        });
-        // Continue anyway — the resolve might work on retry
-      }
-    }
-  }
-
-  if (resolvedClips.length === 0) {
+  if (clips.length === 0) {
     appendMessage('agent-text', {
-      text: `Got it. I'll work with ${source.name}. Please share your script when ready.`,
+      text: `Got it. I'll work with ${sourceRef}. Share your script when ready.`,
     });
     transition('transcription_started');
-    setTimeout(() => {
-      transition('all_jobs_complete');
-      appendMessage('agent-text', {
-        text: 'Transcription complete. Now share your script \u2014 paste it below, or drop a .txt/.docx/.pdf onto this panel.',
-      });
-    }, 1000);
+    transition('all_jobs_complete');
+    appendMessage('agent-text', {
+      text: 'Now share your script — paste it below, or drop a .txt/.docx/.pdf onto this panel.',
+    });
     return;
   }
 
-  const clipCount = resolvedClips.length;
-  const totalDuration = resolvedClips.reduce((s, c) => s + (c.duration || 0), 0);
+  const clipCount = clips.length;
+  const totalDuration = clips.reduce((s, c) => s + (c.duration || 0), 0);
 
   appendMessage('agent-text', {
     text: `Got it. Transcribing ${clipCount} clip${clipCount > 1 ? 's' : ''}, ~${_fmtDur(totalDuration)} audio.`,
@@ -490,143 +437,104 @@ async function _startTranscription(source) {
 
   transition('transcription_started');
 
-  // Start async transcription jobs
-  _jobStatuses = {};
-  const jobIds = [];
-
-  for (const clip of resolvedClips) {
-    const assetId = clip.id || clip.asset_id;
-    if (!assetId) continue;
-
-    try {
-      const jobResult = await apiPost(`/api/v2/assets/${assetId}/analyze-async`, {}, { timeoutMs: 10000 });
-      const jobId = jobResult.job_id || jobResult.id;
-      if (jobId) {
-        jobIds.push(jobId);
-        _jobStatuses[jobId] = { status: 'pending', assetId, clipName: clip.name || clip.original_name || '' };
-      }
-    } catch (err) {
-      console.warn(`[orchestrator] Failed to start transcription for ${assetId}:`, err);
-    }
-  }
-
-  if (jobIds.length === 0) {
-    // No jobs started — skip to script_needed
-    transition('all_jobs_complete');
-    appendMessage('agent-text', {
-      text: 'No transcription jobs started. You can share your script now.',
-    });
-    return;
-  }
-
-  // Show progress
   _progressMsgId = appendMessage('progress', {
     label: 'Transcribing...',
     pct: 0,
-    detail: `0 of ${jobIds.length} complete`,
+    detail: `0 of ${clipCount} complete`,
   });
 
-  // Poll for job completion
-  _pollJobs(jobIds);
+  await _prewarmTranscripts(clips);
+
+  transition('all_jobs_complete');
+  appendMessage('agent-text', {
+    text: `Transcription complete (${clipCount} clip${clipCount !== 1 ? 's' : ''}). Now share your script — paste it below, or drop a .txt/.docx/.pdf onto this panel.`,
+  });
+
+  const state = getState();
+  if (state.session.pendingScriptFile) {
+    const file = state.session.pendingScriptFile;
+    setSession({ pendingScriptFile: null });
+    await _processScriptFile(file);
+  }
 }
 
 async function _addTranscriptionJobs(source) {
-  // Already in transcribing state — just resolve + start new jobs without re-triggering transitions
-  appendMessage('agent-text', { text: `Adding ${source.name} to transcription queue...` });
-
-  // Resolve the reference and start additional transcription jobs
-  let resolvedClips = [];
-  try {
-    const resolveResult = await apiPost('/api/v2/references/resolve', {
-      text: source.name,
-      kind: source.type,
-    }, { timeoutMs: 10000 });
-    resolvedClips = resolveResult.clips || resolveResult.items || resolveResult.assets || [];
-  } catch (err) {
-    if (source.mediaPath) {
-      try {
-        const regResult = await apiPost('/api/v2/assets/register', {
-          path: source.mediaPath,
-          name: source.name,
-        });
-        resolvedClips = [regResult];
-      } catch (_) {}
-    }
-  }
-
-  // Start additional async transcription jobs
-  for (const clip of resolvedClips) {
-    const assetId = clip.id || clip.asset_id;
-    if (!assetId) continue;
-    try {
-      const jobResult = await apiPost(`/api/v2/assets/${assetId}/analyze-async`, {}, { timeoutMs: 10000 });
-      const jobId = jobResult.job_id || jobResult.id;
-      if (jobId) {
-        _jobStatuses[jobId] = { status: 'pending', assetId, clipName: clip.name || clip.original_name || '' };
-      }
-    } catch (err) {
-      console.warn(`[orchestrator] Failed to start transcription for ${assetId}:`, err);
-    }
+  appendMessage('agent-text', { text: `Adding ${source.name} to the source list...` });
+  const clips = _resolveClipsFromScan(source);
+  if (clips.length > 0) {
+    await _prewarmTranscripts(clips);
   }
 }
 
-function _pollJobs(jobIds) {
-  let pollTimer = setInterval(async () => {
-    let completedCount = 0;
-    let failedCount = 0;
+/**
+ * Resolve a source (bin/clip ref) to a list of concrete clip records
+ * by walking the cached project scan. No backend call — the backend's
+ * `/api/edit/analyze` does its own authoritative resolve.
+ */
+function _resolveClipsFromScan(source) {
+  const state = getState();
+  const scan = state.session.scan || {};
+  const items = scan.items || scan.clips || [];
 
-    for (const jobId of jobIds) {
-      const jobInfo = _jobStatuses[jobId];
-      if (!jobInfo || jobInfo.status === 'completed' || jobInfo.status === 'failed') {
-        if (jobInfo?.status === 'completed') completedCount++;
-        if (jobInfo?.status === 'failed') failedCount++;
-        continue;
-      }
+  if (source.type === 'clip') {
+    const target = (source.name || source.path || '').toLowerCase();
+    return items.filter(it => {
+      if (!_itemHasUsableAudio(it)) return false;
+      const name = (it.name || '').toLowerCase();
+      const media = (it.mediaPath || it.media_path || '').toLowerCase();
+      return name === target || media.endsWith(target);
+    });
+  }
 
-      try {
-        const result = await apiGet(`/api/v2/jobs/${jobId}`, { timeoutMs: 3000 });
-        const status = result.status || 'unknown';
-        _jobStatuses[jobId].status = status;
+  const targets = [source.path, source.name]
+    .filter(Boolean)
+    .map(value => String(value).toLowerCase());
+  return items.filter(it => {
+    if (!_itemHasUsableAudio(it)) return false;
+    const binPath = (it.binPath || it.bin_path || '').toLowerCase();
+    if (!binPath) return false;
+    return targets.some(target => (
+      binPath === target ||
+      binPath.endsWith('/' + target) ||
+      binPath.split('/').pop() === target
+    ));
+  });
+}
 
-        if (status === 'completed') completedCount++;
-        if (status === 'failed') {
-          failedCount++;
-          appendMessage('error', {
-            text: `Transcription failed for ${jobInfo.clipName}: ${result.error || 'Unknown error'}`,
-          });
-        }
-      } catch (_) {
-        // Job polling failed — skip
-      }
+/**
+ * Pre-warm transcripts so the analyze step is fast and the user sees progress.
+ *
+ * Calls `/api/media/transcribe` per clip. Whisper caches by content fingerprint,
+ * so the later `/api/edit/analyze` call will not re-transcribe. The WS progress
+ * channel handles intra-clip progress; we count clips finished here.
+ */
+async function _prewarmTranscripts(clips) {
+  const state = getState();
+  const clientId = state.session.clientId || '';
+  let done = 0;
+
+  for (const clip of clips) {
+    const mediaPath = clip.mediaPath || clip.media_path;
+    if (!mediaPath) {
+      done++;
+      continue;
     }
 
-    const total = jobIds.length;
-    const pct = Math.round((completedCount + failedCount) / total * 100);
+    try {
+      const qs = new URLSearchParams({ path: mediaPath });
+      if (clientId) qs.set('client_id', clientId);
+      await apiPost(`/api/media/transcribe?${qs.toString()}`, null, { timeoutMs: 600000 });
+    } catch (err) {
+      console.warn(`[orchestrator] Pre-warm failed for ${mediaPath}:`, err);
+    }
+
+    done++;
+    const pct = Math.round((done / clips.length) * 100);
     updateProgress(_progressMsgId, {
       pct,
-      detail: `${completedCount} of ${total} complete${failedCount > 0 ? ` (${failedCount} failed)` : ''}`,
+      detail: `${done} of ${clips.length} complete`,
     });
-
-    if (completedCount + failedCount >= total) {
-      clearInterval(pollTimer);
-      transition('all_jobs_complete');
-
-      // Count total words from transcripts
-      const wordCount = Object.values(_jobStatuses).reduce((sum, j) => sum + (j.wordCount || 0), 0);
-
-      appendMessage('agent-text', {
-        text: `Transcription complete (${completedCount} take${completedCount !== 1 ? 's' : ''}${wordCount > 0 ? `, ${wordCount} words` : ''}). Now share your script \u2014 paste it below, or drop a .txt/.docx/.pdf onto this panel.`,
-      });
-
-      // If there's a pending script file, process it now
-      const state = getState();
-      if (state.session.pendingScriptFile) {
-        const file = state.session.pendingScriptFile;
-        setSession({ pendingScriptFile: null });
-        await _processScriptFile(file);
-      }
-    }
-  }, 2000);
+  }
 }
 
 // ── Private: Script pipeline ─────────────────────────────────
@@ -658,13 +566,11 @@ async function _processScriptFile(file) {
 async function _extractScriptWithLLM(fullText, filename) {
   try {
     const resp = await apiPost('/api/chat/message', {
-      messages: [
-        { role: 'system', content: PROMPT_FIND_SCRIPT },
-        { role: 'user', content: fullText.substring(0, 8000) }, // Truncate for LLM context
-      ],
+      message: `${PROMPT_FIND_SCRIPT}\n\nDocument (${filename}):\n${fullText.substring(0, 8000)}`,
+      session_id: 'script-extract',
     });
 
-    const reply = resp.choices?.[0]?.message?.content || resp.response || '';
+    const reply = resp.choices?.[0]?.message?.content || resp.response || resp.message?.content || '';
     let parsed;
     try {
       // Try to parse JSON from the reply
@@ -701,82 +607,83 @@ async function _extractScriptWithLLM(fullText, filename) {
 }
 
 async function _ingestScript(text) {
-  try {
-    const result = await apiPost('/api/v2/scripts/ingest', {
-      title: `Script ${new Date().toLocaleString()}`,
-      content: text,
-    });
+  // This backend has no separate `/scripts/ingest` endpoint - the script is
+  // passed directly to `/api/edit/analyze` along with the bin references.
+  // We keep the function name for state-machine compatibility.
+  setSession({ scriptText: text });
+  const state = getState();
+  transition(state.current === 'script_understood' ? 'script_confirmed' : 'script_provided');
+  appendMessage('agent-text', { text: 'Script received. Building your edit plan...' });
 
-    const scriptId = result.id || result.script_id;
-    setSession({ scriptId, scriptText: text });
-
-    // Transition to matching and create edit plan
-    transition('script_provided');
-    appendMessage('agent-text', { text: 'Script received. Building your edit plan...' });
-
-    await _createEditPlan(getState().session.sources, scriptId);
-  } catch (err) {
-    transitionError(`Script ingest failed: ${err.message}`);
-    appendMessage('error', {
-      text: `Failed to ingest script: ${err.message}`,
-      dismissFn: transitionBack,
-    });
-  }
+  const sources = getState().session.sources || [];
+  await _createEditPlan(sources, text);
 }
 
-// ── Private: Edit plan pipeline ──────────────────────────────
+// Private: Edit plan pipeline ==
 
-async function _createEditPlan(sources, scriptId, hint) {
+/**
+ * Build an edit plan. On this backend, `/api/edit/analyze` is one all-in-one
+ * call: resolve bin references -> transcribe (cached) -> match takes to script
+ * -> return plan_id + summary. We then GET the full plan for the plan card.
+ */
+async function _createEditPlan(sources, scriptText, hint) {
   try {
-    const payload = {
-      sources: sources.map(s => ({
-        type: s.type,
-        name: s.name,
-        path: s.path || s.mediaPath || '',
-        asset_id: s.assetId,
-      })),
-      script_id: scriptId,
-      operation: 'combine_assets_new_sequence',
-      constraints: hint ? { user_hint: hint } : {},
-    };
+    const binRefs = sources
+      .filter(s => s.type !== 'file')
+      .map(_sourceToReference);
 
-    const createResult = await apiPost('/api/v2/edit-plans/create', payload, { timeoutMs: 60000 });
-    const planId = createResult.plan_id || createResult.id;
+    if (binRefs.length === 0) {
+      throw new Error('No bin references collected. Pick a bin from Premiere first.');
+    }
+
+    const state = getState();
+    const payload = {
+      bin_references: binRefs,
+      script: scriptText || state.session.scriptText || '',
+      client_id: state.session.clientId || undefined,
+    };
+    if (hint) payload.user_hint = hint;
+
+    _progressMsgId = appendMessage('progress', {
+      label: 'Matching script to takes...',
+      pct: 10,
+      detail: 'Running matcher...',
+    });
+
+    const analyzeResult = await apiPost('/api/edit/analyze', payload, { timeoutMs: 600000 });
+    const planId = analyzeResult.plan_id;
 
     if (!planId) {
-      throw new Error('No plan ID returned from create');
+      throw new Error('Analyze returned no plan_id.');
     }
 
-    setSession({ planId });
+    updateProgress(_progressMsgId, { pct: 90, detail: 'Loading plan...' });
 
-    // Run dry-run
-    let dryRun = null;
+    let plan;
     try {
-      dryRun = await apiPost(`/api/v2/edit-plans/${planId}/dry-run`, {}, { timeoutMs: 30000 });
+      plan = await apiGet(`/api/edit/plan/${planId}`, { timeoutMs: 30000 });
     } catch (err) {
-      console.warn('[orchestrator] Dry-run failed:', err);
-      // Continue without dry-run
+      plan = analyzeResult;
     }
 
-    setSession({ dryRun });
-
-    // Transition to plan_ready
+    setSession({ planId, dryRun: plan });
     transition('dry_run_ready');
 
-    // Build plan card from the results
-    const plan = dryRun || createResult;
     const beats = _extractBeats(plan);
-    const totalDuration = plan.total_duration || plan.duration || 0;
-    const unmatched = beats.filter(b => b.unmatched).length;
+    const summary = plan.summary || analyzeResult.summary || {};
+    const totalDuration =
+      summary.total_duration || plan.total_duration || beats.reduce((s, b) => s + (b.duration || 0), 0);
+    const unmatched = summary.unmatched || beats.filter(b => b.unmatched).length;
+    const warnings = analyzeResult.warnings || plan.warnings || [];
+
+    if (warnings.length > 0) {
+      appendMessage('agent-text', { text: `Notes: ${warnings.slice(0, 3).join(' | ')}` });
+    }
 
     appendMessage('plan-card', {
-      intro: `I built a plan: **${beats.length} cuts**, ${_fmtDur(totalDuration)} total${unmatched > 0 ? `, ${unmatched} beat${unmatched > 1 ? 's' : ''} I couldn't match` : ''}.`,
+      intro: `I built a plan: ${beats.length} cuts, ${_fmtDur(totalDuration)} total${unmatched > 0 ? `, ${unmatched} beat${unmatched > 1 ? 's' : ''} unmatched` : ''}.`,
       planId,
-      plan: {
-        beats,
-        totalDuration,
-        unmatched,
-      },
+      plan: { beats, totalDuration, unmatched },
       onApprove: onApprovePlan,
       onRegenerate: onRegeneratePlan,
     });
@@ -830,15 +737,58 @@ function _extractBins(scanResult) {
 async function _narrateBinTour(bins, items) {
   try {
     const resp = await apiPost('/api/chat/message', {
-      messages: [
-        { role: 'system', content: PROMPT_BIN_TOUR },
-        { role: 'user', content: JSON.stringify({ bins, itemCount: items.length }) },
-      ],
+      message: `${PROMPT_BIN_TOUR}\n\nProject scan:\n${JSON.stringify({ bins, itemCount: items.length })}`,
+      session_id: 'bin-tour',
     }, { timeoutMs: 10000 });
-    return resp.choices?.[0]?.message?.content || resp.response || null;
+    return resp.message?.content || resp.response || null;
   } catch (_) {
     return null;
   }
+}
+
+function _itemHasUsableAudio(item) {
+  if (!item) return false;
+  if (item.hasAudio === true || item.has_audio === true) return true;
+  if (item.hasAudio === false || item.has_audio === false) return false;
+
+  const mediaPath = String(item.mediaPath || item.media_path || '').toLowerCase();
+  return /\.(mov|mp4|m4v|avi|mxf|mts|m2ts|mpg|mpeg|webm|wav|mp3|aac|m4a|aif|aiff)$/i.test(mediaPath);
+}
+
+function _addSource(sources, source) {
+  const sourceRef = _sourceToReference(source).toLowerCase();
+  if (!sourceRef) return sources;
+
+  const exists = sources.some(existing => _sourceToReference(existing).toLowerCase() === sourceRef);
+  return exists ? sources : [...sources, source];
+}
+
+function _sourceToReference(source) {
+  if (!source) return '';
+  if (source.type === 'bin') return `@bin:${source.path || source.name || ''}`;
+  if (source.type === 'clip') return `@clip:${source.name || source.path || ''}`;
+  return source.name || source.path || '';
+}
+
+function _extractSourceReferences(text) {
+  const refs = [];
+  const explicit = text.match(/@(bin|clip):([^\s,;]+)/gi) || [];
+  for (const ref of explicit) {
+    const match = ref.match(/^@(bin|clip):(.+)/i);
+    if (match) refs.push({ type: match[1].toLowerCase(), name: match[2].trim() });
+  }
+
+  const generic = text.match(/@([A-Za-z0-9_.-]+)/g) || [];
+  for (const ref of generic) {
+    if (/^@(bin|clip):/i.test(ref)) continue;
+    refs.push({ type: 'bin', name: ref.substring(1).trim() });
+  }
+
+  return refs;
+}
+
+function _looksLikeSourceCommand(text) {
+  return /\b(use|work|analy[sz]e|select|choose|pick|source|clips?|bins?|footage|takes?|inside|from)\b/i.test(text);
 }
 
 function _fmtDur(seconds) {

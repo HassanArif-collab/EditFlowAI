@@ -21,7 +21,11 @@ async function initExtendScript() {
     _csInterface = new CSInterface(); // eslint-disable-line no-undef
 
     // Load the ExtendScript index.jsx which in turn loads all modules
-    const extensionRoot = _csInterface.getSystemPath(SystemPath.EXTENSION) || // eslint-disable-line no-undef
+    const extensionPathKey =
+      (_csInterface.SYSTEM_PATH && _csInterface.SYSTEM_PATH.EXTENSION) ||
+      (typeof SystemPath !== 'undefined' && SystemPath.EXTENSION) || // eslint-disable-line no-undef
+      'extension';
+    const extensionRoot = _csInterface.getSystemPath(extensionPathKey) ||
                           _csInterface.getSystemPath('extension');
 
     await callExtendScript('editflowConfigureExtensionRoot', extensionRoot);

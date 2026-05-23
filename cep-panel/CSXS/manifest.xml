@@ -23,7 +23,7 @@
         <Extension Id="com.editflow.ai.panel">
             <DispatchInfo>
                 <Resources>
-                    <MainPath>./client/index.html</MainPath>
+                    <MainPath>./client/cep-loader.html</MainPath>
                     <ScriptPath>./extendscript/index.jsx</ScriptPath>
                     <CEFCommandLine>
                         <Parameter>--allow-file-access-from-files</Parameter>
