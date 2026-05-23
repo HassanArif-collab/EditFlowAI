@@ -387,9 +387,10 @@ class TestRunChecks(unittest.TestCase):
              patch.object(svc, "check_chat_provider", new=AsyncMock(return_value=green)), \
              patch.object(svc, "check_embedding_model", new=AsyncMock(return_value=green)), \
              patch.object(svc, "check_disk_space", new=AsyncMock(return_value=green)), \
+             patch.object(svc, "check_premiere_project", new=AsyncMock(return_value=green)), \
              patch.object(svc, "check_python_version", new=AsyncMock(return_value=green)):
             result = _run(svc.run_checks())
-            self.assertEqual(len(result.checks), 8)
+            self.assertEqual(len(result.checks), 9)
             self.assertTrue(result.ready)
 
     def test_ready_false_when_one_red(self):
@@ -404,6 +405,7 @@ class TestRunChecks(unittest.TestCase):
             "check_chat_provider": AsyncMock(return_value=green),
             "check_embedding_model": AsyncMock(return_value=green),
             "check_disk_space": AsyncMock(return_value=green),
+            "check_premiere_project": AsyncMock(return_value=green),
             "check_python_version": AsyncMock(return_value=green),
         }
         with patch.multiple(svc, **check_mocks):

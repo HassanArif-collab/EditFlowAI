@@ -40,6 +40,7 @@
             <button class="tab" data-tab="analyze">Analyze</button>
             <button class="tab" data-tab="cut">Cut</button>
             <button class="tab" data-tab="visuals">Visuals</button>
+            <button class="tab" data-tab="script-cut">Script Cut</button>
         </nav>
 
         <!-- ── Chat Tab ── -->
@@ -144,6 +145,49 @@
                 <button id="btn-place-visuals" class="action-btn primary">Place Visuals</button>
                 <div id="visuals-progress" class="progress-area hidden"></div>
                 <div id="visuals-results" class="results-area hidden"></div>
+            </div>
+        </section>
+
+        <!-- ── Script Cut Tab ── -->
+        <section id="tab-script-cut" class="tab-content">
+            <div class="tab-body">
+                <h3>Script Cut</h3>
+
+                <label class="field-label" for="sc-bin">Source bin</label>
+                <input type="text" id="sc-bin" class="text-input" placeholder="@bin:MyTakes" list="sc-bin-options" />
+                <datalist id="sc-bin-options"></datalist>
+
+                <label class="field-label" for="sc-script">Script</label>
+                <textarea id="sc-script" class="textarea-input" rows="10" placeholder="Paste your script. One sentence per line, or paragraphs separated by blank lines."></textarea>
+
+                <div class="row">
+                    <label class="field-label" for="sc-language">Language</label>
+                    <select id="sc-language" class="select-input">
+                        <option value="auto">Auto-detect</option>
+                        <option value="en">English</option>
+                        <option value="ur">Urdu</option>
+                    </select>
+                </div>
+
+                <div class="sc-generate-row">
+                    <button id="sc-generate" class="action-btn primary">Generate Plan</button>
+                    <span id="sc-preflight-indicator" class="preflight-indicator hidden" title="Preflight status">&#10003;</span>
+                </div>
+
+                <div id="sc-progress" class="progress-area hidden"></div>
+
+                <div id="sc-plan" class="hidden">
+                    <h4 id="sc-summary"></h4>
+                    <ol id="sc-beats"></ol>
+
+                    <details id="sc-regen">
+                        <summary>Regenerate with a hint</summary>
+                        <textarea id="sc-hint" class="textarea-input" rows="2" placeholder="e.g. avoid takes from the first 5 minutes"></textarea>
+                        <button id="sc-regenerate" class="action-btn secondary">Regenerate</button>
+                    </details>
+
+                    <button id="sc-apply" class="action-btn primary">Apply to New Sequence</button>
+                </div>
             </div>
         </section>
     </main>

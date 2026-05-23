@@ -75,6 +75,9 @@ class TranscriptSegment(BaseModel):
     end: float
     text: str
     words: List[TranscriptWord] = Field(default_factory=list)
+    no_speech_prob: float = 0.0
+    compression_ratio: float = 1.0
+    avg_logprob: float = 0.0
 
 
 class TranscriptResult(BaseModel):

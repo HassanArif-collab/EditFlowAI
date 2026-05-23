@@ -56,6 +56,16 @@ clipManager = (function() {
                     case "modify":
                         result = modifyClipOnSequence(seq, op);
                         break;
+                    case "ensure_bin":
+                        result = ensureBin(op);
+                        break;
+                    case "create_sequence":
+                        result = createSequenceFromOps(op);
+                        seq = app.project.activeSequence;
+                        break;
+                    case "add_marker":
+                        result = addMarkerToSequence(seq, op);
+                        break;
                     default:
                         result = { success: false, error: "Unknown action: " + action };
                 }
@@ -109,6 +119,29 @@ clipManager = (function() {
             }
 
             targetTrack.overwriteClip(projectItem, editflowUtils.secondsToTicks(startTime));
+
+            // ── Phase 2 (M13): Audio fade support ────────────────────────
+            // After the clip is placed, try to set audio fade-in / fade-out
+            // via the Premiere API.  Non-critical: gracefully degrades on
+            // older PPro builds that don't expose these methods.
+            try {
+                var lastClip = targetTrack.clips[targetTrack.clips.numItems - 1];
+                if (lastClip && op.audio_fade_in_ms) {
+                    var fadeInTicks = editflowUtils.secondsToTicks(op.audio_fade_in_ms / 1000);
+                    if (typeof lastClip.setAudioFadeIn === 'function') {
+                        lastClip.setAudioFadeIn(fadeInTicks);
+                    }
+                }
+                if (lastClip && op.audio_fade_out_ms) {
+                    var fadeOutTicks = editflowUtils.secondsToTicks(op.audio_fade_out_ms / 1000);
+                    if (typeof lastClip.setAudioFadeOut === 'function') {
+                        lastClip.setAudioFadeOut(fadeOutTicks);
+                    }
+                }
+            } catch (e) {
+                // Audio fade API not available in this PPro version — non-critical
+            }
+
             return { success: true, name: projectItem.name, startTime: startTime };
 
         } catch (e) {
@@ -504,6 +537,65 @@ clipManager = (function() {
             error: "Destructive removal path not yet enabled. Use Preview to inspect ranges.",
             ranges: ranges
         });
+    }
+
+    // ── EditFlow Script Cut Operations ──
+
+    function ensureBin(options) {
+        var binName = editflowUtils.getParam(options, 'bin_name', 'name') || "EditFlow Output";
+        var project = app.project;
+        if (!project) return { success: false, error: "No project open" };
+
+        var root = project.rootItem;
+        var existing = editflowUtils.findBin(root, binName);
+        if (existing) return { success: true, name: binName, existed: true };
+
+        try {
+            root.createBin(binName);
+            return { success: true, name: binName, existed: false };
+        } catch (e) {
+            return { success: false, error: e.toString() };
+        }
+    }
+
+    function createSequenceFromOps(options) {
+        var name = editflowUtils.getParam(options, 'name') || "EditFlow Cut";
+        try {
+            var newSeq = app.project.createSequence(name);
+            return { success: true, name: name, id: newSeq.sequenceID };
+        } catch (e) {
+            return { success: false, error: e.toString() };
+        }
+    }
+
+    function addMarkerToSequence(seq, options) {
+        if (!seq) return { success: false, error: "No active sequence" };
+
+        var time = editflowUtils.getParam(options, 'time', 'position') || 0;
+        var markerName = editflowUtils.getParam(options, 'name', 'label') || "EditFlow Marker";
+        var color = editflowUtils.getParam(options, 'color') || 0;
+
+        try {
+            var markers = seq.markers;
+            if (markers && markers.createMarker) {
+                var ticks = editflowUtils.secondsToTicks(time);
+                var marker = markers.createMarker(ticks);
+                if (marker) {
+                    marker.name = markerName;
+                    try { marker.comments = "EditFlow auto-marker"; } catch (e) {}
+                    try {
+                        // Color index: 0=Green, 1=Red, 2=Purple, 3=Orange, 4=Yellow, etc.
+                        if (typeof marker.setColorByIndex === 'function') {
+                            marker.setColorByIndex(color);
+                        }
+                    } catch (e) {}
+                }
+                return { success: true, name: markerName, time: time };
+            }
+            return { success: false, error: "Markers API not available" };
+        } catch (e) {
+            return { success: false, error: e.toString() };
+        }
     }
 
     return {

@@ -111,23 +111,51 @@ class AudioPrepareService:
         cache_key = f"{file_fp}_{range_in:.3f}_{range_out:.3f}"
         cached_wav = cache_dir / f"{cache_key}.wav"
         if cached_wav.exists():
-            audio_fp = compute_audio_fingerprint(cached_wav)
-            duration = self._wav_duration(cached_wav)
-            logger.info(
-                f"Audio cache hit for {source.name} "
-                f"(fp={file_fp[:16]}..., in={range_in:.3f}, out={range_out:.3f}), "
-                f"duration={duration:.2f}s"
-            )
-            return PreparedAudio(
-                source_file=str(source),
-                file_fingerprint=file_fp,
-                audio_fingerprint=audio_fp,
-                prepared_wav_path=str(cached_wav),
-                duration=duration,
-                sample_rate=16000,
-                channels=1,
-                from_cache=True,
-            )
+            # Mtime check: if source file is newer than cached WAV, regenerate
+            try:
+                source_mtime = source.stat().st_mtime
+                cache_mtime = cached_wav.stat().st_mtime
+                if source_mtime > cache_mtime:
+                    logger.info(f"Source newer than cache for {source.name}, regenerating")
+                    cached_wav.unlink(missing_ok=True)
+                else:
+                    # Cache is valid
+                    audio_fp = compute_audio_fingerprint(cached_wav)
+                    duration = self._wav_duration(cached_wav)
+                    logger.info(
+                        f"Audio cache hit for {source.name} "
+                        f"(fp={file_fp[:16]}..., in={range_in:.3f}, out={range_out:.3f}), "
+                        f"duration={duration:.2f}s"
+                    )
+                    return PreparedAudio(
+                        source_file=str(source),
+                        file_fingerprint=file_fp,
+                        audio_fingerprint=audio_fp,
+                        prepared_wav_path=str(cached_wav),
+                        duration=duration,
+                        sample_rate=16000,
+                        channels=1,
+                        from_cache=True,
+                    )
+            except OSError:
+                # If we can't check mtimes, fall through to cache hit below
+                audio_fp = compute_audio_fingerprint(cached_wav)
+                duration = self._wav_duration(cached_wav)
+                logger.info(
+                    f"Audio cache hit for {source.name} "
+                    f"(fp={file_fp[:16]}..., in={range_in:.3f}, out={range_out:.3f}), "
+                    f"duration={duration:.2f}s"
+                )
+                return PreparedAudio(
+                    source_file=str(source),
+                    file_fingerprint=file_fp,
+                    audio_fingerprint=audio_fp,
+                    prepared_wav_path=str(cached_wav),
+                    duration=duration,
+                    sample_rate=16000,
+                    channels=1,
+                    from_cache=True,
+                )
 
         # ── Step 3: Extract audio via ffmpeg ──
         # If a range is specified, add 1.0s padding and use -ss/-t for seeking.

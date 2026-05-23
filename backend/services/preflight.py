@@ -6,6 +6,7 @@ Follows the "fail loudly" principle — every check produces a clear status.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import shutil
 import sys
@@ -68,6 +69,7 @@ class PreflightService:
             self.check_embedding_model(),
             self.check_disk_space(),
             self.check_python_version(),
+            self.check_premiere_project(),
         )
         check_list = list(checks)
         ready = all(c.status != "red" for c in check_list)
@@ -407,6 +409,52 @@ class PreflightService:
         except OSError:
             # Fallback for unusual filesystems
             raise
+
+    async def check_premiere_project(self) -> PreflightCheck:
+        """Check if a Premiere project is open (via capability probe data).
+
+        Yellow if no capability probe data exists (panel may not be running).
+        Red if probe says no project open.
+        """
+        try:
+            from ..models.sqlite_registry import sqlite_registry
+            caps = sqlite_registry.find_latest_capabilities()
+            if not caps:
+                return PreflightCheck(
+                    name="premiere_project",
+                    status="yellow",
+                    message="No Premiere capability probe received — panel may not be running",
+                    remediation="Open the EditFlow panel in Premiere Pro.",
+                )
+            caps_data = json.loads(caps.get("capabilities_json", "{}"))
+            if caps_data.get("project_has_path") and caps_data.get("active_sequence"):
+                return PreflightCheck(
+                    name="premiere_project",
+                    status="green",
+                    message="Premiere project is open with active sequence",
+                    remediation="",
+                )
+            elif caps_data.get("project_has_path"):
+                return PreflightCheck(
+                    name="premiere_project",
+                    status="yellow",
+                    message="Premiere project open but no active sequence",
+                    remediation="Open or create a sequence in Premiere.",
+                )
+            else:
+                return PreflightCheck(
+                    name="premiere_project",
+                    status="red",
+                    message="No Premiere project open",
+                    remediation="Open a Premiere project before generating a plan.",
+                )
+        except Exception as exc:
+            return PreflightCheck(
+                name="premiere_project",
+                status="yellow",
+                message=f"Cannot check Premiere status: {exc}",
+                remediation="Ensure the CEP panel is running.",
+            )
 
     async def check_python_version(self) -> PreflightCheck:
         """Check that Python version is >= 3.10."""

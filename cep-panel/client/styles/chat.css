@@ -786,3 +786,193 @@ html, body {
     font-size: 10px;
     font-style: italic;
 }
+
+/* ── Script Cut Tab (M10) ── */
+#tab-script-cut .tab-body {
+    padding: 12px;
+    gap: 8px;
+}
+
+#tab-script-cut .row {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+}
+
+#tab-script-cut .row .field-label {
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+#tab-script-cut .row .select-input {
+    flex: 1;
+}
+
+#sc-bin {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-size: 12px;
+    padding: 6px 8px;
+    width: 100%;
+}
+
+#sc-bin:focus {
+    outline: none;
+    border-color: var(--border-focus);
+}
+
+#sc-bin::placeholder {
+    color: var(--text-dim);
+}
+
+#sc-script {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-size: 12px;
+    padding: 6px 8px;
+    width: 100%;
+    resize: vertical;
+    line-height: 1.4;
+}
+
+#sc-script:focus {
+    outline: none;
+    border-color: var(--border-focus);
+}
+
+#sc-script::placeholder {
+    color: var(--text-dim);
+}
+
+#sc-progress {
+    font-size: 11px;
+    line-height: 1.5;
+}
+
+#sc-plan h4 {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent);
+    margin-bottom: 6px;
+}
+
+#sc-beats {
+    padding-left: 20px;
+    margin-bottom: 8px;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+#sc-beats li.sc-beat-item {
+    padding: 4px 0;
+    font-size: 11px;
+    line-height: 1.4;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    align-items: baseline;
+}
+
+#sc-beats li.sc-beat-item:last-child {
+    border-bottom: none;
+}
+
+.sc-beat-index {
+    font-weight: 700;
+    color: var(--accent);
+    min-width: 18px;
+    flex-shrink: 0;
+}
+
+.sc-beat-text {
+    color: var(--text-primary);
+    flex: 1;
+    min-width: 0;
+}
+
+.sc-beat-source {
+    font-size: 10px;
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    flex-shrink: 0;
+}
+
+#sc-regen {
+    margin: 8px 0;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius);
+    padding: 8px;
+}
+
+#sc-regen summary {
+    font-size: 11px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    margin-bottom: 6px;
+    font-weight: 500;
+}
+
+#sc-regen summary:hover {
+    color: var(--text-primary);
+}
+
+#sc-hint {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-size: 12px;
+    padding: 6px 8px;
+    width: 100%;
+    resize: vertical;
+    line-height: 1.4;
+    margin-bottom: 6px;
+}
+
+#sc-hint:focus {
+    outline: none;
+    border-color: var(--border-focus);
+}
+
+#sc-hint::placeholder {
+    color: var(--text-dim);
+}
+
+/* ── Script Cut Generate Row with Preflight Indicator ── */
+.sc-generate-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.sc-generate-row .action-btn {
+    flex-shrink: 0;
+}
+
+.preflight-indicator {
+    font-size: 14px;
+    font-weight: 700;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.preflight-indicator.indicator-green {
+    color: var(--success);
+}
+
+.preflight-indicator.indicator-yellow {
+    color: var(--warning);
+}
+
+.preflight-indicator.indicator-red {
+    color: var(--error);
+}

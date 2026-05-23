@@ -6,17 +6,26 @@ Phase B enhancement: transcribe-once-per-source-file.  Before running
 Whisper, the service checks the audio cache (keyed by file fingerprint)
 for an existing transcript.  If found, the cached result is returned
 immediately, avoiding the expensive re-transcription of the same file.
+
+v2 enhancements:
+  - Engine selection cascade (whisperx > stable-ts > faster-whisper)
+  - DB persistence via sqlite_registry (source_transcripts + transcript_words)
+  - audio_offset correction for range-based extractions
+  - Real silero-vad integration (best-effort, never blocks transcription)
+  - model_revision population from model metadata
 """
 import asyncio
 import hashlib
 import json
 import logging
 import os
+import re
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..config import Settings, get_settings
-from ..models.schemas import TranscriptResult, TranscriptSegment, TranscriptWord
+from ..models.schemas import TranscriptResult, TranscriptSegment, TranscriptWord, VADSegment
 from ..services.media_fingerprint import compute_file_fingerprint
 from ..utils.ffmpeg_utils import extract_audio
 from ..utils.progress import ProgressReporter
@@ -64,6 +73,9 @@ def _consume_segments(
             end=round(segment.end, 3),
             text=segment.text.strip(),
             words=words,
+            no_speech_prob=getattr(segment, 'no_speech_prob', 0.0) or 0.0,
+            compression_ratio=getattr(segment, 'compression_ratio', 1.0) or 1.0,
+            avg_logprob=getattr(segment, 'avg_logprob', 0.0) or 0.0,
         ))
         full_text_parts.append(segment.text.strip())
 
@@ -79,7 +91,11 @@ class WhisperService:
 
     Supports transcribe-once-per-source-file: each unique source file
     (identified by content fingerprint) is only transcribed once.  The
-    result is cached on disk and returned on subsequent calls.
+    result is cached on disk and in the SQLite registry, and returned on
+    subsequent calls.
+
+    Engine selection cascade:
+        whisperx (best, ~50ms) > stable-ts (~100ms) > faster-whisper (~200-300ms)
     """
 
     def __init__(self, settings: Optional[Settings] = None):
@@ -87,6 +103,91 @@ class WhisperService:
         self._model = None
         self._model_info: Dict = {}
         self._transcript_cache: Dict[str, TranscriptResult] = {}  # file_fp -> result (in-memory)
+
+        # Engine selection cascade — resolved lazily on first use
+        self._engine_name: Optional[str] = None
+        self._engine_module: Optional[Any] = None
+        self._engine_boundary_window_ms: int = 500  # default for faster-whisper
+
+        # Model revision — populated after model load
+        self._model_revision: str = ""
+
+    # ── Engine Selection Cascade ──
+
+    @staticmethod
+    def _select_engine() -> Tuple[str, Any, int]:
+        """Select the best available transcription engine.
+
+        Priority: whisperx > stable-ts > faster-whisper.
+
+        Returns:
+            Tuple of (engine_name, engine_module, boundary_window_ms).
+
+        Raises:
+            RuntimeError: If no engine's dependencies are importable.
+        """
+        # Try the transcribe package's select_engine first — it returns
+        # a TranscribeEngine instance with name + boundary_window_ms.
+        try:
+            from .transcribe import select_engine
+            engine = select_engine()
+            # Import the corresponding module for reference
+            module = None
+            if engine.name == "whisperx":
+                try:
+                    import whisperx
+                    module = whisperx
+                except ImportError:
+                    pass
+            elif engine.name == "stable_ts":
+                try:
+                    import stable_ts
+                    module = stable_ts
+                except ImportError:
+                    pass
+            elif engine.name == "faster_whisper":
+                try:
+                    import faster_whisper
+                    module = faster_whisper
+                except ImportError:
+                    pass
+            return engine.name, module, engine.boundary_window_ms
+        except Exception:
+            pass
+
+        # Manual cascade if the transcribe package is unavailable
+        # 1. Try whisperx
+        try:
+            import whisperx
+            return "whisperx", whisperx, 200
+        except ImportError:
+            pass
+
+        # 2. Try stable-ts
+        try:
+            import stable_ts
+            return "stable_ts", stable_ts, 350
+        except ImportError:
+            pass
+
+        # 3. Fall back to faster-whisper
+        try:
+            import faster_whisper
+            return "faster_whisper", faster_whisper, 500
+        except ImportError:
+            raise RuntimeError("No transcription engine available (need whisperx, stable-ts, or faster-whisper)")
+
+    def _resolve_engine(self) -> Tuple[str, Any, int]:
+        """Resolve the engine selection once and cache the result."""
+        if self._engine_name is None:
+            self._engine_name, self._engine_module, self._engine_boundary_window_ms = self._select_engine()
+            logger.info(
+                f"Selected transcription engine: {self._engine_name} "
+                f"(boundary_window_ms={self._engine_boundary_window_ms})"
+            )
+        return self._engine_name, self._engine_module, self._engine_boundary_window_ms
+
+    # ── Model Loading ──
 
     def _load_model(self):
         """Lazy-load the Whisper model. Sync, intended to run via to_thread."""
@@ -141,6 +242,10 @@ class WhisperService:
                             "Set EDITFLOW_WHISPER_AUTO_FALLBACK=true to allow smaller-model downgrades."
                         )
                     logger.info(f"Whisper loaded: {model_spec} ({device}/{compute_type})")
+
+                    # Populate model_revision from model metadata
+                    self._populate_model_revision()
+
                     return
                 except Exception as e:
                     last_error = e
@@ -154,6 +259,252 @@ class WhisperService:
         except ImportError:
             raise RuntimeError("faster-whisper not installed. Run: pip install faster-whisper")
 
+    def _populate_model_revision(self) -> None:
+        """Try to extract the model revision from the loaded model's metadata.
+
+        For faster-whisper, the model stores its path and optionally version
+        info that we can extract.
+        """
+        if self._model is None:
+            return
+
+        try:
+            # faster-whisper stores the model path; try to extract a revision
+            # from a version file or the model directory name.
+            model_path = getattr(self._model, 'model_path', None)
+            if model_path:
+                path = Path(model_path)
+                # Check for a VERSION or revision file
+                for version_file in ["VERSION", "revision.txt", ".git/HEAD"]:
+                    vf = path / version_file
+                    if vf.exists():
+                        self._model_revision = vf.read_text(encoding="utf-8").strip()[:64]
+                        return
+
+                # Try reading the config to get a model version / revision
+                config_path = path / "config.json"
+                if config_path.exists():
+                    config = json.loads(config_path.read_text(encoding="utf-8"))
+                    # Some models store a "revision" or "version" in their config
+                    rev = config.get("revision") or config.get("version") or config.get("model_version")
+                    if rev:
+                        self._model_revision = str(rev)[:64]
+                        return
+
+            # Fallback: use device/compute_type as a pseudo-revision so
+            # the cache key differentiates between CPU-int8 and CUDA-fp16 runs.
+            device = self._model_info.get("device", "cpu")
+            compute_type = self._model_info.get("compute_type", "int8")
+            self._model_revision = f"{device}/{compute_type}"
+
+        except Exception as e:
+            logger.debug(f"Could not determine model revision: {e}")
+            self._model_revision = ""
+
+    # ── Silero-VAD Integration ──
+
+    def _run_silero_vad(self, audio_path: str) -> List[VADSegment]:
+        """Run silero-vad on an audio file. Best-effort — returns [] on failure.
+
+        This is a separate pass from transcription. The plan specifies that
+        we don't trust Whisper's internal VAD for boundary detection, so
+        we run silero-vad independently to get speech timestamps that Stage 6
+        can use for VAD-boundary snapping.
+
+        Args:
+            audio_path: Path to the audio file (WAV preferred).
+
+        Returns:
+            List of VADSegment with speech timestamps, or empty list on error.
+        """
+        try:
+            import torch
+            model, utils = torch.hub.load(
+                repo_or_dir="snakers4/silero-vad",
+                model="silero_vad",
+                trust_repo=True,
+            )
+            (get_speech_timestamps, _, read_audio, _, _) = utils
+            wav = read_audio(audio_path)
+            speech_timestamps = get_speech_timestamps(wav, model)
+
+            # Convert sample-offset timestamps to seconds (silero-vad uses
+            # 16 kHz sample rate by default)
+            segments = []
+            for ts in speech_timestamps:
+                segments.append(VADSegment(
+                    start=round(ts["start"] / 16000, 3),
+                    end=round(ts["end"] / 16000, 3),
+                    is_speech=True,
+                    confidence=1.0,
+                ))
+            logger.debug(f"Silero-VAD detected {len(segments)} speech segments in {audio_path}")
+            return segments
+
+        except Exception as e:
+            logger.debug(f"Silero-VAD failed: {e}")
+            return []
+
+    # ── DB Persistence ──
+
+    def _persist_transcript_to_db(
+        self,
+        result: TranscriptResult,
+        content_hash: str,
+    ) -> None:
+        """Persist a TranscriptResult to the SQLite registry.
+
+        Writes to source_transcripts (one row) and transcript_words
+        (one row per word).  Best-effort — failures are logged but
+        never raise.
+        """
+        try:
+            from ..models.sqlite_registry import sqlite_registry
+
+            transcript_id = str(uuid.uuid4())[:12]
+
+            sqlite_registry.upsert_source_transcript(
+                transcript_id=transcript_id,
+                content_hash=content_hash,
+                range_in=result.range_in,
+                range_out=result.range_out,
+                audio_offset=result.audio_offset,
+                language=result.language,
+                engine=result.engine,
+                model=result.model,
+                model_revision=result.model_revision,
+                duration=result.duration,
+                full_text=result.full_text,
+                status="completed",
+                warnings=json.dumps(result.warnings, ensure_ascii=False),
+            )
+
+            # Insert individual words for fast word-level lookup
+            word_index = 0
+            for segment in result.segments:
+                for w in segment.words:
+                    normalized = re.sub(r'[^\w]', '', w.word.lower())
+                    sqlite_registry.insert_transcript_word(
+                        word_id=f"{transcript_id}_{word_index:06d}",
+                        transcript_id=transcript_id,
+                        content_hash=content_hash,
+                        word_index=word_index,
+                        word=w.word,
+                        normalized_word=normalized,
+                        start=w.start,
+                        end=w.end,
+                        probability=w.probability,
+                    )
+                    word_index += 1
+
+            logger.info(
+                f"Persisted transcript to DB: {transcript_id} "
+                f"({word_index} words, engine={result.engine})"
+            )
+
+        except Exception as e:
+            logger.debug(f"Failed to persist transcript to DB: {e}")
+
+    def _lookup_transcript_from_db(
+        self,
+        content_hash: str,
+        range_in: float,
+        range_out: float,
+        engine: str,
+        model: str,
+    ) -> Optional[TranscriptResult]:
+        """Check the DB for a previously persisted transcript.
+
+        If found, reconstruct a TranscriptResult from the DB row and the
+        associated transcript_words. Returns None if not found.
+        """
+        try:
+            from ..models.sqlite_registry import sqlite_registry
+
+            row = sqlite_registry.find_transcript_by_cache_key(
+                content_hash=content_hash,
+                range_in=range_in,
+                range_out=range_out,
+                engine=engine,
+                model=model,
+            )
+            if row is None:
+                return None
+
+            # Reconstruct segments from transcript_words
+            db_words = sqlite_registry.find_transcript_words(content_hash)
+            segments: List[TranscriptSegment] = []
+            current_words: List[TranscriptWord] = []
+            current_text_parts: List[str] = []
+            seg_start = 0.0
+            seg_end = 0.0
+
+            # Group words into segments by proximity (gap > 1s = new segment)
+            SEGMENT_GAP_S = 1.0
+            for i, w_row in enumerate(db_words):
+                w = TranscriptWord(
+                    word=w_row["word"],
+                    start=round(float(w_row["start"]), 3),
+                    end=round(float(w_row["end"]), 3),
+                    probability=round(float(w_row.get("probability", 0)), 3),
+                )
+                if current_words and (w.start - current_words[-1].end) > SEGMENT_GAP_S:
+                    # Flush current segment
+                    segments.append(TranscriptSegment(
+                        start=round(seg_start, 3),
+                        end=round(seg_end, 3),
+                        text=" ".join(current_text_parts),
+                        words=current_words,
+                    ))
+                    current_words = []
+                    current_text_parts = []
+                    seg_start = w.start
+
+                if not current_words:
+                    seg_start = w.start
+                seg_end = w.end
+                current_words.append(w)
+                current_text_parts.append(w.word)
+
+            # Flush the last segment
+            if current_words:
+                segments.append(TranscriptSegment(
+                    start=round(seg_start, 3),
+                    end=round(seg_end, 3),
+                    text=" ".join(current_text_parts),
+                    words=current_words,
+                ))
+
+            warnings = json.loads(row.get("warnings", "[]")) if row.get("warnings") else []
+
+            result = TranscriptResult(
+                source_file="",  # not stored per-transcript in DB
+                language=row.get("language", ""),
+                duration=round(float(row.get("duration", 0)), 2),
+                segments=segments,
+                full_text=row.get("full_text", ""),
+                content_hash=content_hash,
+                range_in=round(float(row.get("range_in", 0)), 3),
+                range_out=round(float(row.get("range_out", 0)), 3),
+                audio_offset=round(float(row.get("audio_offset", 0)), 3),
+                engine=row.get("engine", "faster_whisper"),
+                model=row.get("model", ""),
+                model_revision=row.get("model_revision", ""),
+                warnings=warnings,
+            )
+
+            logger.info(
+                f"DB transcript cache hit for content_hash={content_hash[:16]}... "
+                f"engine={engine} ({len(segments)} segments)"
+            )
+            return result
+
+        except Exception as e:
+            logger.debug(f"DB transcript lookup failed: {e}")
+            return None
+
+    # ── Core Transcription (non-fingerprinted) ──
+
     async def transcribe(
         self,
         video_path: str,
@@ -163,6 +514,9 @@ class WhisperService:
         progress: Optional[ProgressReporter] = None,
     ) -> TranscriptResult:
         """Transcribe a video file.
+
+        This is the original (non-fingerprinted) transcription method.
+        It remains unchanged for backward compatibility.
 
         Args:
             video_path: Path to video or audio file
@@ -358,14 +712,22 @@ class WhisperService:
         """Transcribe a media file with content-addressed deduplication.
 
         This is the Phase B entry point.  Before running Whisper, it checks
-        the transcript cache (keyed by content hash + range + engine + model).
+        the transcript cache (keyed by content hash + range + engine + model)
+        in the following order:
+
+        1. In-memory cache (fastest)
+        2. On-disk JSON cache
+        3. SQLite registry (source_transcripts + transcript_words)
+
         If a cached transcript exists and ``force`` is False, the cached
         result is returned immediately — the same source file is never
         transcribed twice.
 
-        Phase B enhancement: the cache key is now
-            (content_hash, range_in, range_out, engine, model)
-        so that engine or model upgrades invalidate old transcripts.
+        After transcription:
+        - audio_offset is applied when range_in > 0
+        - Engine info is stamped into the result
+        - VAD pass is run (best-effort silero-vad)
+        - Result is persisted to JSON cache and SQLite registry
 
         Args:
             source_path: Path to the source media file.
@@ -379,22 +741,15 @@ class WhisperService:
             range_out: End of audio range (seconds, default 0 = whole file).
 
         Returns:
-            TranscriptResult with segments, word timestamps, and engine info.
+            TranscriptResult with segments, word timestamps, engine info,
+            and audio_offset applied.
         """
-        # Determine the engine name
-        engine_name = "faster_whisper"
+        # ── Step 1: Resolve the engine ──
+        engine_name, engine_module, boundary_window_ms = self._resolve_engine()
         model_name = self.settings.WHISPER_MODEL
-        model_revision = ""
+        model_revision = self._model_revision  # may be "" until model is loaded
 
-        # Try to get engine info from the transcribe package if available
-        try:
-            from .transcribe import select_engine
-            selected = select_engine()
-            engine_name = selected.name
-        except Exception:
-            pass
-
-        # Compute fingerprint if not provided
+        # ── Step 2: Compute fingerprint if not provided ──
         if file_fingerprint is None:
             try:
                 file_fingerprint = await asyncio.to_thread(
@@ -406,8 +761,9 @@ class WhisperService:
                 logger.warning(f"Fingerprint computation failed for {source_path}: {e}")
                 file_fingerprint = ""
 
-        # Check cache with enhanced key (unless force=True)
+        # ── Step 3: Check caches (unless force=True) ──
         if file_fingerprint and not force:
+            # 3a. Check in-memory / on-disk JSON cache
             cached = self._get_cached_transcript(file_fingerprint)
             if cached is not None:
                 # Check if engine/model match — if not, this is a stale cache
@@ -425,7 +781,20 @@ class WhisperService:
                         f"current={engine_name}). Re-transcribing."
                     )
 
-        # Cache miss — run transcription
+            # 3b. Check SQLite registry DB
+            db_result = self._lookup_transcript_from_db(
+                content_hash=file_fingerprint,
+                range_in=range_in,
+                range_out=range_out,
+                engine=engine_name,
+                model=model_name,
+            )
+            if db_result is not None:
+                # Also store in the faster caches for next time
+                self._save_transcript_cache(file_fingerprint, db_result)
+                return db_result
+
+        # ── Step 4: Cache miss — run transcription ──
         result = await self.transcribe(
             video_path=source_path,
             language=language,
@@ -434,33 +803,66 @@ class WhisperService:
             progress=progress,
         )
 
-        # Phase B: stamp engine info and content hash into result
+        # After model is loaded, refresh model_revision
+        if not model_revision and self._model_revision:
+            model_revision = self._model_revision
+
+        # ── Step 5: Compute and apply audio_offset ──
+        # When range_in > 0, the audio was extracted from a specific position
+        # in the source file.  The extraction starts at
+        #   seek_time = max(0, range_in - padding)
+        # so all word timestamps are relative to seek_time.
+        # We need to add audio_offset = seek_time back to get absolute times.
+        audio_offset = 0.0
+        if range_in > 0:
+            # Match the padding logic from audio_prepare.py
+            padding = 1.0  # _RANGE_PADDING_S
+            seek_time = max(0.0, range_in - padding)
+            audio_offset = seek_time
+
+            # Apply offset to all word and segment timestamps
+            for segment in result.segments:
+                segment.start = round(segment.start + audio_offset, 3)
+                segment.end = round(segment.end + audio_offset, 3)
+                for w in segment.words:
+                    w.start = round(w.start + audio_offset, 3)
+                    w.end = round(w.end + audio_offset, 3)
+
+        # ── Step 6: Stamp engine info and metadata into result ──
         result.content_hash = file_fingerprint
         result.engine = engine_name
         result.model = model_name
         result.model_revision = model_revision
         result.range_in = range_in
         result.range_out = range_out
+        result.audio_offset = audio_offset
 
-        # Phase B: run silero-vad as a separate pass
+        # ── Step 7: Run silero-vad as a best-effort pass ──
         try:
-            from .transcribe.base import TranscribeEngine
-            audio_path = result.source_file  # may be the prepared WAV
-            vad_segments = TranscribeEngine.run_vad(audio_path)
+            # Use the prepared audio path if available, otherwise source
+            audio_path_for_vad = result.source_file
+            if not audio_path_for_vad:
+                audio_path_for_vad = source_path
+
+            vad_segments = await asyncio.to_thread(self._run_silero_vad, audio_path_for_vad)
             if vad_segments:
                 result.warnings.append(
                     f"VAD: {len(vad_segments)} speech segments detected"
                 )
-                # Store VAD segments in DB for stage 6
+                # Persist VAD segments to DB for stage 6
                 self._persist_vad_segments(
                     file_fingerprint, range_in, range_out, vad_segments
                 )
         except Exception as e:
             logger.debug(f"VAD pass skipped: {e}")
 
-        # Cache the result
+        # ── Step 8: Persist to JSON cache ──
         if file_fingerprint:
             self._save_transcript_cache(file_fingerprint, result)
+
+        # ── Step 9: Persist to SQLite registry ──
+        if file_fingerprint:
+            self._persist_transcript_to_db(result, file_fingerprint)
 
         return result
 
@@ -512,10 +914,9 @@ class WhisperService:
         content_hash: str,
         range_in: float,
         range_out: float,
-        vad_segments: list,
+        vad_segments: List[VADSegment],
     ) -> None:
         """Persist VAD segments to the transcript_vad DB table."""
-        import uuid
         try:
             from ..models.sqlite_registry import sqlite_registry
             for i, seg in enumerate(vad_segments):
@@ -538,6 +939,83 @@ class WhisperService:
         """Get information about the loaded model."""
         return self._model_info
 
+    @property
+    def engine_name(self) -> Optional[str]:
+        """Get the resolved engine name (None if not yet resolved)."""
+        return self._engine_name
+
+    @property
+    def engine_boundary_window_ms(self) -> int:
+        """Get the boundary window (ms) for the selected engine."""
+        return self._engine_boundary_window_ms
+
 
 # Global service instance
 whisper_service = WhisperService()
+
+
+# ── MVP Task M2: Junk filter ──
+
+
+def filter_junk_segments(
+    result: TranscriptResult,
+    *,
+    no_speech_prob_max: float = 0.5,
+    compression_ratio_max: float = 2.4,
+    avg_logprob_min: float = -1.0,
+) -> tuple[TranscriptResult, list[dict]]:
+    """Drop hallucinated / looping / very-low-confidence segments.
+
+    Returns a copy of ``result`` with the bad segments removed AND a list of
+    ``{reason, start, end, text}`` describing what was dropped.  The reasons
+    list is surfaced in plan warnings so the author knows why content was
+    skipped.
+
+    MVP Task M2.
+    """
+    reasons: list[dict] = []
+    good_segments: list[TranscriptSegment] = []
+
+    for seg in result.segments:
+        drop_reason: str | None = None
+
+        if seg.no_speech_prob > no_speech_prob_max:
+            drop_reason = f"no_speech_prob={seg.no_speech_prob:.2f} > {no_speech_prob_max}"
+        elif seg.compression_ratio > compression_ratio_max:
+            drop_reason = f"compression_ratio={seg.compression_ratio:.2f} > {compression_ratio_max}"
+        elif seg.avg_logprob < avg_logprob_min:
+            drop_reason = f"avg_logprob={seg.avg_logprob:.2f} < {avg_logprob_min}"
+
+        if drop_reason:
+            reasons.append({
+                "reason": drop_reason,
+                "start": seg.start,
+                "end": seg.end,
+                "text": seg.text[:100],
+            })
+        else:
+            good_segments.append(seg)
+
+    if not reasons:
+        return result, reasons
+
+    # Rebuild the result with only good segments
+    filtered = TranscriptResult(
+        source_file=result.source_file,
+        language=result.language,
+        duration=result.duration,
+        segments=good_segments,
+        full_text=" ".join(seg.text for seg in good_segments),
+        content_hash=result.content_hash,
+        range_in=result.range_in,
+        range_out=result.range_out,
+        audio_offset=result.audio_offset,
+        engine=result.engine,
+        model=result.model,
+        model_revision=result.model_revision,
+        warnings=result.warnings + [
+            f"Junk filter dropped {len(reasons)} segment(s): " +
+            "; ".join(r["reason"] for r in reasons[:5])
+        ],
+    )
+    return filtered, reasons

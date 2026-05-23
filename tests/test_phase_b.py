@@ -653,5 +653,51 @@ class PhaseBPipelineIntegrationTests(unittest.TestCase):
                         f"Duration {result.duration}s seems too long for ~30s fixture")
 
 
+# ═══════════════════════════════════════════════════════════════════════
+# MVP Task M2: Junk Filter Tests
+# ═══════════════════════════════════════════════════════════════════════
+
+class JunkFilterTests(unittest.TestCase):
+    def test_drops_high_no_speech_prob(self):
+        from backend.models.schemas import TranscriptResult, TranscriptSegment, TranscriptWord
+        from backend.services.whisper_service import filter_junk_segments
+        result = TranscriptResult(
+            source_file="test.wav",
+            segments=[
+                TranscriptSegment(start=0, end=5, text="good segment", no_speech_prob=0.1),
+                TranscriptSegment(start=5, end=10, text="bad segment", no_speech_prob=0.9),
+            ],
+        )
+        filtered, reasons = filter_junk_segments(result)
+        self.assertEqual(len(filtered.segments), 1)
+        self.assertEqual(filtered.segments[0].text, "good segment")
+
+    def test_drops_high_compression_ratio(self):
+        from backend.models.schemas import TranscriptResult, TranscriptSegment
+        from backend.services.whisper_service import filter_junk_segments
+        result = TranscriptResult(
+            source_file="test.wav",
+            segments=[
+                TranscriptSegment(start=0, end=5, text="ok", compression_ratio=1.5),
+                TranscriptSegment(start=5, end=10, text="looping", compression_ratio=3.0),
+            ],
+        )
+        filtered, reasons = filter_junk_segments(result)
+        self.assertEqual(len(filtered.segments), 1)
+
+    def test_reasons_list_is_populated(self):
+        from backend.models.schemas import TranscriptResult, TranscriptSegment
+        from backend.services.whisper_service import filter_junk_segments
+        result = TranscriptResult(
+            source_file="test.wav",
+            segments=[
+                TranscriptSegment(start=0, end=5, text="bad", no_speech_prob=0.9),
+            ],
+        )
+        _, reasons = filter_junk_segments(result)
+        self.assertEqual(len(reasons), 1)
+        self.assertIn("no_speech_prob", reasons[0]["reason"])
+
+
 if __name__ == "__main__":
     unittest.main()

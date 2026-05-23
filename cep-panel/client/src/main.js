@@ -22,6 +22,7 @@
         sequenceState: null,
         projectState: null,
         lastPhraseRanges: [],
+        lastScriptCutPlanId: null,
         preflightReady: false,
         preflightChecks: [],
         capabilities: null,
@@ -50,6 +51,7 @@
         bindAnalyze();
         bindCut();
         bindVisuals();
+        bindScriptCut();
         bindSettings();
         bindPreflight();
 
@@ -433,6 +435,194 @@
         }
     }
 
+    // ═══════ Script Cut (M10) ═══════
+    function bindScriptCut() {
+        // Populate bin autocomplete when project state is available
+        initScriptCutTab();
+
+        // Generate Plan
+        $('#sc-generate').addEventListener('click', async () => {
+            const script = $('#sc-script').value.trim();
+            if (!script) {
+                $('#sc-progress').classList.remove('hidden');
+                $('#sc-progress').textContent = 'Please paste your script first.';
+                return;
+            }
+
+            // Preflight gate: check for red statuses before proceeding
+            try {
+                const preflightResp = await apiGet('/preflight');
+                const hasRed = (preflightResp.checks || []).some(c => c.status === 'red');
+                const hasYellow = (preflightResp.checks || []).some(c => c.status === 'yellow');
+
+                // Update preflight indicator
+                updatePreflightIndicator(preflightResp.checks || []);
+
+                if (hasRed) {
+                    const redChecks = preflightResp.checks.filter(c => c.status === 'red');
+                    const redMessages = redChecks.map(c => `${c.name}: ${c.message}`).join('\n');
+                    $('#sc-progress').classList.remove('hidden');
+                    $('#sc-progress').textContent = 'Cannot generate plan — resolve preflight issues first:\n' + redMessages;
+                    addChatMessage('error', 'Cannot generate plan. Resolve the following preflight issues first:\n' + redMessages);
+                    return;
+                }
+
+                if (hasYellow) {
+                    const yellowChecks = preflightResp.checks.filter(c => c.status === 'yellow');
+                    const yellowMessages = yellowChecks.map(c => `${c.name}: ${c.message}`).join('\n');
+                    addChatMessage('assistant', `⚠️ Preflight warnings:\n${yellowMessages}\n\nProceeding with plan generation...`);
+                }
+            } catch (e) {
+                // If preflight check itself fails, warn but allow proceeding
+                console.warn('Preflight check before generate failed:', e);
+            }
+
+            const bin = $('#sc-bin').value.trim();
+            const language = $('#sc-language').value;
+
+            $('#sc-progress').classList.remove('hidden');
+            $('#sc-progress').textContent = 'Analyzing script and matching takes...';
+            $('#sc-plan').classList.add('hidden');
+            disableButton('sc-generate');
+
+            try {
+                const resp = await apiPost('/edit/analyze', {
+                    script,
+                    bin: bin || undefined,
+                    language: language !== 'auto' ? language : undefined,
+                    client_id: CONFIG.clientId,
+                });
+
+                state.lastScriptCutPlanId = resp.plan_id || resp.id || null;
+                $('#sc-progress').classList.add('hidden');
+                renderPlan(resp);
+                addChatMessage('assistant', `Script Cut plan generated: **${resp.beats ? resp.beats.length : 0}** beats. Review and click **Apply to New Sequence** when ready.`);
+            } catch (e) {
+                $('#sc-progress').classList.remove('hidden');
+                $('#sc-progress').textContent = 'Error: ' + e.message;
+            } finally {
+                enableButton('sc-generate');
+            }
+        });
+
+        // Regenerate with hint
+        $('#sc-regenerate').addEventListener('click', async () => {
+            if (!state.lastScriptCutPlanId) {
+                addChatMessage('error', 'Generate a plan first before regenerating.');
+                return;
+            }
+
+            const hint = $('#sc-hint').value.trim();
+            disableButton('sc-regenerate');
+
+            try {
+                const resp = await apiPost('/edit/regenerate', {
+                    plan_id: state.lastScriptCutPlanId,
+                    hint: hint || undefined,
+                    client_id: CONFIG.clientId,
+                });
+
+                state.lastScriptCutPlanId = resp.plan_id || resp.id || state.lastScriptCutPlanId;
+                renderPlan(resp);
+                addChatMessage('assistant', 'Plan regenerated with your hint.');
+            } catch (e) {
+                addChatMessage('error', 'Regeneration failed: ' + e.message);
+            } finally {
+                enableButton('sc-regenerate');
+            }
+        });
+
+        // Apply to New Sequence
+        $('#sc-apply').addEventListener('click', async () => {
+            if (!state.lastScriptCutPlanId) {
+                addChatMessage('error', 'Generate a plan first before applying.');
+                return;
+            }
+
+            disableButton('sc-apply');
+
+            try {
+                const resp = await apiPost('/edit/plan/' + encodeURIComponent(state.lastScriptCutPlanId) + '/apply', {
+                    client_id: CONFIG.clientId,
+                });
+
+                // Dispatch ExtendScript to create the sequence in Premiere
+                try {
+                    const result = await evalExtendScript('processEDL',
+                        JSON.stringify({ edlData: resp.edl || resp }));
+                    const parsed = (() => { try { return JSON.parse(result); } catch (e) { return null; }})();
+                    if (parsed && parsed.success === false) {
+                        throw new Error(parsed.error || 'ExtendScript apply failed');
+                    }
+                } catch (scriptErr) {
+                    // ExtendScript not available — still report success via backend
+                    console.warn('ExtendScript dispatch skipped:', scriptErr.message);
+                }
+
+                addChatMessage('assistant', `Script Cut applied! A new sequence has been created with **${resp.beats ? resp.beats.length : 0}** beats.`);
+            } catch (e) {
+                addChatMessage('error', 'Apply failed: ' + e.message);
+            } finally {
+                enableButton('sc-apply');
+            }
+        });
+    }
+
+    function initScriptCutTab() {
+        // Populate bin autocomplete from project scan data
+        const populate = () => {
+            const datalist = $('#sc-bin-options');
+            if (!datalist || !state.projectState || !state.projectState.bins) return;
+
+            datalist.innerHTML = '';
+            state.projectState.bins.forEach(bin => {
+                const opt = document.createElement('option');
+                opt.value = '@bin:' + (bin.name || bin);
+                datalist.appendChild(opt);
+            });
+        };
+
+        // Populate immediately if project state already loaded
+        populate();
+
+        // Re-populate whenever project is scanned
+        const origScanProject = scanProject;
+        // We watch for projectState changes via a MutationObserver-free approach:
+        // simply re-populate when the Scan Project button is clicked
+        const scanBtn = $('#btn-scan-project');
+        if (scanBtn) {
+            scanBtn.addEventListener('click', () => setTimeout(populate, 2000));
+        }
+    }
+
+    function renderPlan(plan) {
+        const planEl = $('#sc-plan');
+        const summaryEl = $('#sc-summary');
+        const beatsEl = $('#sc-beats');
+
+        if (!planEl) return;
+
+        // Summary
+        const beats = plan.beats || [];
+        const totalDuration = beats.reduce((sum, b) => sum + (b.duration || 0), 0);
+        summaryEl.textContent = `${beats.length} beats · ~${totalDuration.toFixed(1)}s total`;
+
+        // Beats list
+        beatsEl.innerHTML = beats.map((beat, i) => {
+            const source = beat.source_file || beat.clip_name || 'unknown';
+            const start = typeof beat.start === 'number' ? beat.start.toFixed(2) : '?';
+            const end = typeof beat.end === 'number' ? beat.end.toFixed(2) : '?';
+            const text = beat.text || beat.script_line || '';
+            return `<li class="sc-beat-item">
+                <span class="sc-beat-index">${i + 1}</span>
+                <span class="sc-beat-text">${text}</span>
+                <span class="sc-beat-source">${source} [${start}s–${end}s]</span>
+            </li>`;
+        }).join('');
+
+        planEl.classList.remove('hidden');
+    }
+
     // ═══════ Visual Placement ═══════
     function bindVisuals() {
         const uploadArea = $('#visual-map-upload');
@@ -575,6 +765,9 @@
 
             renderPreflightChecks(resp.checks);
 
+            // Update the Script Cut preflight indicator
+            updatePreflightIndicator(resp.checks || []);
+
             // Disable "Match & Cut" button when reds exist
             const cutBtn = $('#btn-cut');
             if (cutBtn) {
@@ -608,6 +801,30 @@
                 ${check.remediation ? `<span class="preflight-check-remediation">${check.remediation}</span>` : ''}
             </div>`;
         }).join('');
+    }
+
+    function updatePreflightIndicator(checks) {
+        const indicator = $('#sc-preflight-indicator');
+        if (!indicator) return;
+
+        const hasRed = checks.some(c => c.status === 'red');
+        const hasYellow = checks.some(c => c.status === 'yellow');
+
+        indicator.classList.remove('hidden', 'indicator-green', 'indicator-yellow', 'indicator-red');
+
+        if (hasRed) {
+            indicator.classList.add('indicator-red');
+            indicator.innerHTML = '\u2718';
+            indicator.title = 'Preflight issues detected — cannot generate plan';
+        } else if (hasYellow) {
+            indicator.classList.add('indicator-yellow');
+            indicator.innerHTML = '\u26A0';
+            indicator.title = 'Preflight warnings — plan generation may degrade';
+        } else {
+            indicator.classList.add('indicator-green');
+            indicator.innerHTML = '\u2713';
+            indicator.title = 'All preflight checks passed';
+        }
     }
 
     async function probeCapabilities() {

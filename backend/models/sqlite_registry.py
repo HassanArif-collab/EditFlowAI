@@ -339,6 +339,40 @@ class SQLiteRegistry:
 
             CREATE INDEX IF NOT EXISTS idx_transcript_vad_lookup
                 ON transcript_vad(content_hash, range_in, range_out);
+
+            -- Phase B: Cut plan persistence
+            -- Plans are also saved as JSON files, but the DB table enables
+            -- queries like "find all plans for this bin" without loading every file.
+            CREATE TABLE IF NOT EXISTS cut_plans (
+                plan_id TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL,
+                bin_reference TEXT DEFAULT '',
+                script_hash TEXT DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'generated',
+                engine TEXT DEFAULT '',
+                matcher_model TEXT DEFAULT '',
+                summary TEXT DEFAULT '{}',
+                plan_json_path TEXT DEFAULT '',
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_cut_plans_bin
+                ON cut_plans(bin_reference);
+
+            CREATE INDEX IF NOT EXISTS idx_cut_plans_status
+                ON cut_plans(status);
+
+            -- Take favouriting and exclusion (cross-cutting)
+            -- Per-bin persistent flags: pin (preferred), mute (never use), note.
+            CREATE TABLE IF NOT EXISTS take_user_flags (
+                take_id TEXT NOT NULL,
+                project_path TEXT NOT NULL,
+                pinned INTEGER NOT NULL DEFAULT 0,
+                muted INTEGER NOT NULL DEFAULT 0,
+                note TEXT DEFAULT '',
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (take_id, project_path)
+            );
             """
         )
 
@@ -419,6 +453,49 @@ class SQLiteRegistry:
             return {"connected": True, "path": str(self.db_path)}
         except Exception as e:
             return {"connected": False, "path": str(self.db_path), "error": str(e)}
+
+    # ── Phase B: Cut plan persistence ──
+
+    def upsert_cut_plan(self, plan_id, created_at, bin_reference="", script_hash="",
+                        status="generated", engine="", matcher_model="", summary="{}",
+                        plan_json_path=""):
+        from ..models.schemas import utc_now
+        now = utc_now()
+        self.execute(
+            """INSERT OR REPLACE INTO cut_plans
+            (plan_id, created_at, bin_reference, script_hash, status, engine,
+             matcher_model, summary, plan_json_path, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (plan_id, created_at, bin_reference, script_hash, status, engine,
+             matcher_model, summary, plan_json_path, now),
+        )
+
+    def find_cut_plan(self, plan_id):
+        return self.fetch_one("SELECT * FROM cut_plans WHERE plan_id = ? LIMIT 1", (plan_id,))
+
+    # ── Phase B: Take favouriting and exclusion ──
+
+    def upsert_take_flag(self, take_id, project_path, pinned=False, muted=False, note=""):
+        from ..models.schemas import utc_now
+        now = utc_now()
+        self.execute(
+            """INSERT OR REPLACE INTO take_user_flags
+            (take_id, project_path, pinned, muted, note, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)""",
+            (take_id, project_path, 1 if pinned else 0, 1 if muted else 0, note, now),
+        )
+
+    def find_take_flags(self, project_path):
+        return self.fetch_all(
+            "SELECT * FROM take_user_flags WHERE project_path = ?",
+            (project_path,),
+        )
+
+    def find_take_flag(self, take_id, project_path):
+        return self.fetch_one(
+            "SELECT * FROM take_user_flags WHERE take_id = ? AND project_path = ?",
+            (take_id, project_path),
+        )
 
     # ── Phase B: Fingerprint-based lookups ──
 

@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import init_dirs
-from .routes import chat, media, models_routes, pipeline, preflight, premiere, providers
+from .routes import chat, edit, media, models_routes, pipeline, preflight, premiere, providers
 
 # Configure logging
 logging.basicConfig(
@@ -104,6 +104,7 @@ app.include_router(providers.router, prefix="/api")
 app.include_router(pipeline.router, prefix="/api")
 app.include_router(premiere.router, prefix="/api")
 app.include_router(preflight.router, prefix="/api")
+app.include_router(edit.router, prefix="/api")
 
 
 @app.get("/")
