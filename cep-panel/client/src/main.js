@@ -22,6 +22,9 @@
         sequenceState: null,
         projectState: null,
         lastPhraseRanges: [],
+        preflightReady: false,
+        preflightChecks: [],
+        capabilities: null,
     };
 
     // ═══════ DOM References ═══════
@@ -48,6 +51,7 @@
         bindCut();
         bindVisuals();
         bindSettings();
+        bindPreflight();
 
         // Auto-expand textarea
         const chatInput = $('#chat-input');
@@ -56,8 +60,11 @@
             chatInput.style.height = Math.min(chatInput.scrollHeight, 80) + 'px';
         });
 
-        // Try to connect
-        checkConnection();
+        // Try to connect, then run preflight
+        checkConnection().then(() => {
+            runPreflight();
+            probeCapabilities();
+        });
 
         console.log('EditFlow AI v2 panel initialized');
     }
@@ -513,6 +520,136 @@
             showResults('visuals', `Error: ${e.message}`);
         } finally {
             enableButton('btn-place-visuals');
+        }
+    }
+
+    // ═══════ Preflight (Phase A.1) ═══════
+    function bindPreflight() {
+        $('#btn-preflight-toggle').addEventListener('click', () => {
+            const details = $('#preflight-details');
+            const toggle = $('#btn-preflight-toggle');
+            if (details.classList.contains('hidden')) {
+                details.classList.remove('hidden');
+                toggle.innerHTML = '&#9650;'; // up arrow
+                toggle.title = 'Hide details';
+            } else {
+                details.classList.add('hidden');
+                toggle.innerHTML = '&#9660;'; // down arrow
+                toggle.title = 'Show details';
+            }
+        });
+    }
+
+    async function runPreflight() {
+        const banner = $('#preflight-banner');
+        const statusText = $('#preflight-status-text');
+        const icon = $('#preflight-icon');
+
+        statusText.textContent = 'Checking environment...';
+        icon.innerHTML = '\u23F3'; // hourglass
+        banner.classList.remove('hidden', 'preflight-green', 'preflight-yellow', 'preflight-red');
+
+        try {
+            const resp = await apiGet('/preflight');
+            state.preflightReady = resp.ready;
+            state.preflightChecks = resp.checks || [];
+
+            const hasRed = resp.checks.some(c => c.status === 'red');
+            const hasYellow = resp.checks.some(c => c.status === 'yellow');
+
+            if (hasRed) {
+                banner.classList.add('preflight-red');
+                icon.innerHTML = '\u2718'; // cross
+                const redCount = resp.checks.filter(c => c.status === 'red').length;
+                statusText.textContent = `${redCount} issue(s) must be resolved before cutting`;
+            } else if (hasYellow) {
+                banner.classList.add('preflight-yellow');
+                icon.innerHTML = '\u26A0'; // warning
+                const yellowCount = resp.checks.filter(c => c.status === 'yellow').length;
+                statusText.textContent = `${yellowCount} warning(s) — cutting available but may degrade`;
+            } else {
+                banner.classList.add('preflight-green');
+                icon.innerHTML = '\u2713'; // checkmark
+                statusText.textContent = 'All checks passed — ready to cut';
+            }
+
+            renderPreflightChecks(resp.checks);
+
+            // Disable "Match & Cut" button when reds exist
+            const cutBtn = $('#btn-cut');
+            if (cutBtn) {
+                cutBtn.disabled = hasRed;
+                if (hasRed) {
+                    cutBtn.title = 'Resolve preflight issues before cutting';
+                } else {
+                    cutBtn.title = '';
+                }
+            }
+        } catch (e) {
+            banner.classList.add('preflight-red');
+            icon.innerHTML = '\u2718';
+            statusText.textContent = 'Preflight check failed: ' + e.message;
+            console.warn('Preflight check failed:', e);
+        }
+    }
+
+    function renderPreflightChecks(checks) {
+        const container = $('#preflight-checks');
+        if (!container) return;
+
+        container.innerHTML = checks.map(check => {
+            const statusIcon = check.status === 'green' ? '\u2713'
+                : check.status === 'yellow' ? '\u26A0'
+                : '\u2718';
+            return `<div class="preflight-check-row">
+                <span class="preflight-check-icon ${check.status}">${statusIcon}</span>
+                <span class="preflight-check-name">${check.name}</span>
+                <span class="preflight-check-message">${check.message}</span>
+                ${check.remediation ? `<span class="preflight-check-remediation">${check.remediation}</span>` : ''}
+            </div>`;
+        }).join('');
+    }
+
+    async function probeCapabilities() {
+        // Only run if CSInterface is available (inside Premiere)
+        if (!state.csInterface) {
+            console.log('Skipping capability probe — not running inside Premiere');
+            return;
+        }
+
+        try {
+            const result = await evalExtendScript('probeCapabilities');
+            if (!result) return;
+
+            const parsed = JSON.parse(result);
+            if (parsed && parsed.success && parsed.capabilities) {
+                state.capabilities = parsed.capabilities;
+
+                // Post to backend for persistence
+                try {
+                    // Try to extract version info from the Premiere DOM
+                    let premiereVersion = 'unknown';
+                    let panelVersion = '2'; // EditFlow v2
+                    try {
+                        if (typeof app !== 'undefined' && app.version) {
+                            premiereVersion = app.version;
+                        }
+                    } catch (e) {}
+
+                    parsed.capabilities.premiere_version = premiereVersion;
+                    parsed.capabilities.panel_version = panelVersion;
+
+                    await apiPost('/preflight/capabilities', parsed.capabilities);
+                    console.log('Capability probe results posted to backend');
+                } catch (e) {
+                    console.warn('Failed to post capabilities to backend:', e);
+                }
+
+                // Re-run preflight to incorporate capabilities
+                await runPreflight();
+            }
+        } catch (e) {
+            console.warn('Capability probe failed:', e);
         }
     }
 

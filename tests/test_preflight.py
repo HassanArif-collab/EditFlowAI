@@ -413,3 +413,124 @@ class TestRunChecks(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ── Phase A.1: Capability DB persistence ──
+
+class TestPremiereCapabilitiesDB(unittest.TestCase):
+    """Test the premiere_capabilities table and helper methods."""
+
+    def setUp(self):
+        import tempfile
+        from backend.models.sqlite_registry import SQLiteRegistry
+        from backend.config import Settings
+
+        self.tmpdir = tempfile.mkdtemp()
+        db_path = Path(self.tmpdir) / "test.sqlite3"
+        self.settings = Settings(
+            DATA_DIR=Path(self.tmpdir),
+            MEDIA_CACHE_DIR=Path(self.tmpdir) / "cache",
+            OUTPUT_DIR=Path(self.tmpdir) / "output",
+            DB_PATH=db_path,
+        )
+        self.registry = SQLiteRegistry(settings=self.settings)
+        self.registry.initialize()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_premiere_capabilities_table_exists(self):
+        """The premiere_capabilities table should be created during initialization."""
+        rows = self.registry.fetch_all(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='premiere_capabilities'"
+        )
+        self.assertEqual(len(rows), 1, "premiere_capabilities table not found")
+
+    def test_upsert_and_find_capabilities(self):
+        """Insert and retrieve capabilities by (premiere_version, panel_version)."""
+        import json
+        caps = {"qe_available": True, "qe_razor": True, "active_sequence": True}
+        self.registry.upsert_capabilities(
+            premiere_version="25.0",
+            panel_version="2",
+            capabilities_json=json.dumps(caps),
+            probed_at="2026-05-23T00:00:00+00:00",
+        )
+        result = self.registry.find_capabilities("25.0", "2")
+        self.assertIsNotNone(result)
+        self.assertEqual(result["premiere_version"], "25.0")
+        self.assertEqual(result["panel_version"], "2")
+        stored_caps = json.loads(result["capabilities_json"])
+        self.assertTrue(stored_caps["qe_available"])
+
+    def test_find_capabilities_returns_none_for_unknown(self):
+        result = self.registry.find_capabilities("99.0", "1")
+        self.assertIsNone(result)
+
+    def test_find_latest_capabilities(self):
+        """find_latest_capabilities returns the most recently probed row."""
+        import json
+
+        # Insert two entries with different timestamps
+        self.registry.upsert_capabilities(
+            premiere_version="24.0",
+            panel_version="1",
+            capabilities_json=json.dumps({"qe_available": False}),
+            probed_at="2026-05-22T00:00:00+00:00",
+        )
+        self.registry.upsert_capabilities(
+            premiere_version="25.0",
+            panel_version="2",
+            capabilities_json=json.dumps({"qe_available": True}),
+            probed_at="2026-05-23T00:00:00+00:00",
+        )
+        result = self.registry.find_latest_capabilities()
+        self.assertIsNotNone(result)
+        self.assertEqual(result["premiere_version"], "25.0")
+
+    def test_upsert_replaces_existing(self):
+        """Second upsert for same key should replace the first."""
+        import json
+
+        self.registry.upsert_capabilities(
+            premiere_version="25.0",
+            panel_version="2",
+            capabilities_json=json.dumps({"qe_available": False}),
+            probed_at="2026-05-22T00:00:00+00:00",
+        )
+        self.registry.upsert_capabilities(
+            premiere_version="25.0",
+            panel_version="2",
+            capabilities_json=json.dumps({"qe_available": True, "qe_razor": True}),
+            probed_at="2026-05-23T12:00:00+00:00",
+        )
+        result = self.registry.find_capabilities("25.0", "2")
+        stored_caps = json.loads(result["capabilities_json"])
+        self.assertTrue(stored_caps["qe_available"])
+        self.assertTrue(stored_caps["qe_razor"])
+        self.assertEqual(result["probed_at"], "2026-05-23T12:00:00+00:00")
+
+    def test_multiple_version_pairs_coexist(self):
+        """Different (premiere_version, panel_version) pairs are separate rows."""
+        import json
+
+        self.registry.upsert_capabilities(
+            premiere_version="24.0",
+            panel_version="2",
+            capabilities_json=json.dumps({"qe_available": False}),
+            probed_at="2026-05-22T00:00:00+00:00",
+        )
+        self.registry.upsert_capabilities(
+            premiere_version="25.0",
+            panel_version="2",
+            capabilities_json=json.dumps({"qe_available": True}),
+            probed_at="2026-05-23T00:00:00+00:00",
+        )
+        r1 = self.registry.find_capabilities("24.0", "2")
+        r2 = self.registry.find_capabilities("25.0", "2")
+        self.assertIsNotNone(r1)
+        self.assertIsNotNone(r2)
+        self.assertNotEqual(
+            json.loads(r1["capabilities_json"]),
+            json.loads(r2["capabilities_json"]),
+        )

@@ -22,6 +22,18 @@
     <!-- ═══════ Main Content ═══════ -->
     <main id="app-main">
 
+        <!-- ═══════ Preflight Banner (Phase A.1) ═══════ -->
+        <div id="preflight-banner" class="preflight-banner hidden">
+            <div class="preflight-summary">
+                <span id="preflight-icon" class="preflight-icon">&#10003;</span>
+                <span id="preflight-status-text" class="preflight-status-text">Checking environment...</span>
+                <button id="btn-preflight-toggle" class="preflight-toggle" title="Show details">&#9660;</button>
+            </div>
+            <div id="preflight-details" class="preflight-details hidden">
+                <div id="preflight-checks" class="preflight-checks"></div>
+            </div>
+        </div>
+
         <!-- Pipeline Tab Bar -->
         <nav id="pipeline-tabs">
             <button class="tab active" data-tab="chat">Chat</button>

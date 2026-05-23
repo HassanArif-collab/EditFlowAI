@@ -668,3 +668,121 @@ html, body {
     padding: 4px 6px;
     font-size: 11px;
 }
+
+/* ── Preflight Banner (Phase A.1) ── */
+.preflight-banner {
+    flex-shrink: 0;
+    background: var(--bg-tertiary);
+    border-bottom: 1px solid var(--border);
+    padding: 6px 10px;
+}
+
+.preflight-banner.preflight-green {
+    border-left: 3px solid var(--success);
+}
+
+.preflight-banner.preflight-yellow {
+    border-left: 3px solid var(--warning);
+}
+
+.preflight-banner.preflight-red {
+    border-left: 3px solid var(--error);
+}
+
+.preflight-summary {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.preflight-icon {
+    font-size: 14px;
+    font-weight: 700;
+    flex-shrink: 0;
+}
+
+.preflight-green .preflight-icon {
+    color: var(--success);
+}
+
+.preflight-yellow .preflight-icon {
+    color: var(--warning);
+}
+
+.preflight-red .preflight-icon {
+    color: var(--error);
+}
+
+.preflight-status-text {
+    flex: 1;
+    font-size: 11px;
+    color: var(--text-secondary);
+    line-height: 1.4;
+}
+
+.preflight-toggle {
+    background: transparent;
+    border: none;
+    color: var(--text-dim);
+    font-size: 10px;
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: var(--radius);
+    transition: var(--transition);
+}
+
+.preflight-toggle:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+}
+
+.preflight-details {
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px solid var(--border);
+}
+
+.preflight-checks {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.preflight-check-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    line-height: 1.3;
+}
+
+.preflight-check-icon {
+    width: 14px;
+    text-align: center;
+    font-size: 11px;
+    flex-shrink: 0;
+}
+
+.preflight-check-icon.green { color: var(--success); }
+.preflight-check-icon.yellow { color: var(--warning); }
+.preflight-check-icon.red { color: var(--error); }
+
+.preflight-check-name {
+    color: var(--text-secondary);
+    width: 120px;
+    flex-shrink: 0;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.preflight-check-message {
+    color: var(--text-primary);
+    flex: 1;
+}
+
+.preflight-check-remediation {
+    color: var(--text-dim);
+    font-size: 10px;
+    font-style: italic;
+}
