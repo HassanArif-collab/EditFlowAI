@@ -276,8 +276,17 @@ function editflowDispatch(command, payloadData) {
             result = markerManager.addMarkerToSequence(options);
             break;
 
+        case "addPhraseRangeMarkers":
+            result = markerManager.addPhraseRangeMarkers(options);
+            break;
+
         case "getMarkers":
             result = markerManager.getSequenceMarkers();
+            break;
+
+        // ── Active Sequence Phrase Removal ──
+        case "removeTimelineRanges":
+            result = clipManager.removeTimelineRanges(options);
             break;
 
         // ── Effects & Transitions ──
@@ -331,8 +340,9 @@ function editflowDispatch(command, payloadData) {
         // Track undo level for timeline-modifying operations
         var modifyingCommands = [
             "addMediaToTimeline", "insertClipAtTime", "moveClip", "modifyClip",
-            "removeTimelineClips", "clearTimelineLabels", "manageTracks",
-            "setAudioLevel", "normalizeAudio", "audioFade", "addMarker",
+            "removeTimelineClips", "removeTimelineRanges",
+            "clearTimelineLabels", "manageTracks",
+            "setAudioLevel", "normalizeAudio", "audioFade", "addMarker", "addPhraseRangeMarkers",
             "applyEffect", "applyTransitionToAll", "setClipLabel"
         ];
         if (editflowArrayContains(modifyingCommands, command)) {

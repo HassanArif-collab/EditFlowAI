@@ -65,6 +65,58 @@ test('ExtendScript modules are evaluated globally so manager singletons are visi
   assert.doesNotMatch(source, /eval\(content\)/);
 });
 
+test('ExtendScript exposes phrase range preview markers', () => {
+  const indexSource = fs.readFileSync(
+    path.join(repoRoot, 'cep-panel', 'extendscript', 'index.jsx'),
+    'utf8'
+  );
+  const markerSource = fs.readFileSync(
+    path.join(repoRoot, 'cep-panel', 'extendscript', 'marker_manager.jsx'),
+    'utf8'
+  );
+  assert.match(indexSource, /case "addPhraseRangeMarkers"/);
+  assert.match(markerSource, /function addPhraseRangeMarkers/);
+  // Range markers must enter modifyingCommands so undo grouping works.
+  assert.match(indexSource, /"addPhraseRangeMarkers"/);
+});
+
+test('ExtendScript exposes guarded timeline range removal', () => {
+  const indexSource = fs.readFileSync(
+    path.join(repoRoot, 'cep-panel', 'extendscript', 'index.jsx'),
+    'utf8'
+  );
+  const clipSource = fs.readFileSync(
+    path.join(repoRoot, 'cep-panel', 'extendscript', 'clip_manager.jsx'),
+    'utf8'
+  );
+  assert.match(indexSource, /case "removeTimelineRanges"/);
+  assert.match(clipSource, /function removeTimelineRanges/);
+  // The guarded version MUST refuse to cut when QE razor is unavailable.
+  assert.match(clipSource, /QE razor\(\) is not available/);
+  // And it must be in modifyingCommands so undo wrapping fires.
+  assert.match(indexSource, /"removeTimelineRanges"/);
+});
+
+test('CEP panel wires the active sequence phrase workflow end-to-end', () => {
+  const source = fs.readFileSync(
+    path.join(repoRoot, 'cep-panel', 'client', 'src', 'main.js'),
+    'utf8'
+  );
+  // Helper that prepares the snake_case payload for the backend.
+  assert.match(source, /function getSequenceAudioClipsForBackend/);
+  // Public entry points used by buttons + chat command.
+  assert.match(source, /async function analyzeActiveSequenceAudio/);
+  assert.match(source, /async function findPhraseInActiveSequence/);
+  // Buttons must exist and be bound.
+  assert.match(source, /#btn-analyze-sequence-audio/);
+  assert.match(source, /#btn-preview-phrase/);
+  assert.match(source, /#btn-apply-phrase-cut/);
+  // The chat router must intercept "cut/remove/delete '<phrase>'".
+  assert.match(source, /\\b\(\?:cut\|remove\|delete\)\\b/);
+  // State must declare lastPhraseRanges.
+  assert.match(source, /lastPhraseRanges\s*:\s*\[\]/);
+});
+
 test('ExtendScript manager modules export singletons without function-scoped var declarations', () => {
   const moduleExports = [
     ['utils.jsx', 'editflowUtils'],

@@ -13,6 +13,15 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from ..models.schemas import (
+    SequenceAnalyzeRequest,
+    SequenceAnalyzeResponse,
+    SequencePhraseRequest,
+    SequencePhraseResponse,
+)
+from ..services.sequence_phrase_service import sequence_phrase_service
+from ..utils.progress import ProgressReporter
+
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/premiere", tags=["premiere"])
 
@@ -276,6 +285,47 @@ async def generate_edl_from_cuts(cut_id: Optional[str] = None):
         raise
     except Exception as e:
         logger.error(f"EDL from cuts error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Active Sequence Phrase Cuts ──
+
+@router.post("/sequence/analyze", response_model=SequenceAnalyzeResponse)
+async def analyze_active_sequence_audio(request: SequenceAnalyzeRequest):
+    """Transcribe every audio clip in the active sequence and index words by
+    timeline position. Required before /sequence/find-phrase can return matches."""
+    if not request.audio_clips:
+        raise HTTPException(
+            status_code=400,
+            detail="No audio clips were provided for sequence analysis",
+        )
+    progress = ProgressReporter(task_type="sequence_analyze", client_id=request.client_id)
+    try:
+        return await sequence_phrase_service.analyze_sequence(request, progress=progress)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Sequence audio analysis error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/sequence/find-phrase", response_model=SequencePhraseResponse)
+async def find_phrase_in_sequence(request: SequencePhraseRequest):
+    """Search the indexed sequence transcript for every occurrence of ``phrase``."""
+    if not request.phrase.strip():
+        raise HTTPException(status_code=400, detail="phrase cannot be empty")
+    try:
+        return sequence_phrase_service.find_phrase(
+            sequence_id=request.sequence_id,
+            sequence_name=request.sequence_name,
+            phrase=request.phrase,
+            padding_before=request.padding_before,
+            padding_after=request.padding_after,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Sequence phrase search error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -1,0 +1,78 @@
+{
+    "fixture_id": "interview_short",
+    "spec_version": 1,
+    "description": "Expected stage-4 (take_segmenter) output when fed the canonical transcript. Three takes, each annotated with its quality breakdown. The `overall_score` value is a transparent weighted sum of the sub-scores using default weights — see backend/services/take_segmenter.py once implemented. The values here are the *target* the segmenter must produce within 0.05 tolerance.",
+    "segmenter_inputs": {
+        "take_gap_threshold_seconds": 0.7,
+        "filler_lexicon_language": "en",
+        "filler_duration_min_ms": 200,
+        "filler_duration_max_ms": 600,
+        "filler_isolation_silence_ms": 150,
+        "weights": {
+            "w_filler": 0.30,
+            "w_pause": 0.20,
+            "w_repeat": 0.20,
+            "w_speech": 0.10,
+            "w_logprob": 0.10,
+            "w_snr": 0.10
+        }
+    },
+    "takes": [
+        {
+            "take_index": 0,
+            "source_start": 2.0,
+            "source_end": 9.0,
+            "duration": 7.0,
+            "text": "Hello and welcome back to my channel. Today I want to, uh, talk about something really cool.",
+            "clean_text": "Hello and welcome back to my channel. Today I want to talk about something really cool.",
+            "word_count": 17,
+            "filler_indices": [11],
+            "filler_count": 1,
+            "filler_words": ["uh"],
+            "false_starts": 0,
+            "long_pauses": 0,
+            "wpm_estimate": 146,
+            "expected_overall_score": 0.68,
+            "expected_overall_score_tolerance": 0.05
+        },
+        {
+            "take_index": 1,
+            "source_start": 11.0,
+            "source_end": 18.0,
+            "duration": 7.0,
+            "text": "Today I want to talk about something interesting, uh, something that I think you'll find fascinating.",
+            "clean_text": "Today I want to talk about something interesting, something that I think you'll find fascinating.",
+            "word_count": 16,
+            "filler_indices": [8],
+            "filler_count": 1,
+            "filler_words": ["uh"],
+            "false_starts": 0,
+            "long_pauses": 0,
+            "wpm_estimate": 137,
+            "expected_overall_score": 0.67,
+            "expected_overall_score_tolerance": 0.05
+        },
+        {
+            "take_index": 2,
+            "source_start": 20.0,
+            "source_end": 31.5,
+            "duration": 11.5,
+            "text": "Welcome back to the channel. Today I want to discuss a fascinating topic that I think you'll really enjoy.",
+            "clean_text": "Welcome back to the channel. Today I want to discuss a fascinating topic that I think you'll really enjoy.",
+            "word_count": 19,
+            "filler_indices": [],
+            "filler_count": 0,
+            "filler_words": [],
+            "false_starts": 0,
+            "long_pauses": 0,
+            "wpm_estimate": 99,
+            "expected_overall_score": 0.87,
+            "expected_overall_score_tolerance": 0.05
+        }
+    ],
+    "notes": [
+        "Take 2 has lower wpm than take 1 because of the longer trailing word ('fascinating') stretching the duration.",
+        "Take 3 wpm is intentionally low (long final 'enjoy' tail at 4 seconds) — this is a real artifact of speakers letting the last word ring. Segmenter must not penalize a long final word as a 'pause'.",
+        "Quality scores assume default weights. If weights change, all three expected_overall_score values must be updated together — they are not independent."
+    ]
+}

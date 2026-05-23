@@ -21,6 +21,7 @@
         lastCutResult: null,
         sequenceState: null,
         projectState: null,
+        lastPhraseRanges: [],
     };
 
     // ═══════ DOM References ═══════
@@ -98,6 +99,24 @@
 
         addChatMessage('user', text);
         showTypingIndicator();
+
+        // ── Quick command: "cut/remove/delete '<phrase>'" ──
+        // Matches a quoted phrase (single, double, or curly quotes), e.g.:
+        //   "cut the words 'jamia masjid' from the timeline"
+        //   "remove 'um' everywhere"
+        const phraseCommand = text.match(/\b(?:cut|remove|delete)\b[\s\S]*?["'‘“]([^"'’”]+)["'’”]/i);
+        if (phraseCommand && phraseCommand[1]) {
+            try {
+                const phrase = phraseCommand[1].trim();
+                hideTypingIndicator();
+                await analyzeActiveSequenceAudio();
+                await findPhraseInActiveSequence(phrase);
+            } catch (e) {
+                hideTypingIndicator();
+                addChatMessage('error', 'Failed to analyze active sequence phrase: ' + e.message);
+            }
+            return;
+        }
 
         try {
             // Include sequence context if available
@@ -233,6 +252,89 @@
     function bindCut() {
         $('#btn-cut').addEventListener('click', runCut);
         $('#btn-cut-to-premiere').addEventListener('click', sendCutToPremiere);
+
+        // ── Active-sequence phrase removal ──
+        $('#btn-analyze-sequence-audio').addEventListener('click', async () => {
+            disableButton('btn-analyze-sequence-audio');
+            try {
+                await analyzeActiveSequenceAudio();
+            } catch (e) {
+                addChatMessage('error', 'Sequence audio analysis failed: ' + e.message);
+            } finally {
+                enableButton('btn-analyze-sequence-audio');
+            }
+        });
+
+        $('#btn-preview-phrase').addEventListener('click', async () => {
+            const phrase = ($('#sequence-phrase').value || '').trim();
+            if (!phrase) {
+                addChatMessage('error', 'Enter a phrase to remove.');
+                return;
+            }
+            disableButton('btn-preview-phrase');
+            try {
+                const resp = await findPhraseInActiveSequence(phrase);
+                renderPhraseResults(phrase, resp);
+                if ((resp.ranges || []).length) {
+                    try {
+                        await evalExtendScript('addPhraseRangeMarkers',
+                            JSON.stringify({ phrase, ranges: resp.ranges }));
+                    } catch (e) {
+                        addChatMessage('error', 'Could not add preview markers: ' + e.message);
+                    }
+                    $('#btn-apply-phrase-cut').disabled = false;
+                } else {
+                    $('#btn-apply-phrase-cut').disabled = true;
+                }
+            } catch (e) {
+                addChatMessage('error', 'Phrase search failed: ' + e.message);
+            } finally {
+                enableButton('btn-preview-phrase');
+            }
+        });
+
+        $('#btn-apply-phrase-cut').addEventListener('click', async () => {
+            const phrase = ($('#sequence-phrase').value || '').trim();
+            const ranges = state.lastPhraseRanges || [];
+            if (!phrase || !ranges.length) {
+                addChatMessage('error', 'Preview phrase matches before applying cuts.');
+                return;
+            }
+            disableButton('btn-apply-phrase-cut');
+            try {
+                const result = await evalExtendScript('removeTimelineRanges',
+                    JSON.stringify({ phrase, ranges, confirmed: true }));
+                const parsed = (() => { try { return JSON.parse(result); } catch (e) { return null; }})();
+                if (parsed && parsed.success === false) {
+                    throw new Error(parsed.error || 'Phrase cut failed');
+                }
+                addChatMessage('assistant',
+                    `Removed ${ranges.length} occurrence(s) of "${phrase}" from the active sequence.`);
+            } catch (e) {
+                addChatMessage('error', 'Apply phrase cut failed: ' + e.message);
+            } finally {
+                enableButton('btn-apply-phrase-cut');
+            }
+        });
+    }
+
+    function renderPhraseResults(phrase, resp) {
+        const el = $('#phrase-results');
+        if (!el) return;
+        const ranges = resp.ranges || [];
+        if (!ranges.length) {
+            el.classList.remove('hidden');
+            el.innerHTML = `<div class="result-item">No occurrences of "${phrase}" in the active sequence.</div>`;
+            return;
+        }
+        const rows = ranges.map((r, i) => (
+            `<div class="result-item">
+                <strong>#${i + 1}</strong> ${r.start.toFixed(2)}s → ${r.end.toFixed(2)}s
+                · track ${r.track_index}, clip ${r.clip_index} (${r.clip_name || 'unnamed'})
+            </div>`
+        )).join('');
+        el.classList.remove('hidden');
+        el.innerHTML = `<div class="result-header">${ranges.length} occurrence(s) of "${phrase}"</div>${rows}`;
     }
 
     async function runCut() {
@@ -623,6 +725,76 @@
         } catch (e) {
             addChatMessage('error', 'Failed to scan project: ' + e.message);
         }
+    }
+
+    // ═══════ Active Sequence Phrase Workflow ═══════
+
+    /**
+     * Convert the active sequence's audio tracks into the payload shape the
+     * backend expects (snake_case, one entry per clip).
+     */
+    function getSequenceAudioClipsForBackend(sequenceState) {
+        if (!sequenceState || !Array.isArray(sequenceState.audioTracks)) return [];
+        const clips = [];
+        sequenceState.audioTracks.forEach((track) => {
+            (track.clips || []).forEach((clip, clipIndex) => {
+                if (!clip.mediaPath) return;
+                clips.push({
+                    sequence_name: sequenceState.name || '',
+                    track_index: typeof track.index === 'number' ? track.index : 0,
+                    clip_index: clipIndex,
+                    clip_name: clip.name || '',
+                    media_path: clip.mediaPath,
+                    timeline_start: clip.startTime || 0,
+                    timeline_end: clip.endTime || 0,
+                    source_in: clip.inPoint || 0,
+                    source_out: clip.outPoint || 0,
+                    speed: clip.speed || 1,
+                });
+            });
+        });
+        return clips;
+    }
+
+    async function analyzeActiveSequenceAudio() {
+        if (!state.sequenceState) {
+            await syncSequenceState();
+        }
+        const audioClips = getSequenceAudioClipsForBackend(state.sequenceState);
+        if (!audioClips.length) {
+            addChatMessage('error', 'No audio clips with media paths were found in the active sequence.');
+            return null;
+        }
+        const langInput = $('#analyze-language');
+        const resp = await apiPost('/premiere/sequence/analyze', {
+            sequence_id: state.sequenceState.id || '',
+            sequence_name: state.sequenceState.name || '',
+            language: (langInput && langInput.value) || undefined,
+            audio_clips: audioClips,
+            client_id: CONFIG.clientId,
+        });
+        addChatMessage('assistant',
+            resp.message || `Indexed ${resp.words_indexed || 0} words from the active sequence.`);
+        return resp;
+    }
+
+    async function findPhraseInActiveSequence(phrase) {
+        if (!state.sequenceState) {
+            await syncSequenceState();
+        }
+        const resp = await apiPost('/premiere/sequence/find-phrase', {
+            sequence_id: state.sequenceState.id || '',
+            sequence_name: state.sequenceState.name || '',
+            phrase,
+            padding_before: 0.05,
+            padding_after: 0.08,
+        });
+        state.lastPhraseRanges = resp.ranges || [];
+        const hint = state.lastPhraseRanges.length
+            ? ' Use Preview or Apply to edit the timeline.'
+            : '';
+        addChatMessage('assistant', (resp.message || 'Phrase search complete') + hint);
+        return resp;
     }
 
     /**

@@ -434,6 +434,78 @@ clipManager = (function() {
         }
     }
 
+    function removeTimelineRanges(options) {
+        /*
+         * Remove or "ripple delete" arbitrary timeline ranges (in seconds).
+         * Used by the spoken-phrase removal workflow.
+         *
+         * GUARDED: This first version refuses to actually cut the timeline
+         * unless Premiere's QE razor() and lift()/extract() APIs are available
+         * AND the caller explicitly opts in. Otherwise it returns a diagnostic
+         * so the panel can surface exactly what's missing before destroying
+         * user work.
+         */
+        var seq = app.project.activeSequence;
+        if (!seq) {
+            return editflowUtils.safeStringify({ success: false, error: "No active sequence" });
+        }
+
+        var ranges = editflowUtils.getParam(options, "ranges") || [];
+        if (!ranges.length) {
+            return editflowUtils.safeStringify({ success: false, error: "No ranges provided" });
+        }
+
+        var confirmed = editflowUtils.getParam(options, "confirmed") === true;
+
+        try {
+            app.enableQE();
+        } catch (e) {
+            return editflowUtils.safeStringify({
+                success: false,
+                error: "QE not available: " + e.toString(),
+                ranges: ranges
+            });
+        }
+
+        var qeSeq;
+        try {
+            qeSeq = qe.project.getActiveSequence();
+        } catch (e) {
+            return editflowUtils.safeStringify({
+                success: false,
+                error: "Cannot read QE sequence: " + e.toString()
+            });
+        }
+        if (!qeSeq) {
+            return editflowUtils.safeStringify({ success: false, error: "No active QE sequence" });
+        }
+        if (typeof qeSeq.razor !== "function") {
+            return editflowUtils.safeStringify({
+                success: false,
+                error: "QE razor() is not available in this Premiere build",
+                ranges: ranges
+            });
+        }
+
+        if (!confirmed) {
+            // Sentinel: caller saw the preview but hasn't actually confirmed yet.
+            return editflowUtils.safeStringify({
+                success: false,
+                error: "Range removal needs Premiere QE razor verification before destructive editing.",
+                ranges: ranges,
+                requires_confirmation: true
+            });
+        }
+
+        // Destructive path — implemented in a follow-up once QE is verified
+        // by hand on the user's machine.
+        return editflowUtils.safeStringify({
+            success: false,
+            error: "Destructive removal path not yet enabled. Use Preview to inspect ranges.",
+            ranges: ranges
+        });
+    }
+
     return {
         processEDL: processEDL,
         addClipToSequence: addClipToSequence,
@@ -443,6 +515,7 @@ clipManager = (function() {
         findProjectItem: findProjectItem,
         ensureProjectItemForPath: ensureProjectItemForPath,
         removeTimelineClips: removeTimelineClips,
+        removeTimelineRanges: removeTimelineRanges,
         clearTimelineLabels: clearTimelineLabels,
         addMediaToTimeline: addMediaToTimeline,
         importFilesFromPaths: importFilesFromPaths,

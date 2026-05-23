@@ -212,6 +212,71 @@ class VisualPlacementResult(BaseModel):
     message: str = ""
 
 
+# ── Active Sequence Phrase Cuts ──
+
+class SequenceAudioClip(BaseModel):
+    """A single audio clip from the active Premiere sequence sent by the CEP panel."""
+    sequence_name: str = ""
+    track_index: int = 0
+    clip_index: int = 0
+    clip_name: str = ""
+    media_path: str = ""
+    timeline_start: float = 0.0
+    timeline_end: float = 0.0
+    source_in: float = 0.0
+    source_out: float = 0.0
+    speed: float = 1.0
+
+
+class SequenceAnalyzeRequest(BaseModel):
+    """Trigger Whisper transcription of every audio clip in the active sequence."""
+    sequence_id: str = ""
+    sequence_name: str = ""
+    language: Optional[str] = None
+    audio_clips: List[SequenceAudioClip] = Field(default_factory=list)
+    client_id: Optional[str] = None  # For WebSocket progress reporting
+
+
+class SequenceAnalyzeResponse(BaseModel):
+    success: bool = False
+    sequence_id: str = ""
+    sequence_name: str = ""
+    transcript_id: str = ""
+    clips_analyzed: int = 0
+    words_indexed: int = 0
+    skipped_clips: List[str] = Field(default_factory=list)
+    message: str = ""
+
+
+class SequencePhraseRequest(BaseModel):
+    """Search a phrase in an already-analyzed sequence."""
+    sequence_id: str = ""
+    sequence_name: str = ""
+    phrase: str
+    padding_before: float = 0.05
+    padding_after: float = 0.08
+    min_confidence: float = 0.0
+
+
+class SequencePhraseRange(BaseModel):
+    """One detected occurrence of the search phrase on the timeline."""
+    start: float
+    end: float
+    text: str = ""
+    words: List[str] = Field(default_factory=list)
+    track_index: int = 0
+    clip_index: int = 0
+    clip_name: str = ""
+    media_path: str = ""
+
+
+class SequencePhraseResponse(BaseModel):
+    success: bool = False
+    phrase: str = ""
+    ranges: List[SequencePhraseRange] = Field(default_factory=list)
+    message: str = ""
+
+
 # ── Asset Models ──
 
 class AssetResponse(BaseModel):

@@ -25,6 +25,59 @@ markerManager = (function() {
         }
     }
 
+    function addPhraseRangeMarkers(options) {
+        var seq = app.project.activeSequence;
+        if (!seq) {
+            return editflowUtils.safeStringify({ success: false, error: "No active sequence" });
+        }
+
+        var ranges = editflowUtils.getParam(options, "ranges") || [];
+        var phrase = editflowUtils.getParam(options, "phrase") || "phrase";
+
+        if (!ranges.length) {
+            return editflowUtils.safeStringify({
+                success: false,
+                error: "No phrase ranges supplied"
+            });
+        }
+
+        var created = 0;
+        var failed = 0;
+        for (var i = 0; i < ranges.length; i++) {
+            var range = ranges[i];
+            var start = parseFloat(range.start || 0);
+            var end = parseFloat(range.end || 0);
+            try {
+                // createMarker takes seconds in modern Premiere Pro (>= v11).
+                var marker = seq.markers.createMarker(start);
+                if (marker) {
+                    try { marker.name = "EditFlow remove: " + phrase; } catch (e) {}
+                    try {
+                        marker.comments = "Remove '" + phrase + "' (" +
+                            start.toFixed(3) + "s → " + end.toFixed(3) + "s)";
+                    } catch (e) {}
+                    // Convert point marker into a range marker. PPro versions vary —
+                    // wrap in try/catch so a single failure doesn't kill the loop.
+                    try { marker.end = end; } catch (e) {}
+                    try { marker.setColorByIndex(2); } catch (e) {} // red-ish
+                    created++;
+                } else {
+                    failed++;
+                }
+            } catch (e) {
+                failed++;
+            }
+        }
+
+        return editflowUtils.safeStringify({
+            success: true,
+            markers: created,
+            failed: failed,
+            total: ranges.length,
+            phrase: phrase
+        });
+    }
+
     function getSequenceMarkers() {
         var seq = app.project.activeSequence;
         if (!seq) return editflowUtils.safeStringify({ markers: [] });
@@ -48,6 +101,7 @@ markerManager = (function() {
 
     return {
         addMarkerToSequence: addMarkerToSequence,
+        addPhraseRangeMarkers: addPhraseRangeMarkers,
         getSequenceMarkers: getSequenceMarkers
     };
 })();

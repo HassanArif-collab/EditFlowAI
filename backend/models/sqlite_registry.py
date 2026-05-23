@@ -84,6 +84,42 @@ class SQLiteRegistry:
                 FOREIGN KEY(asset_id) REFERENCES assets(id) ON DELETE CASCADE
             );
 
+            CREATE TABLE IF NOT EXISTS sequence_transcripts (
+                id TEXT PRIMARY KEY,
+                sequence_id TEXT DEFAULT '',
+                sequence_name TEXT NOT NULL,
+                language TEXT DEFAULT '',
+                clips_analyzed INTEGER DEFAULT 0,
+                words_indexed INTEGER DEFAULT 0,
+                metadata TEXT DEFAULT '{}',
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS sequence_words (
+                id TEXT PRIMARY KEY,
+                sequence_transcript_id TEXT NOT NULL,
+                sequence_id TEXT DEFAULT '',
+                sequence_name TEXT NOT NULL,
+                track_index INTEGER NOT NULL,
+                clip_index INTEGER NOT NULL,
+                clip_name TEXT DEFAULT '',
+                media_path TEXT NOT NULL,
+                source_start REAL NOT NULL,
+                source_end REAL NOT NULL,
+                timeline_start REAL NOT NULL,
+                timeline_end REAL NOT NULL,
+                word TEXT NOT NULL,
+                normalized_word TEXT NOT NULL,
+                probability REAL DEFAULT 0,
+                FOREIGN KEY(sequence_transcript_id) REFERENCES sequence_transcripts(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_sequence_words_lookup
+                ON sequence_words(sequence_id, sequence_name, timeline_start);
+
+            CREATE INDEX IF NOT EXISTS idx_sequence_words_media_path
+                ON sequence_words(media_path);
+
             CREATE TABLE IF NOT EXISTS speech_candidates (
                 id TEXT PRIMARY KEY,
                 asset_id TEXT NOT NULL,

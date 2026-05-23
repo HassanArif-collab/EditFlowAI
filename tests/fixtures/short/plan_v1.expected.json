@@ -1,0 +1,71 @@
+{
+    "fixture_id": "interview_short",
+    "spec_version": 1,
+    "script_id": "script_v1_literal",
+    "description": "Expected stage-6 (cut_planner) output when the matcher is given script_v1_literal.txt against the three takes in canonical.json. Script v1 is a literal/close paraphrase: beat 1 matches take 0 almost word-for-word ('Hello and welcome back'), beat 2 matches take 1 almost word-for-word ('Today I want to talk about something interesting'). The planner does NOT prefer the higher-quality take 2 for beat 2 because beat 2's literal text contains 'interesting' which only take 1 says — semantic match dominates over raw quality when scores are close.",
+    "planner_inputs": {
+        "engine": "whisperx",
+        "boundary_window_ms": 200,
+        "frame_rate": 24.0,
+        "frame_quantum_ms": 41.667,
+        "silence_fade_ms": 15,
+        "word_boundary_fade_ms": 25,
+        "audio_normalize_default": false
+    },
+    "bin_reference": "@bin:fixtures/short",
+    "target_kind": "new",
+    "sequence_hash_at_plan_time": "FIXTURE",
+    "cuts": [
+        {
+            "beat_index": 0,
+            "beat_text": "Hello and welcome back to my channel.",
+            "take_index": 0,
+            "source_file": "interview_short.wav",
+            "source_in": 2.083,
+            "source_out": 4.500,
+            "duration": 2.417,
+            "audio_fade_in_ms": 15,
+            "audio_fade_out_ms": 15,
+            "timeline_position": 0.000,
+            "confidence_band": "high",
+            "expected_confidence_min": 0.85,
+            "alternates": [2],
+            "warnings": [],
+            "snap_notes": "Cut start snapped to first VAD speech boundary at 2.083s (frame-quantized from 2.10). End snapped to nearest VAD silence boundary at 4.50s (frame-quantized from 4.45 word_end)."
+        },
+        {
+            "beat_index": 1,
+            "beat_text": "Today I want to talk about something interesting.",
+            "take_index": 1,
+            "source_file": "interview_short.wav",
+            "source_in": 11.083,
+            "source_out": 14.000,
+            "duration": 2.917,
+            "audio_fade_in_ms": 15,
+            "audio_fade_out_ms": 25,
+            "timeline_position": 2.417,
+            "confidence_band": "high",
+            "expected_confidence_min": 0.85,
+            "alternates": [0, 2],
+            "warnings": [],
+            "snap_notes": "End boundary falls between the word 'interesting' (end 13.90) and the filler 'uh' (start 14.10). Snapped to 14.00 silence midpoint. Word-boundary fade (25 ms) used because the snap landed inside a 0.20 s gap, shorter than the silence_fade threshold for inaudibility."
+        }
+    ],
+    "gaps": [],
+    "level_warnings": [],
+    "beat_repetition_warnings": [],
+    "summary": {
+        "total_duration": 5.334,
+        "total_beats": 2,
+        "matched": 2,
+        "unmatched": 0,
+        "low_confidence": 0,
+        "estimated_apply_time_s": 0.5
+    },
+    "tolerance": {
+        "source_in_ms": 50,
+        "source_out_ms": 50,
+        "timeline_position_ms": 50,
+        "fade_ms": 5
+    }
+}

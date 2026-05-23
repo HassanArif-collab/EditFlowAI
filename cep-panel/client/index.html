@@ -96,6 +96,18 @@
                 </div>
                 <div id="cut-progress" class="progress-area hidden"></div>
                 <div id="cut-results" class="results-area hidden"></div>
+
+                <hr class="section-divider">
+                <h3>Remove Spoken Phrase From Active Sequence</h3>
+                <p class="tab-desc">Transcribes the audio currently on the active Premiere sequence, finds every occurrence of a phrase (e.g. <em>"jamia masjid"</em>), and previews the timeline ranges to cut.</p>
+                <label class="field-label">Phrase</label>
+                <input type="text" id="sequence-phrase" class="text-input" placeholder="jamia masjid">
+                <div class="button-row">
+                    <button id="btn-analyze-sequence-audio" class="action-btn secondary">Analyze Sequence Audio</button>
+                    <button id="btn-preview-phrase" class="action-btn secondary">Preview Phrase Matches</button>
+                    <button id="btn-apply-phrase-cut" class="action-btn primary" disabled>Apply Phrase Cut</button>
+                </div>
+                <div id="phrase-results" class="results-area hidden"></div>
             </div>
         </section>
 

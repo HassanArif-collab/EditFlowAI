@@ -8,8 +8,8 @@
 
     <ExecutionEnvironment>
         <HostList>
-            <!-- Premiere Pro 2024-2026 (versions 24.x-26.x) -->
-            <Host Name="PPRO" Version="[24.0,27.0]" />
+            <!-- Premiere Pro 2023-2026 (versions 23.x-26.x). Range is half-open: 27.0 excluded. -->
+            <Host Name="PPRO" Version="[23.0,27.0]" />
         </HostList>
         <LocaleList>
             <Locale Code="All" />
