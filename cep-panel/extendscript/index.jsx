@@ -18,7 +18,8 @@ var editflowModuleNames = [
     "marker_manager.jsx",
     "track_manager.jsx",
     "export_manager.jsx",
-    "effects_manager.jsx"
+    "effects_manager.jsx",
+    "capability_probe.jsx"
 ];
 
 function editflowEscapeJSON(value) {
@@ -301,6 +302,14 @@ function editflowDispatch(command, payloadData) {
         // ── Export ──
         case "exportSequence":
             result = exportManager.exportCurrentSequence(options);
+            break;
+
+        // ── Capability Probe ──
+        case "probeCapabilities":
+            result = editflowUtils.safeStringify({
+                success: true,
+                capabilities: capabilityProbe.probe()
+            });
             break;
 
         // ── Undo ──
