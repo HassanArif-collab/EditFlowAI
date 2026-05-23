@@ -10,8 +10,9 @@ websockets>=11.0
 faster-whisper>=1.0.0
 jinja2>=3.1.0
 
-# Optional: for docx visual map parsing
+# Optional: for docx visual map parsing and script extraction
 python-docx>=0.8.11
 
-# Optional: for PDF visual map parsing
+# Optional: for PDF visual map parsing and script extraction
 pdfplumber>=0.9.0
+pypdf>=4.0

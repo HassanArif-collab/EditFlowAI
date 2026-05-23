@@ -194,6 +194,10 @@ function editflowDispatch(command, payloadData) {
             result = projectScanner.scanAll();
             break;
 
+        case "getSelectedProjectItems":
+            result = getSelectedProjectItems();
+            break;
+
         // ── Sequence State ──
         case "getSequenceState":
             result = sequenceReader.readCurrentSequence();

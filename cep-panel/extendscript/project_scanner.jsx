@@ -124,3 +124,72 @@ projectScanner = (function() {
         getItemInfo: getItemInfo
     };
 })();
+
+/**
+ * getSelectedProjectItems — Return the currently selected project items.
+ *
+ * Used by the CEP panel's drag-and-drop and selection-chip features.
+ * When the user drags from Premiere's project panel into the CEP panel,
+ * Premiere selects the items, so we can read the selection at drop time.
+ * This function does NOT modify scanProjectMedia or any existing code.
+ */
+function getSelectedProjectItems() {
+    if (!app || !app.project || !app.project.rootItem) {
+        return JSON.stringify({success: false, error: "No project open"});
+    }
+    var selection = (app.project.getSelection) ? app.project.getSelection() : [];
+    var items = [];
+    for (var i = 0; i < selection.length; i++) {
+        var item = selection[i];
+        // Use the same getItemInfo helper from projectScanner if available
+        if (typeof projectScanner !== 'undefined' && projectScanner.getItemInfo) {
+            var binPath = _getBinPath(item);
+            var itemInfo = projectScanner.getItemInfo(item, binPath);
+            itemInfo.isBin = (item.type === ProjectItemType.BIN);
+            items.push(itemInfo);
+        } else {
+            // Inline minimal description if helper not available
+            items.push(_describeItemMinimal(item));
+        }
+    }
+    return JSON.stringify({success: true, items: items, count: items.length});
+}
+
+function _getBinPath(item) {
+    // Walk up the parent chain to build a bin path
+    var parts = [];
+    var current = item.parent;
+    while (current) {
+        if (current.name) parts.unshift(current.name);
+        current = current.parent;
+    }
+    return parts.join("/");
+}
+
+function _describeItemMinimal(item) {
+    var info = {
+        name: item.name || "",
+        binPath: _getBinPath(item),
+        mediaPath: "",
+        hasAudio: false,
+        hasVideo: false,
+        duration: 0,
+        isBin: (item.type === ProjectItemType.BIN)
+    };
+    try {
+        info.mediaPath = item.getMediaPath ? item.getMediaPath() : "";
+        if (item.getDuration) {
+            var ticks = String(item.getDuration());
+            info.duration = parseFloat(ticks) / 254016000000; // Premiere ticks to seconds
+        }
+        // Check XMP for audio/video
+        if (item.xmpMetadata) {
+            var xmp = item.xmpMetadata;
+            info.hasAudio = xmp.indexOf("Audio") >= 0;
+            info.hasVideo = xmp.indexOf("Video") >= 0;
+        }
+    } catch(e) {
+        info.error = e.toString();
+    }
+    return info;
+}

@@ -1,258 +1,47 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>EditFlow AI v2</title>
-    <link rel="stylesheet" href="styles/chat.css">
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="styles/chat.css">
+  <title>EditFlow AI</title>
 </head>
 <body>
-    <!-- ═══════ Header ═══════ -->
-    <header id="app-header">
-        <div class="header-left">
-            <span class="logo">EditFlow AI</span>
-            <span class="version-badge">v2</span>
-        </div>
-        <div class="header-right">
-            <button id="btn-scan" class="icon-btn" title="Scan Project">&#9776;</button>
-            <button id="btn-settings" class="icon-btn" title="Settings">&#9881;</button>
-        </div>
-    </header>
+  <header id="app-header">
+    <span class="logo">EditFlow AI</span>
+    <span class="header-spacer"></span>
+    <button id="btn-diagnostics" class="icon-btn" title="Diagnostics">&#9432;</button>
+    <button id="btn-settings" class="icon-btn" title="Settings">&#9881;</button>
+  </header>
 
-    <!-- ═══════ Main Content ═══════ -->
-    <main id="app-main">
-
-        <!-- ═══════ Preflight Banner (Phase A.1) ═══════ -->
-        <div id="preflight-banner" class="preflight-banner hidden">
-            <div class="preflight-summary">
-                <span id="preflight-icon" class="preflight-icon">&#10003;</span>
-                <span id="preflight-status-text" class="preflight-status-text">Checking environment...</span>
-                <button id="btn-preflight-toggle" class="preflight-toggle" title="Show details">&#9660;</button>
-            </div>
-            <div id="preflight-details" class="preflight-details hidden">
-                <div id="preflight-checks" class="preflight-checks"></div>
-            </div>
-        </div>
-
-        <!-- Pipeline Tab Bar -->
-        <nav id="pipeline-tabs">
-            <button class="tab active" data-tab="chat">Chat</button>
-            <button class="tab" data-tab="analyze">Analyze</button>
-            <button class="tab" data-tab="cut">Cut</button>
-            <button class="tab" data-tab="visuals">Visuals</button>
-            <button class="tab" data-tab="script-cut">Script Cut</button>
-        </nav>
-
-        <!-- ── Chat Tab ── -->
-        <section id="tab-chat" class="tab-content active">
-            <div id="chat-messages" class="chat-messages">
-                <div class="system-msg">
-                    Welcome to EditFlow AI v2! I can help you analyze videos, cut them based on a script, place visuals, and control Premiere Pro. Type a message or use the tabs above to get started.
-                </div>
-            </div>
-            <div id="chat-input-area" class="chat-input-area">
-                <textarea id="chat-input" placeholder="Ask about editing, cutting, or controlling Premiere..." rows="1"></textarea>
-                <button id="btn-send" class="send-btn" title="Send">&#10148;</button>
-            </div>
-        </section>
-
-        <!-- ── Analyze Tab ── -->
-        <section id="tab-analyze" class="tab-content">
-            <div class="tab-body">
-                <h3>Video Analysis</h3>
-                <p class="tab-desc">Analyze a folder of video files. Transcribes speech, detects fillers, pauses, and repetitive takes.</p>
-
-                <label class="field-label">Video Folder Path</label>
-                <input type="text" id="analyze-folder" class="text-input" placeholder="C:\Users\Videos\RawFootage">
-
-                <label class="field-label">Language (optional)</label>
-                <select id="analyze-language" class="select-input">
-                    <option value="">Auto-detect</option>
-                    <option value="ur" selected>Urdu</option>
-                    <option value="en">English</option>
-                    <option value="ar">Arabic</option>
-                    <option value="hi">Hindi</option>
-                </select>
-
-                <label class="checkbox-label">
-                    <input type="checkbox" id="analyze-recursive" checked> Include subdirectories
-                </label>
-
-                <button id="btn-analyze" class="action-btn primary">Analyze Videos</button>
-                <div id="analyze-progress" class="progress-area hidden"></div>
-                <div id="analyze-results" class="results-area hidden"></div>
-            </div>
-        </section>
-
-        <!-- ── Cut Tab ── -->
-        <section id="tab-cut" class="tab-content">
-            <div class="tab-body">
-                <h3>Script-Based Cutting</h3>
-                <p class="tab-desc">Paste your English script. EditFlow will match it against Urdu video transcripts, select the best takes, and produce a clean cut.</p>
-
-                <label class="field-label">English Script</label>
-                <textarea id="cut-script" class="textarea-input" rows="8" placeholder="Paste your English script here...&#10;&#10;Each line will be matched against the Urdu video.&#10;The AI finds the best take for each line."></textarea>
-
-                <label class="field-label">Cleanup Style</label>
-                <select id="cut-style" class="select-input">
-                    <option value="natural_clean">Natural Clean (recommended)</option>
-                    <option value="aggressive">Aggressive (remove all fillers)</option>
-                    <option value="minimal">Minimal (only remove long pauses)</option>
-                </select>
-
-                <label class="field-label">Output Path (optional)</label>
-                <input type="text" id="cut-output" class="text-input" placeholder="C:\Users\Videos\clean_cut.mp4">
-
-                <div class="button-row">
-                    <button id="btn-cut" class="action-btn primary">Match & Cut</button>
-                    <button id="btn-cut-to-premiere" class="action-btn secondary" disabled>Send to Premiere</button>
-                </div>
-                <div id="cut-progress" class="progress-area hidden"></div>
-                <div id="cut-results" class="results-area hidden"></div>
-
-                <hr class="section-divider">
-                <h3>Remove Spoken Phrase From Active Sequence</h3>
-                <p class="tab-desc">Transcribes the audio currently on the active Premiere sequence, finds every occurrence of a phrase (e.g. <em>"jamia masjid"</em>), and previews the timeline ranges to cut.</p>
-                <label class="field-label">Phrase</label>
-                <input type="text" id="sequence-phrase" class="text-input" placeholder="jamia masjid">
-                <div class="button-row">
-                    <button id="btn-analyze-sequence-audio" class="action-btn secondary">Analyze Sequence Audio</button>
-                    <button id="btn-preview-phrase" class="action-btn secondary">Preview Phrase Matches</button>
-                    <button id="btn-apply-phrase-cut" class="action-btn primary" disabled>Apply Phrase Cut</button>
-                </div>
-                <div id="phrase-results" class="results-area hidden"></div>
-            </div>
-        </section>
-
-        <!-- ── Visuals Tab ── -->
-        <section id="tab-visuals" class="tab-content">
-            <div class="tab-body">
-                <h3>Visual Placement</h3>
-                <p class="tab-desc">Upload a mapping document (docx/txt/pdf) that specifies which script line gets which visual. Provide a folder of visuals and the system places them at exact positions.</p>
-
-                <label class="field-label">Mapping Document</label>
-                <div class="file-upload-area" id="visual-map-upload">
-                    <span id="visual-map-filename">Drop or click to upload (docx, txt, pdf)</span>
-                    <input type="file" id="visual-map-file" accept=".docx,.txt,.pdf" hidden>
-                </div>
-
-                <label class="field-label">Visual Folder Path</label>
-                <input type="text" id="visuals-folder" class="text-input" placeholder="C:\Users\Visuals\Final">
-
-                <label class="field-label">Output Video Path</label>
-                <input type="text" id="visuals-output" class="text-input" placeholder="C:\Users\Videos\final_output.mp4">
-
-                <button id="btn-place-visuals" class="action-btn primary">Place Visuals</button>
-                <div id="visuals-progress" class="progress-area hidden"></div>
-                <div id="visuals-results" class="results-area hidden"></div>
-            </div>
-        </section>
-
-        <!-- ── Script Cut Tab ── -->
-        <section id="tab-script-cut" class="tab-content">
-            <div class="tab-body">
-                <h3>Script Cut</h3>
-
-                <label class="field-label" for="sc-bin">Source bin</label>
-                <input type="text" id="sc-bin" class="text-input" placeholder="@bin:MyTakes" list="sc-bin-options" />
-                <datalist id="sc-bin-options"></datalist>
-
-                <label class="field-label" for="sc-script">Script</label>
-                <textarea id="sc-script" class="textarea-input" rows="10" placeholder="Paste your script. One sentence per line, or paragraphs separated by blank lines."></textarea>
-
-                <div class="row">
-                    <label class="field-label" for="sc-language">Language</label>
-                    <select id="sc-language" class="select-input">
-                        <option value="auto">Auto-detect</option>
-                        <option value="en">English</option>
-                        <option value="ur">Urdu</option>
-                    </select>
-                </div>
-
-                <div class="sc-generate-row">
-                    <button id="sc-generate" class="action-btn primary">Generate Plan</button>
-                    <span id="sc-preflight-indicator" class="preflight-indicator hidden" title="Preflight status">&#10003;</span>
-                </div>
-
-                <div id="sc-progress" class="progress-area hidden"></div>
-
-                <div id="sc-plan" class="hidden">
-                    <h4 id="sc-summary"></h4>
-                    <ol id="sc-beats"></ol>
-
-                    <details id="sc-regen">
-                        <summary>Regenerate with a hint</summary>
-                        <textarea id="sc-hint" class="textarea-input" rows="2" placeholder="e.g. avoid takes from the first 5 minutes"></textarea>
-                        <button id="sc-regenerate" class="action-btn secondary">Regenerate</button>
-                    </details>
-
-                    <button id="sc-apply" class="action-btn primary">Apply to New Sequence</button>
-                </div>
-            </div>
-        </section>
-    </main>
-
-    <!-- ═══════ Settings Overlay ═══════ -->
-    <div id="settings-overlay" class="overlay hidden">
-        <div class="overlay-content settings-panel">
-            <div class="overlay-header">
-                <h3>Settings</h3>
-                <button id="btn-settings-close" class="icon-btn">&times;</button>
-            </div>
-
-            <!-- Backend Connection -->
-            <div class="settings-section">
-                <h4>Backend Connection</h4>
-                <label class="field-label">Server URL</label>
-                <input type="text" id="settings-server-url" class="text-input" value="http://127.0.0.1:8765">
-                <div id="settings-status" class="status-line">Not connected</div>
-                <button id="btn-test-connection" class="action-btn secondary">Test Connection</button>
-            </div>
-
-            <!-- Model Selection -->
-            <div class="settings-section">
-                <h4>Active Model</h4>
-                <label class="field-label">Chat Model</label>
-                <select id="settings-chat-model" class="select-input">
-                    <option value="">Loading...</option>
-                </select>
-                <label class="field-label">Vision Model</label>
-                <select id="settings-vision-model" class="select-input">
-                    <option value="">Loading...</option>
-                </select>
-                <button id="btn-refresh-models" class="action-btn secondary">Refresh Models</button>
-            </div>
-
-            <!-- Providers -->
-            <div class="settings-section">
-                <h4>Providers</h4>
-                <div id="provider-list" class="provider-list">
-                    <div class="provider-empty">Loading providers...</div>
-                </div>
-                <div class="add-provider-form">
-                    <input type="text" id="new-provider-name" class="text-input small" placeholder="Name">
-                    <select id="new-provider-type" class="select-input small">
-                        <option value="ollama">Ollama</option>
-                        <option value="openai_compatible">OpenAI Compatible</option>
-                    </select>
-                    <input type="text" id="new-provider-url" class="text-input small" placeholder="Base URL">
-                    <input type="text" id="new-provider-key" class="text-input small" placeholder="API Key (optional)">
-                    <button id="btn-add-provider" class="action-btn secondary small">Add Provider</button>
-                </div>
-            </div>
-
-            <!-- Sequence Sync -->
-            <div class="settings-section">
-                <h4>Premiere Pro</h4>
-                <div id="premiere-status" class="status-line">Not connected</div>
-                <button id="btn-sync-sequence" class="action-btn secondary">Sync Sequence State</button>
-                <button id="btn-scan-project" class="action-btn secondary">Scan Project</button>
-            </div>
-        </div>
+  <main id="app-main">
+    <!-- Stage 0 default view -->
+    <div id="hero" class="hero">
+      <button id="btn-scan" class="hero-btn">&#8853; Scan Project</button>
+      <p class="hero-subtitle">Connect to your open Premiere project to begin.</p>
     </div>
 
-    <!-- ═══════ Scripts ═══════ -->
-    <script src="lib/CSInterface.js"></script>
-    <script src="src/main.js"></script>
+    <!-- Stage 1+ view (hidden until first message) -->
+    <div id="chat-scroll" class="chat-scroll hidden"></div>
+
+    <!-- Drop overlay (shown during drag) -->
+    <div id="drop-overlay" class="drop-overlay hidden">
+      <span>Drop here: bin, clip, folder, or document</span>
+    </div>
+  </main>
+
+  <footer id="app-footer" class="hidden">
+    <div id="selection-chip" class="selection-chip hidden"></div>
+    <div class="input-row">
+      <textarea id="chat-input" rows="1" placeholder="Type a message, or drop a file&#8230;"></textarea>
+      <button id="btn-attach" class="icon-btn" title="Attach script">&#128206;</button>
+      <button id="btn-send" class="send-btn">Send</button>
+    </div>
+  </footer>
+
+  <div id="settings-overlay" class="overlay hidden"></div>
+  <div id="diagnostics-popover" class="popover hidden"></div>
+
+  <script src="lib/CSInterface.js"></script>
+  <script type="module" src="src/main.js"></script>
 </body>
 </html>
