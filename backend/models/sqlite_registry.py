@@ -53,6 +53,7 @@ class SQLiteRegistry:
                 has_audio INTEGER DEFAULT 0,
                 file_size INTEGER DEFAULT 0,
                 fingerprint TEXT DEFAULT '',
+                audio_fingerprint TEXT DEFAULT '',
                 status TEXT DEFAULT 'registered',
                 language TEXT DEFAULT '',
                 tags TEXT DEFAULT '[]',
@@ -60,6 +61,12 @@ class SQLiteRegistry:
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+
+            CREATE INDEX IF NOT EXISTS idx_assets_fingerprint
+                ON assets(fingerprint);
+
+            CREATE INDEX IF NOT EXISTS idx_assets_audio_fingerprint
+                ON assets(audio_fingerprint);
 
             CREATE TABLE IF NOT EXISTS transcripts (
                 id TEXT PRIMARY KEY,
@@ -82,6 +89,18 @@ class SQLiteRegistry:
                 words TEXT DEFAULT '[]',
                 FOREIGN KEY(transcript_id) REFERENCES transcripts(id) ON DELETE CASCADE,
                 FOREIGN KEY(asset_id) REFERENCES assets(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS audio_cache (
+                fingerprint TEXT PRIMARY KEY,
+                audio_fingerprint TEXT DEFAULT '',
+                source_path TEXT NOT NULL,
+                prepared_wav_path TEXT NOT NULL,
+                duration REAL DEFAULT 0,
+                sample_rate INTEGER DEFAULT 16000,
+                channels INTEGER DEFAULT 1,
+                file_size INTEGER DEFAULT 0,
+                created_at TEXT NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS sequence_transcripts (
@@ -297,6 +316,67 @@ class SQLiteRegistry:
             return {"connected": True, "path": str(self.db_path)}
         except Exception as e:
             return {"connected": False, "path": str(self.db_path), "error": str(e)}
+
+    # ── Phase B: Fingerprint-based lookups ──
+
+    def find_asset_by_fingerprint(self, file_fingerprint: str) -> Optional[Dict[str, Any]]:
+        """Look up an asset by its content fingerprint.
+
+        Returns the first matching asset dict, or None if no asset has
+        this fingerprint.  This enables transcribe-once-per-source-file:
+        if an asset with this fingerprint already exists, we can reuse
+        its transcript instead of re-transcribing.
+        """
+        if not file_fingerprint:
+            return None
+        return self.fetch_one(
+            "SELECT * FROM assets WHERE fingerprint = ? LIMIT 1",
+            (file_fingerprint,),
+        )
+
+    def find_assets_by_audio_fingerprint(self, audio_fingerprint: str) -> List[Dict[str, Any]]:
+        """Look up all assets sharing the same audio fingerprint.
+
+        This finds all files whose *decoded audio content* is identical,
+        even if they have different containers or paths.
+        """
+        if not audio_fingerprint:
+            return []
+        return self.fetch_all(
+            "SELECT * FROM assets WHERE audio_fingerprint = ?",
+            (audio_fingerprint,),
+        )
+
+    def upsert_audio_cache(
+        self,
+        fingerprint: str,
+        audio_fingerprint: str,
+        source_path: str,
+        prepared_wav_path: str,
+        duration: float,
+        sample_rate: int = 16000,
+        channels: int = 1,
+        file_size: int = 0,
+    ) -> None:
+        """Insert or update an audio cache entry keyed by file fingerprint."""
+        from ..models.schemas import utc_now
+        self.execute(
+            """INSERT OR REPLACE INTO audio_cache
+            (fingerprint, audio_fingerprint, source_path, prepared_wav_path,
+             duration, sample_rate, channels, file_size, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (fingerprint, audio_fingerprint, source_path, prepared_wav_path,
+             duration, sample_rate, channels, file_size, utc_now()),
+        )
+
+    def find_audio_cache(self, fingerprint: str) -> Optional[Dict[str, Any]]:
+        """Look up a cached audio preparation by file fingerprint."""
+        if not fingerprint:
+            return None
+        return self.fetch_one(
+            "SELECT * FROM audio_cache WHERE fingerprint = ? LIMIT 1",
+            (fingerprint,),
+        )
 
     @staticmethod
     def dumps(value: Any) -> str:

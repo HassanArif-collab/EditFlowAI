@@ -277,6 +277,34 @@ class SequencePhraseResponse(BaseModel):
     message: str = ""
 
 
+# ── Phase B: Content-Addressed Audio Prepare ──
+
+class PreparedAudio(BaseModel):
+    """Result of content-addressed audio preparation (Stage 2).
+
+    Contains both the file-level fingerprint (SHA-256 of the source file
+    bytes) and the audio-level fingerprint (SHA-256 of the decoded PCM
+    data), along with the path to the cached 16 kHz mono WAV.
+    """
+    source_file: str
+    file_fingerprint: str = ""
+    audio_fingerprint: str = ""
+    prepared_wav_path: str = ""
+    duration: float = 0.0
+    sample_rate: int = 16000
+    channels: int = 1
+    from_cache: bool = False
+
+
+class FingerprintResult(BaseModel):
+    """Fingerprint computation result for a media file."""
+    path: str
+    file_fingerprint: str = ""
+    audio_fingerprint: str = ""
+    file_size: int = 0
+    duration: float = 0.0
+
+
 # ── Asset Models ──
 
 class AssetResponse(BaseModel):
@@ -288,6 +316,7 @@ class AssetResponse(BaseModel):
     has_transcript: bool = False
     language: str = ""
     status: str = "registered"
+    fingerprint: str = ""
 
 
 # ── API Response ──

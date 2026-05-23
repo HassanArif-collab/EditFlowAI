@@ -20,6 +20,7 @@ from ..models.schemas import (
     ScriptMatchRequest, VisualMapEntry, VisualMapRequest, VisualPlacementResult,
     utc_now,
 )
+from ..services.media_fingerprint import compute_file_fingerprint
 from ..services.provider_service import provider_service
 from ..services.whisper_service import whisper_service
 from ..utils.ffmpeg_utils import get_duration, get_media_info, run_ffmpeg_async
@@ -120,31 +121,69 @@ class CuttingPipelineService:
     async def _analyze_single_video(
         self, video_path: str, language: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Analyze a single video: register + transcribe + speech candidates."""
+        """Analyze a single video: register + transcribe + speech candidates.
+
+        Phase B enhancement: computes and stores the file fingerprint, and
+        uses transcribe_fingerprinted() for transcribe-once-per-source-file.
+        """
         path = Path(video_path)
         asset_id = str(uuid.uuid4())[:12]
+
+        # Compute file fingerprint (Phase B: content-addressed dedup)
+        file_fingerprint = ""
+        try:
+            file_fingerprint = await asyncio.to_thread(compute_file_fingerprint, path)
+        except Exception as e:
+            logger.warning(f"Fingerprint computation failed for {path}: {e}")
+
+        # Check if we already have this file by fingerprint
+        if file_fingerprint:
+            existing = sqlite_registry.find_asset_by_fingerprint(file_fingerprint)
+            if existing:
+                logger.info(
+                    f"Asset already registered with fp={file_fingerprint[:16]}... "
+                    f"(existing id={existing['id']}). Reusing transcript."
+                )
+                # Return the existing asset's summary
+                transcript = sqlite_registry.fetch_one(
+                    "SELECT language FROM transcripts WHERE asset_id = ?",
+                    (existing["id"],),
+                )
+                return {
+                    "id": existing["id"],
+                    "path": str(path),
+                    "name": path.name,
+                    "duration": existing.get("duration", 0),
+                    "language": transcript.get("language", "") if transcript else "",
+                    "has_transcript": True,
+                    "status": "analyzed",
+                    "fingerprint": file_fingerprint,
+                    "from_cache": True,
+                }
 
         # Get media info (ffprobe blocks, run off the event loop)
         media_info = await asyncio.to_thread(get_media_info, video_path)
 
-        # Register asset in SQLite
+        # Register asset in SQLite (now with fingerprint)
         now = utc_now()
         sqlite_registry.execute(
             """INSERT OR REPLACE INTO assets
             (id, path, name, asset_type, source_type, duration, width, height, fps, has_audio,
-             file_size, fingerprint, status, language, tags, metadata, created_at, updated_at)
-            VALUES (?, ?, ?, 'video', 'local_file', ?, ?, ?, ?, ?, ?, '', 'analyzed', ?, '[]', '{}', ?, ?)""",
+             file_size, fingerprint, audio_fingerprint, status, language, tags, metadata, created_at, updated_at)
+            VALUES (?, ?, ?, 'video', 'local_file', ?, ?, ?, ?, ?, ?, ?, '', 'analyzed', ?, '[]', '{}', ?, ?)""",
             (asset_id, str(path), path.name,
              media_info.get("duration", 0), media_info.get("width", 0),
              media_info.get("height", 0), media_info.get("fps", 0),
              1 if media_info.get("has_audio") else 0,
              media_info.get("file_size", 0),
+             file_fingerprint,
              language or "", now, now),
         )
 
-        # Transcribe
-        transcript_result = await whisper_service.transcribe(
-            video_path=video_path,
+        # Transcribe (Phase B: transcribe-once-per-source-file)
+        transcript_result = await whisper_service.transcribe_fingerprinted(
+            source_path=video_path,
+            file_fingerprint=file_fingerprint or None,
             language=language,
         )
 
@@ -185,6 +224,7 @@ class CuttingPipelineService:
             "language": transcript_result.language,
             "has_transcript": True,
             "status": "analyzed",
+            "fingerprint": file_fingerprint,
         }
 
     async def _create_speech_candidate(self, asset_id: str, segment) -> None:

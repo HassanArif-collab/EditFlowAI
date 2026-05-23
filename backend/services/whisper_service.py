@@ -1,9 +1,15 @@
 """
 EditFlow AI - Whisper Transcription Service
 Local transcription using faster-whisper with VAD and word timestamps.
+
+Phase B enhancement: transcribe-once-per-source-file.  Before running
+Whisper, the service checks the audio cache (keyed by file fingerprint)
+for an existing transcript.  If found, the cached result is returned
+immediately, avoiding the expensive re-transcription of the same file.
 """
 import asyncio
 import hashlib
+import json
 import logging
 import os
 from pathlib import Path
@@ -11,6 +17,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from ..config import Settings, get_settings
 from ..models.schemas import TranscriptResult, TranscriptSegment, TranscriptWord
+from ..services.media_fingerprint import compute_file_fingerprint
 from ..utils.ffmpeg_utils import extract_audio
 from ..utils.progress import ProgressReporter
 
@@ -68,12 +75,18 @@ def _consume_segments(
 
 
 class WhisperService:
-    """Local Whisper transcription service using faster-whisper."""
+    """Local Whisper transcription service using faster-whisper.
+
+    Supports transcribe-once-per-source-file: each unique source file
+    (identified by content fingerprint) is only transcribed once.  The
+    result is cached on disk and returned on subsequent calls.
+    """
 
     def __init__(self, settings: Optional[Settings] = None):
         self.settings = settings or get_settings()
         self._model = None
         self._model_info: Dict = {}
+        self._transcript_cache: Dict[str, TranscriptResult] = {}  # file_fp -> result (in-memory)
 
     def _load_model(self):
         """Lazy-load the Whisper model. Sync, intended to run via to_thread."""
@@ -287,6 +300,115 @@ class WhisperService:
                 except Exception:
                     pass
             raise
+
+    # ── Phase B: Transcribe-once-per-source-file ──
+
+    def _transcript_cache_dir(self) -> Path:
+        """Directory for on-disk transcript cache (keyed by fingerprint)."""
+        d = Path(self.settings.MEDIA_CACHE_DIR) / "transcripts"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def _get_cached_transcript(self, file_fingerprint: str) -> Optional[TranscriptResult]:
+        """Look up a cached transcript by file fingerprint.
+
+        Checks in-memory cache first, then on-disk JSON cache.
+        Returns None if no cached transcript exists.
+        """
+        # In-memory cache
+        if file_fingerprint in self._transcript_cache:
+            return self._transcript_cache[file_fingerprint]
+
+        # On-disk cache
+        cache_path = self._transcript_cache_dir() / f"{file_fingerprint}.json"
+        if cache_path.exists():
+            try:
+                data = json.loads(cache_path.read_text(encoding="utf-8"))
+                result = TranscriptResult(**data)
+                self._transcript_cache[file_fingerprint] = result
+                return result
+            except Exception as e:
+                logger.warning(f"Failed to load cached transcript for {file_fingerprint[:16]}...: {e}")
+        return None
+
+    def _save_transcript_cache(self, file_fingerprint: str, result: TranscriptResult) -> None:
+        """Save a transcript result to both in-memory and on-disk cache."""
+        self._transcript_cache[file_fingerprint] = result
+        cache_path = self._transcript_cache_dir() / f"{file_fingerprint}.json"
+        try:
+            cache_path.write_text(
+                result.model_dump_json(indent=2),
+                encoding="utf-8",
+            )
+        except Exception as e:
+            logger.warning(f"Failed to cache transcript for {file_fingerprint[:16]}...: {e}")
+
+    async def transcribe_fingerprinted(
+        self,
+        source_path: str,
+        file_fingerprint: Optional[str] = None,
+        language: Optional[str] = None,
+        word_timestamps: bool = True,
+        vad_filter: bool = True,
+        progress: Optional[ProgressReporter] = None,
+        force: bool = False,
+    ) -> TranscriptResult:
+        """Transcribe a media file with content-addressed deduplication.
+
+        This is the Phase B entry point.  Before running Whisper, it checks
+        the transcript cache (keyed by file fingerprint).  If a cached
+        transcript exists and ``force`` is False, the cached result is
+        returned immediately — the same source file is never transcribed
+        twice.
+
+        Args:
+            source_path: Path to the source media file.
+            file_fingerprint: Pre-computed fingerprint (computed if not provided).
+            language: Language hint for Whisper.
+            word_timestamps: Whether to request word-level timestamps.
+            vad_filter: Whether to use VAD filtering.
+            progress: Optional progress reporter.
+            force: If True, bypass cache and re-transcribe.
+
+        Returns:
+            TranscriptResult with segments and word timestamps.
+        """
+        # Compute fingerprint if not provided
+        if file_fingerprint is None:
+            try:
+                file_fingerprint = await asyncio.to_thread(
+                    compute_file_fingerprint, source_path
+                )
+            except FileNotFoundError:
+                raise
+            except Exception as e:
+                logger.warning(f"Fingerprint computation failed for {source_path}: {e}")
+                file_fingerprint = ""
+
+        # Check cache (unless force=True)
+        if file_fingerprint and not force:
+            cached = self._get_cached_transcript(file_fingerprint)
+            if cached is not None:
+                logger.info(
+                    f"Transcript cache hit for {Path(source_path).name} "
+                    f"(fp={file_fingerprint[:16]}...)"
+                )
+                return cached
+
+        # Cache miss — run transcription
+        result = await self.transcribe(
+            video_path=source_path,
+            language=language,
+            word_timestamps=word_timestamps,
+            vad_filter=vad_filter,
+            progress=progress,
+        )
+
+        # Cache the result
+        if file_fingerprint:
+            self._save_transcript_cache(file_fingerprint, result)
+
+        return result
 
     async def transcribe_directory(
         self,
