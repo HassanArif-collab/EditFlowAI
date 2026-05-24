@@ -4,6 +4,25 @@
  * Initializes all modules, wires up DOM events, and starts the app.
  * This file owns no business logic — it delegates to the modules.
  */
+const BUILD_TAG = 'f030e6c-2';  // bump when shipping a fix; visible in header
+
+// FIRST thing on parse: clear the inline boot-check banner. If the user sees
+// the banner disappear, we KNOW main.js parsed successfully and modules are
+// loading. If it stays, the issue is CEP cache serving an old main.js.
+(function _stampBoot() {
+  const banner = document.getElementById('inline-boot-check');
+  if (banner) {
+    banner.dataset.cleared = '1';
+    banner.style.background = '#1f3a1f';
+    banner.style.color = '#a5d6a7';
+    banner.textContent = `Boot: main.js parsed (build ${BUILD_TAG}). Loading modules...`;
+    setTimeout(() => banner.remove(), 1500);
+  }
+  const tag = document.getElementById('boot-tag');
+  if (tag) tag.textContent = `build:${BUILD_TAG}`;
+  console.log(`[EditFlow] main.js parsed — build ${BUILD_TAG}`);
+})();
+
 import { getState, setState, setSession, transition, transitionError, subscribe, resetState, loadResumableSession, hydrateFromSaved, clearSavedSession } from './state.js';
 import { initExtendScript, isExtendScriptAvailable } from './extendscript.js';
 import { apiGet, apiPost, connectWS, getBaseUrl, setBaseUrl } from './api.js';

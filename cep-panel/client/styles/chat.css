@@ -1028,3 +1028,17 @@ select.settings-input {
   accent-color: var(--accent);
   cursor: pointer;
 }
+
+/* Build tag — tiny indicator in the header so the user can confirm the
+   latest main.js loaded. If it says "build:unloaded", the JS never ran
+   and CEP is serving a stale cache. */
+.boot-tag {
+  font-size: 9px;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  color: var(--text-dim);
+  margin-left: 8px;
+  padding: 2px 5px;
+  border: 1px solid var(--bg-hover);
+  border-radius: 3px;
+  opacity: 0.6;
+}
