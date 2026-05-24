@@ -13,7 +13,15 @@ import { setupDropZone, setupSelectionChip, stopSelectionPoll } from './dnd.js';
 import { pickScriptFile } from './upload.js';
 import { initDiagnostics } from './diagnostics.js';
 import { initSettings, openSettings } from './settings.js';
-import {
+// Feature flag: agent mode vs. legacy orchestrator
+const AGENT_MODE = localStorage.getItem('editflow_agent_mode') === 'on';
+
+// Dynamic import based on feature flag
+const _orchModule = AGENT_MODE
+  ? await import('./agent-client.js')
+  : await import('./orchestrator.js');
+
+const {
   onScanClicked,
   onSourceProvided,
   onPProItemsProvided,
@@ -21,7 +29,7 @@ import {
   onScriptFileDropped,
   onUserMessage,
   onNewEdit,
-} from './orchestrator.js';
+} = _orchModule;
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -221,13 +229,13 @@ function _initWebSocket() {
     const ws = connectWS(CLIENT_ID);
 
     ws.on('message', (data) => {
-      // Forward backend progress events to the orchestrator so the in-flight
+      // Forward backend progress events to the active orchestrator so the in-flight
       // progress message ticks as work happens (esp. transcription).
-      if (data && data.type === 'progress') {
+      if (data && (data.type === 'progress' || data.type === 'agent_tool')) {
         try {
-          import('./orchestrator.js').then(o => {
-            if (o.onWsProgress) o.onWsProgress(data.payload || data);
-          });
+          if (_orchModule && _orchModule.onWsProgress) {
+            _orchModule.onWsProgress(data.payload || data);
+          }
         } catch (_) { /* ignore */ }
       }
       if (data && data.type === 'chat_response') {

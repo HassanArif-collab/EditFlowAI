@@ -135,6 +135,17 @@ function initSettings() {
           </div>
         </div>
 
+        <div class="settings-section">
+          <h3>Beta Features</h3>
+          <div class="settings-field">
+            <label for="agent-mode-toggle" style="display:flex;align-items:center;gap:8px;cursor:pointer">
+              <input type="checkbox" id="agent-mode-toggle" class="settings-checkbox" />
+              Use agent-driven assistant (beta)
+            </label>
+            <div class="settings-help">The agent mode uses an LLM to understand your intent and pick the right tools automatically. Turn off to use the legacy state-machine orchestrator. Requires page reload to take effect.</div>
+          </div>
+        </div>
+
       </div>
     </div>
   `;
@@ -171,6 +182,15 @@ function initSettings() {
   $('#backend-url-input').addEventListener('change', (e) => {
     setBaseUrl(e.target.value.trim().replace(/\/+$/, ''));
   });
+
+  // Agent mode toggle
+  const agentToggle = $('#agent-mode-toggle');
+  if (agentToggle) {
+    agentToggle.checked = localStorage.getItem('editflow_agent_mode') === 'on';
+    agentToggle.addEventListener('change', (e) => {
+      localStorage.setItem('editflow_agent_mode', e.target.checked ? 'on' : 'off');
+    });
+  }
 }
 
 async function openSettings() {

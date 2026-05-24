@@ -988,3 +988,43 @@ select.settings-input {
   display: flex;
   gap: 6px;
 }
+
+/* ═══════════ Agent mode: ask card ═══════════ */
+.ask-card {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.ask-option-btn {
+  padding: 6px 14px;
+  font-size: 12px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.ask-option-btn:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* ═══════════ Agent mode: tool spinner ═══════════ */
+.tool-spinner {
+  display: inline-block;
+  animation: spin 1.2s linear infinite;
+}
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* ═══════════ Agent mode: checkbox ═══════════ */
+.settings-checkbox {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}

@@ -6,7 +6,8 @@
  *
  * Message kinds:
  *   agent-text, user-text, error, bin-summary-card, progress,
- *   plan-card, extract-card, success
+ *   plan-card, extract-card, success, transcript-summary-card,
+ *   ask-card, tool-running-card
  */
 
 const $ = (sel) => document.querySelector(sel);
@@ -90,6 +91,27 @@ function appendMessage(kind, payload) {
         `<div class="msg-body">${_escapeHtml(payload.intro || '')}</div>` +
         _renderExtractCard(payload);
       setTimeout(() => _bindExtractActions(el, payload), 0);
+      break;
+
+    case 'transcript-summary-card':
+      el.className = 'msg msg-agent';
+      el.innerHTML = `<div class="msg-label">EditFlow</div>` +
+        `<div class="msg-body">${_escapeHtml(payload.intro || 'Transcripts ready:')}</div>` +
+        _renderTranscriptSummaryCard(payload);
+      break;
+
+    case 'ask-card':
+      el.className = 'msg msg-agent';
+      el.innerHTML = `<div class="msg-label">EditFlow</div>` +
+        `<div class="msg-body">${_escapeHtml(payload.question || '')}</div>` +
+        _renderAskCard(payload);
+      setTimeout(() => _bindAskActions(el, payload), 0);
+      break;
+
+    case 'tool-running-card':
+      el.className = 'msg msg-agent';
+      el.innerHTML = `<div class="msg-label">EditFlow</div>` +
+        `<div class="msg-body">${_escapeHtml(payload.label || 'Running tool...')} <span class="tool-spinner">&#8987;</span></div>`;
       break;
 
     case 'success':
@@ -308,6 +330,47 @@ function _formatTime(seconds) {
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
   return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+function _renderTranscriptSummaryCard(payload) {
+  const clips = payload.clips || [];
+  if (!clips.length) return '<div class="bin-card"><div style="padding:8px 12px;color:var(--text-dim)">No transcripts available</div></div>';
+  return '<div class="bin-card">' +
+    clips.map(c => {
+      const name = _escapeHtml(c.name || c.path || 'unknown');
+      const dur = c.duration ? ` (${_formatDuration(c.duration)})` : '';
+      const lang = c.language ? ` [${_escapeHtml(c.language)}]` : '';
+      return `<div class="bin-row">` +
+        `<span class="bin-icon">&#127898;</span>` +
+        `<span class="bin-name">${name}</span>` +
+        `<span class="bin-desc">${dur}${lang}</span>` +
+      `</div>`;
+    }).join('') +
+  '</div>';
+}
+
+function _renderAskCard(payload) {
+  const options = payload.options || [];
+  let html = '<div class="ask-card">';
+  for (const opt of options) {
+    const label = _escapeHtml(opt.label || opt.value || '?');
+    const value = _escapeHtml(opt.value || opt.label || '');
+    html += `<button class="btn-approve ask-option-btn" data-option-value="${value}">${label}</button>`;
+  }
+  html += '</div>';
+  return html;
+}
+
+function _bindAskActions(el, payload) {
+  const buttons = el.querySelectorAll('.ask-option-btn');
+  buttons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const value = btn.dataset.optionValue;
+      if (payload.onOptionClick) {
+        payload.onOptionClick(value);
+      }
+    });
+  });
 }
 
 export { appendMessage, updateProgress, clearChat, scrollToBottom };

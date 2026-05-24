@@ -89,12 +89,13 @@ def _resolve_matcher_model(requested: Optional[str]) -> str:
 # ── Endpoints ──
 
 
-@router.post("/analyze")
-async def analyze(req: AnalyzeRequest):
+async def run_analyze(req: AnalyzeRequest) -> dict:
     """Run the full take-based editing pipeline: resolve, transcribe, match, plan.
 
-    Returns the plan ID and summary. The full plan can be fetched via
-    GET /api/edit/plan/{plan_id}.
+    Extracted as a free function so the agent tools can call it directly
+    without going through the HTTP layer.
+
+    Returns the plan ID, status, and summary.
     """
     bin_references = req.bin_references or ([req.bin] if req.bin else [])
     if not bin_references:
@@ -233,6 +234,12 @@ async def analyze(req: AnalyzeRequest):
     }
 
 
+@router.post("/analyze")
+async def analyze(req: AnalyzeRequest):
+    """HTTP endpoint for the edit analysis pipeline."""
+    return await run_analyze(req)
+
+
 @router.get("/plan/{plan_id}")
 async def get_plan(plan_id: str):
     """Return a stored plan by ID."""
@@ -245,11 +252,11 @@ async def get_plan(plan_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/plan/{plan_id}/apply")
-async def apply_plan(plan_id: str, req: ApplyRequest):
+async def run_apply_plan(plan_id: str, req: ApplyRequest) -> dict:
     """Apply a plan: generate ExtendScript operations for the CEP panel.
 
-    The panel dispatches these via ``evalExtendScript('processEDL', ...)``.
+    Extracted as a free function so the agent tools can call it directly.
+    The panel dispatches the ops via ``evalExtendScript('processEDL', ...)``.
     """
     try:
         plan_data = plan_store.load(plan_id)
@@ -307,6 +314,12 @@ async def apply_plan(plan_id: str, req: ApplyRequest):
         "target_sequence_name": target_name,
         "cuts_applied": len(cuts),
     }
+
+
+@router.post("/plan/{plan_id}/apply")
+async def apply_plan(plan_id: str, req: ApplyRequest):
+    """HTTP endpoint: apply a plan."""
+    return await run_apply_plan(plan_id, req)
 
 
 @router.post("/regenerate")
