@@ -598,8 +598,127 @@ clipManager = (function() {
         }
     }
 
+    // ── Inline EDL Processing (no file on disk) ──
+
+    function processEDLOps(options) {
+        /*
+         * Processes EDL operations passed as inline JSON (not from a file).
+         * This is the path used by the agent flow: the backend generates
+         * extendscript_ops and the panel sends them directly via
+         * editflowDispatch("processEDL", ...).
+         *
+         * Supports the action types produced by plan_to_edl_ops():
+         *   beginUndoGroup, endUndoGroup, ensure_bin, import_file,
+         *   create_sequence, add, add_marker
+         */
+        var seq = app.project.activeSequence;
+        var results = [];
+        var undoGroupName = "EditFlow";
+
+        try {
+            // The panel sends { ops: [...] }, the old file format uses
+            // { operations: [...] }.  Accept both keys.
+            var operations = options.ops || options.operations || [];
+
+            for (var i = 0; i < operations.length; i++) {
+                var op = operations[i];
+                var action = op.action || "";
+                var result;
+
+                switch (action) {
+                    case "beginUndoGroup":
+                        undoGroupName = op.name || "EditFlow";
+                        // Premiere doesn't have a beginUndoGroup JS API —
+                        // we record the name for diagnostics only.
+                        result = { success: true, action: "beginUndoGroup" };
+                        break;
+
+                    case "endUndoGroup":
+                        result = { success: true, action: "endUndoGroup" };
+                        break;
+
+                    case "import_file":
+                        var importedItem = ensureProjectItemForPath(op.mediaPath || op.path);
+                        result = importedItem
+                            ? { success: true, path: op.mediaPath || op.path }
+                            : { success: false, error: "Import failed: " + (op.mediaPath || op.path) };
+                        break;
+
+                    case "add":
+                        // Ensure we have an active sequence
+                        if (!seq) {
+                            result = { success: false, error: "No active sequence" };
+                        } else {
+                            result = addClipToSequence(seq, op);
+                        }
+                        break;
+
+                    case "ensure_bin":
+                        result = ensureBin(op);
+                        break;
+
+                    case "create_sequence":
+                        result = createSequenceFromOps(op);
+                        // After creating a sequence, it becomes the active one
+                        seq = app.project.activeSequence;
+                        break;
+
+                    case "add_marker":
+                        if (!seq) {
+                            result = { success: false, error: "No active sequence" };
+                        } else {
+                            result = addMarkerToSequence(seq, op);
+                        }
+                        break;
+
+                    case "remove":
+                        if (!seq) {
+                            result = { success: false, error: "No active sequence" };
+                        } else {
+                            result = removeClipFromSequence(seq, op);
+                        }
+                        break;
+
+                    case "move":
+                        if (!seq) {
+                            result = { success: false, error: "No active sequence" };
+                        } else {
+                            result = moveClipOnSequence(seq, op);
+                        }
+                        break;
+
+                    case "modify":
+                        if (!seq) {
+                            result = { success: false, error: "No active sequence" };
+                        } else {
+                            result = modifyClipOnSequence(seq, op);
+                        }
+                        break;
+
+                    default:
+                        result = { success: false, error: "Unknown action: " + action };
+                }
+
+                result.operation = i;
+                result.action = action;
+                results.push(result);
+            }
+
+            // If options specify a sequence name, rename the active sequence
+            if (options.sequence_name && seq && seq.name !== options.sequence_name) {
+                try { seq.name = options.sequence_name; } catch (e) {}
+            }
+
+        } catch (e) {
+            return editflowUtils.safeStringify({ success: false, error: e.toString(), results: results });
+        }
+
+        return editflowUtils.safeStringify({ success: true, totalOperations: operations.length, results: results });
+    }
+
     return {
         processEDL: processEDL,
+        processEDLOps: processEDLOps,
         addClipToSequence: addClipToSequence,
         removeClipFromSequence: removeClipFromSequence,
         moveClipOnSequence: moveClipOnSequence,

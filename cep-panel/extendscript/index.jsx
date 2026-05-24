@@ -344,6 +344,11 @@ function editflowDispatch(command, payloadData) {
             }
             break;
 
+        // ── EDL Processing (inline ops from agent flow) ──
+        case "processEDL":
+            result = clipManager.processEDLOps(options);
+            break;
+
         default:
             result = editflowUtils.safeStringify({
                 success: false,
@@ -357,7 +362,7 @@ function editflowDispatch(command, payloadData) {
             "removeTimelineClips", "removeTimelineRanges",
             "clearTimelineLabels", "manageTracks",
             "setAudioLevel", "normalizeAudio", "audioFade", "addMarker", "addPhraseRangeMarkers",
-            "applyEffect", "applyTransitionToAll", "setClipLabel"
+            "applyEffect", "applyTransitionToAll", "setClipLabel", "processEDL"
         ];
         if (editflowArrayContains(modifyingCommands, command)) {
             _undoCounter++;
