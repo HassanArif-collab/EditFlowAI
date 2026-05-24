@@ -117,7 +117,7 @@ clipManager = (function() {
                 }
             }
 
-            var startTicks = String(editflowUtils.secondsToTicks(startTime));
+            var startTicks = editflowUtils.secondsToTicksString(startTime);
 
             // insertClip(projectItem, time, videoTrackIndex, audioTrackIndex)
             // Places both video AND audio in one call — the correct Adobe API.
@@ -131,10 +131,10 @@ clipManager = (function() {
                     var placedClip = _findClipAtTime(seq.videoTracks[videoTrackIndex], startTime);
                     if (placedClip) {
                         if (inPoint > 0) {
-                            placedClip.inPoint = String(editflowUtils.secondsToTicks(inPoint));
+                            placedClip.inPoint = editflowUtils.secondsToTicksString(inPoint);
                         }
                         if (outPoint > 0) {
-                            placedClip.outPoint = String(editflowUtils.secondsToTicks(outPoint));
+                            placedClip.outPoint = editflowUtils.secondsToTicksString(outPoint);
                         }
                     }
                 } catch (e) {
@@ -149,13 +149,13 @@ clipManager = (function() {
             try {
                 var lastClip = seq.videoTracks[videoTrackIndex].clips[seq.videoTracks[videoTrackIndex].clips.numItems - 1];
                 if (lastClip && options.audio_fade_in_ms) {
-                    var fadeInTicks = String(editflowUtils.secondsToTicks(options.audio_fade_in_ms / 1000));
+                    var fadeInTicks = editflowUtils.secondsToTicksString(options.audio_fade_in_ms / 1000);
                     if (typeof lastClip.setAudioFadeIn === 'function') {
                         lastClip.setAudioFadeIn(fadeInTicks);
                     }
                 }
                 if (lastClip && options.audio_fade_out_ms) {
-                    var fadeOutTicks = String(editflowUtils.secondsToTicks(options.audio_fade_out_ms / 1000));
+                    var fadeOutTicks = editflowUtils.secondsToTicksString(options.audio_fade_out_ms / 1000);
                     if (typeof lastClip.setAudioFadeOut === 'function') {
                         lastClip.setAudioFadeOut(fadeOutTicks);
                     }
@@ -185,9 +185,10 @@ clipManager = (function() {
                 return clip;
             }
         }
-        // Fallback: return the last clip if only one exists
-        if (track.clips.numItems > 0) {
-            return track.clips[track.clips.numItems - 1];
+        // Fallback: if there's only one clip on the track, it must be
+        // the one we just placed — return it.
+        if (track.clips.numItems === 1) {
+            return track.clips[0];
         }
         return null;
     }
