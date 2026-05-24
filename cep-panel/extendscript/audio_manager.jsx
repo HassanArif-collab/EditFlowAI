@@ -56,20 +56,33 @@ audioManager = (function() {
                         var clipStart = editflowUtils.ticksToSeconds(clip.start);
                         var clipEnd = editflowUtils.ticksToSeconds(clip.end);
 
+                        // addKey / setValueAtKey require Time OBJECTS (not raw
+                        // numbers).  Create new Time() and set .ticks — matching
+                        // the premiere-pro-mcp reference implementation.
+                        function _makeTime(seconds) {
+                            var t = new Time();
+                            t.ticks = editflowUtils.secondsToTicksString(seconds);
+                            return t;
+                        }
+
                         // Fade In: from -96dB to 0dB
                         if (fadeInDuration > 0) {
-                            levelProp.addKey(editflowUtils.secondsToTicks(clipStart));
-                            levelProp.setValueAtKey(editflowUtils.secondsToTicks(clipStart), -96, true);
-                            levelProp.addKey(editflowUtils.secondsToTicks(clipStart + fadeInDuration));
-                            levelProp.setValueAtKey(editflowUtils.secondsToTicks(clipStart + fadeInDuration), 0, true);
+                            var tFadeInStart = _makeTime(clipStart);
+                            var tFadeInEnd = _makeTime(clipStart + fadeInDuration);
+                            levelProp.addKey(tFadeInStart);
+                            levelProp.setValueAtKey(tFadeInStart, -96, true);
+                            levelProp.addKey(tFadeInEnd);
+                            levelProp.setValueAtKey(tFadeInEnd, 0, true);
                         }
 
                         // Fade Out: from 0dB to -96dB
                         if (fadeOutDuration > 0) {
-                            levelProp.addKey(editflowUtils.secondsToTicks(clipEnd - fadeOutDuration));
-                            levelProp.setValueAtKey(editflowUtils.secondsToTicks(clipEnd - fadeOutDuration), 0, true);
-                            levelProp.addKey(editflowUtils.secondsToTicks(clipEnd));
-                            levelProp.setValueAtKey(editflowUtils.secondsToTicks(clipEnd), -96, true);
+                            var tFadeOutStart = _makeTime(clipEnd - fadeOutDuration);
+                            var tFadeOutEnd = _makeTime(clipEnd);
+                            levelProp.addKey(tFadeOutStart);
+                            levelProp.setValueAtKey(tFadeOutStart, 0, true);
+                            levelProp.addKey(tFadeOutEnd);
+                            levelProp.setValueAtKey(tFadeOutEnd, -96, true);
                         }
                     }
                     break;

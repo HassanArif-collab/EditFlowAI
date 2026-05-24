@@ -227,7 +227,9 @@ clipManager = (function() {
             }
 
             var clip = track.clips[clipIndex];
-            clip.start = editflowUtils.secondsToTicks(newStartTime);
+            // clip.start expects a tick STRING, not a raw number — matching the
+            // premiere-pro-mcp reference and PPro's Time-object property setter.
+            clip.start = editflowUtils.secondsToTicksString(newStartTime);
             return { success: true, name: clip.name, newStartTime: newStartTime };
 
         } catch (e) {
@@ -627,8 +629,11 @@ clipManager = (function() {
         try {
             var markers = seq.markers;
             if (markers && markers.createMarker) {
-                var ticks = editflowUtils.secondsToTicks(time);
-                var marker = markers.createMarker(ticks);
+                // createMarker expects a tick STRING (or Time object),
+                // not a raw number — passing a number causes silent failure
+                // or wrong position in some PPro versions.
+                var tickStr = editflowUtils.secondsToTicksString(time);
+                var marker = markers.createMarker(tickStr);
                 if (marker) {
                     marker.name = markerName;
                     try { marker.comments = "EditFlow auto-marker"; } catch (e) {}
