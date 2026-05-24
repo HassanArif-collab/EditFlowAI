@@ -104,6 +104,14 @@ class WhisperService:
         self._model_info: Dict = {}
         self._transcript_cache: Dict[str, TranscriptResult] = {}  # file_fp -> result (in-memory)
 
+        # Serializes concurrent _load_model() calls.  Without this, every
+        # parallel transcribe_clips request triggered its own 770 MB HF
+        # download — none of them finished because they competed for
+        # bandwidth.  With the lock, the first caller does the download;
+        # everyone else waits, then finds self._model already set and returns.
+        # asyncio.Lock (not threading.Lock) because callers are async coroutines.
+        self._model_load_lock: Optional[Any] = None  # initialized lazily — see _get_model_lock
+
         # Engine selection cascade — resolved lazily on first use
         self._engine_name: Optional[str] = None
         self._engine_module: Optional[Any] = None
@@ -633,7 +641,13 @@ class WhisperService:
             await progress.start("Loading Whisper model...")
 
         # Load model in a worker thread — first call downloads weights, slow.
-        await asyncio.to_thread(self._load_model)
+        # Lock serializes concurrent callers so only ONE 770 MB download happens.
+        # Lazy-init the lock here (not in __init__) so it binds to whichever
+        # event loop is actually running.
+        if self._model_load_lock is None:
+            self._model_load_lock = asyncio.Lock()
+        async with self._model_load_lock:
+            await asyncio.to_thread(self._load_model)
 
         if progress:
             await progress.update(0.1, "Extracting audio...")
