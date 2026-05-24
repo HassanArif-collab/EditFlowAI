@@ -130,6 +130,12 @@ class Settings(BaseSettings):
     DEFAULT_MIN_SILENCE_DURATION: float = 0.8
     DEFAULT_FILLER_WORDS: str = "um,uh,ah,like,you know,I mean,so,basically,actually"
 
+    # ── Transcript Sidecar ──
+    # Write a human-readable {video}.transcript.json next to each source video
+    # after transcription. Default ON; user can disable via env if their footage
+    # lives on a read-only mount.
+    WRITE_TRANSCRIPT_SIDECAR: bool = True
+
     model_config = {
         "env_prefix": "EDITFLOW_",
         "env_file": ".env",
