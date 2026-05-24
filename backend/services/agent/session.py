@@ -140,20 +140,28 @@ class AgentSession:
         if not result.get("success"):
             return
 
-        if tool == "scan_project" and result.get("data", {}).get("scan"):
-            self.context["scan_result"] = result["data"]["scan"]
-        elif tool in ("list_bins",) and result.get("data", {}).get("bins"):
+        # NOTE: result["data"] is often explicitly None (e.g. scan_project's
+        # envelope sets data=None — the actual scan happens on the frontend).
+        # dict.get("data", {}) returns the stored None, NOT the default, so
+        # we use `result.get("data") or {}` to coerce None into an empty dict
+        # before chaining .get(). This is why init was throwing AttributeError
+        # on every fresh session.
+        data = result.get("data") or {}
+
+        if tool == "scan_project" and data.get("scan"):
+            self.context["scan_result"] = data["scan"]
+        elif tool in ("list_bins",) and data.get("bins"):
             # Don't overwrite a full scan_result, but note bins are known
             pass
-        elif tool == "resolve_clips_in_bin" and result.get("data", {}).get("clips"):
-            self.context["selected_clips"] = result["data"]["clips"]
-        elif tool == "transcribe_clips" and result.get("data", {}).get("clips"):
-            for clip_info in result["data"]["clips"]:
+        elif tool == "resolve_clips_in_bin" and data.get("clips"):
+            self.context["selected_clips"] = data["clips"]
+        elif tool == "transcribe_clips" and data.get("clips"):
+            for clip_info in data["clips"]:
                 path = clip_info.get("path", "")
                 if path:
                     self.context["transcripts_ready"][path] = clip_info.get("fingerprint", "done")
         elif tool in ("match_script_to_transcripts", "propose_cuts_from_transcripts"):
-            plan_id = result.get("data", {}).get("plan_id")
+            plan_id = data.get("plan_id")
             if plan_id:
                 self.context["current_plan_id"] = plan_id
                 self.current_phase = "planning"
