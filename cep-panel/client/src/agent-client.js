@@ -12,12 +12,29 @@ import { apiGet, apiPost, connectWS, getBaseUrl } from './api.js';
 import { callExtendScript, scanProjectMedia, isExtendScriptAvailable } from './extendscript.js';
 import { appendMessage, updateProgress, clearChat, scrollToBottom } from './chat-ui.js';
 import { uploadScript } from './upload.js';
+import { getState } from './state.js';
 
 const $ = (sel) => document.querySelector(sel);
 
 // ── Session ID (persists across turns) ────────────────────────
+// SESSION_ID is the agent-session key — unique per page load, used by the
+// backend to thread context across agent turns.
 const SESSION_ID = 'cep-agent-' + Math.random().toString(36).substring(2, 10);
-const CLIENT_ID = SESSION_ID; // reuse as WS client_id
+
+// CLIENT_ID must match the WebSocket connection's client_id (set in main.js
+// and stored in state.session.clientId) so backend WS pushes — agent_tool
+// events, progress ticks, etc. — actually reach this panel. We previously
+// reused SESSION_ID, which was a DIFFERENT random string than the WS one,
+// so every send_to(req.client_id, ...) hit a dead end and no progress
+// events ever rendered. Falling back to SESSION_ID keeps server-side
+// behavior working if state hasn't been initialized yet (defensive only).
+function _wsClientId() {
+  try {
+    return getState()?.session?.clientId || SESSION_ID;
+  } catch (_) {
+    return SESSION_ID;
+  }
+}
 
 // ── Progress tracking ─────────────────────────────────────────
 let _progressMsgId = null;
@@ -30,7 +47,7 @@ async function _postTurn(event, payload = {}) {
       session_id: SESSION_ID,
       event,
       payload,
-      client_id: CLIENT_ID,
+      client_id: _wsClientId(),
     }, { timeoutMs: 1800000 }); // 30 min for long transcribes
 
     for (const msg of (resp.messages || [])) {

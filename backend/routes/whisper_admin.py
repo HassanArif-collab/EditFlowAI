@@ -259,56 +259,19 @@ async def set_whisper_model(request: SetModelRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
     if request.preload:
-        # Find catalog entry for size + fragments (needed for progress tracking).
-        catalog_entry = next(
-            (m for m in _MODEL_CATALOG if m["name"] == request.model), None
-        )
-        expected_mb = catalog_entry["size_mb"] if catalog_entry else 0
-        fragments = catalog_entry["hf_repo_fragments"] if catalog_entry else []
-
-        # Start the progress-polling task in parallel with the blocking download.
-        stop_event = asyncio.Event()
-        progress_task: Optional[asyncio.Task] = None
-        if expected_mb > 0 and fragments:
-            progress_task = asyncio.create_task(
-                _emit_download_progress(request.model, fragments, expected_mb, stop_event)
-            )
-
+        # Delegate to whisper_service which handles BOTH the polling-progress
+        # broadcast AND the actual load atomically. Same code path is now used
+        # by transcribe() so the user sees the progress bar regardless of
+        # which surface triggered the load. Don't duplicate the polling here.
         try:
-            await asyncio.to_thread(whisper_service._load_model)
+            await whisper_service._load_model_with_progress()
             result["preloaded"] = True
             result["model_loaded"] = whisper_service._model is not None
-            # Emit final 'complete' event so the panel snaps to 100%.
-            await ws_manager.broadcast({
-                "type": "whisper_download_progress",
-                "payload": {
-                    "status": "complete",
-                    "model": request.model,
-                    "downloaded_mb": expected_mb,
-                    "total_mb": expected_mb,
-                    "percent": 100.0,
-                },
-            })
         except Exception as e:
             logger.error(f"Whisper preload failed for {request.model}: {e}")
-            await ws_manager.broadcast({
-                "type": "whisper_download_progress",
-                "payload": {
-                    "status": "failed",
-                    "model": request.model,
-                    "error": str(e),
-                },
-            })
             raise HTTPException(
                 status_code=500,
                 detail=f"Model switch succeeded but preload failed: {e}",
             )
-        finally:
-            stop_event.set()
-            if progress_task is not None:
-                try:
-                    await progress_task
-                except Exception:
-                    pass
 
     return result

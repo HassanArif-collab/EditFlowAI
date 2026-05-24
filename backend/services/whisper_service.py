@@ -28,7 +28,7 @@ from ..config import Settings, get_settings
 from ..models.schemas import TranscriptResult, TranscriptSegment, TranscriptWord, VADSegment
 from ..services.media_fingerprint import compute_file_fingerprint
 from ..utils.ffmpeg_utils import extract_audio
-from ..utils.progress import ProgressReporter
+from ..utils.progress import ProgressReporter, manager as _ws_manager
 
 logger = logging.getLogger(__name__)
 
@@ -169,7 +169,7 @@ class WhisperService:
         Unloads the current model so the next transcribe call loads the new one.
         faster-whisper auto-downloads from HuggingFace on first use, so the
         first transcribe after switching may include a one-time download
-        (~80 MB for `small`, ~770 MB for `medium`, ~1.5 GB for `large-v3-turbo`).
+        (~150 MB for `base`, ~1.5 GB for `medium`, ~1.6 GB for `large-v3-turbo`).
 
         Persists the choice so it survives restart.
         """
@@ -182,14 +182,23 @@ class WhisperService:
         self._active_model_name = name
         self._save_active_model_to_disk()
 
-        # Discard the loaded model — _load_model() will pull the new one on the next transcribe.
-        # We intentionally do NOT preload here: that would block the request for minutes
-        # while a large model downloads. The first transcribe call handles the load+download
-        # and emits WS progress.
-        self._model = None
-        self._model_revision = ""
-        self._model_info = {}
-        logger.info(f"Whisper active model: {previous} -> {name} (will load on next transcribe)")
+        # If the user re-selected the SAME model that's already loaded in
+        # memory, don't discard it. Doing so would force a redundant re-load
+        # (and re-download check) on the next transcribe — wasting 5-30
+        # seconds and producing confusing 'Loading Whisper model' log spam
+        # like we saw in the user's last run: medium -> tiny -> tiny -> medium
+        # all reloaded back-to-back because each click triggered a discard.
+        already_loaded = (
+            self._model is not None
+            and self._model_info.get("model") == name
+        )
+        if not already_loaded:
+            self._model = None
+            self._model_revision = ""
+            self._model_info = {}
+            logger.info(f"Whisper active model: {previous} -> {name} (will load on next transcribe)")
+        else:
+            logger.info(f"Whisper active model: {previous} -> {name} (already loaded, reusing)")
 
         return {"previous": previous, "active": name, "persisted": True}
 
@@ -269,6 +278,138 @@ class WhisperService:
         return self._engine_name, self._engine_module, self._engine_boundary_window_ms
 
     # ── Model Loading ──
+
+    # Expected on-disk sizes (MB) for each Whisper variant, used for download
+    # progress percentage. Kept in sync with the panel's _MODEL_CATALOG in
+    # whisper_admin.py — these are CT2-converted faster-whisper sizes,
+    # NOT the original OpenAI PT sizes which were smaller.
+    _EXPECTED_SIZE_MB = {
+        "tiny": 75, "base": 145, "small": 466,
+        "medium": 1500, "large-v3-turbo": 1600, "large-v3": 3100,
+    }
+
+    @staticmethod
+    def _largest_incomplete_blob_mb(cache_dir: Path, model_name: str) -> float:
+        """Return the size of the largest .incomplete blob for `model_name`.
+
+        HuggingFace's chunked downloader writes partial files as
+        `blobs/<sha>.incomplete` while a download is in progress; renamed to
+        the final hash on completion. Polling this size is the simplest way
+        to track real download progress without monkey-patching hf_hub.
+        """
+        if not cache_dir.exists():
+            return 0.0
+        # Match by the model name fragment (e.g. 'faster-whisper-medium').
+        fragment = f"faster-whisper-{model_name}".lower()
+        largest = 0
+        for entry in cache_dir.iterdir():
+            if not entry.is_dir() or not entry.name.startswith("models--"):
+                continue
+            if fragment not in entry.name.lower():
+                continue
+            blobs = entry / "blobs"
+            if not blobs.exists():
+                continue
+            try:
+                for blob in blobs.iterdir():
+                    if blob.name.endswith(".incomplete"):
+                        try:
+                            largest = max(largest, blob.stat().st_size)
+                        except OSError:
+                            continue
+            except OSError:
+                continue
+        return round(largest / (1024 * 1024), 1)
+
+    async def _load_model_with_progress(self) -> None:
+        """Run _load_model in a worker thread while polling .incomplete blob
+        size and broadcasting whisper_download_progress events.
+
+        Called from every code path that loads a model — transcribe(), the
+        preload endpoint, etc. — so the user sees a progress bar regardless
+        of which surface triggered the load. The polling is a no-op for cached
+        models (no .incomplete file exists), so warm loads stay silent.
+        """
+        if self._model is not None:
+            return  # already loaded — short-circuit before spinning up any tasks
+
+        model_name = self.get_active_model_name()
+        expected_mb = self._EXPECTED_SIZE_MB.get(model_name, 0)
+        cache_dir = Path(os.environ.get("HF_HUB_CACHE")
+                         or (Path.home() / ".cache" / "huggingface" / "hub"))
+
+        stop_event = asyncio.Event()
+        emitted_any = False  # only emit 'complete' if we saw the download
+
+        async def _poller():
+            nonlocal emitted_any
+            # First event: 'started' at 0%. The UI snaps the bar visible.
+            await _ws_manager.broadcast({
+                "type": "whisper_download_progress",
+                "payload": {
+                    "status": "started",
+                    "model": model_name,
+                    "downloaded_mb": 0,
+                    "total_mb": expected_mb,
+                    "percent": 0.0,
+                },
+            })
+            last_mb = -1.0
+            while not stop_event.is_set():
+                size_mb = self._largest_incomplete_blob_mb(cache_dir, model_name)
+                if size_mb > 0 and size_mb != last_mb:
+                    emitted_any = True
+                    pct = min(99.9, round(100.0 * size_mb / expected_mb, 1)) if expected_mb else 0.0
+                    await _ws_manager.broadcast({
+                        "type": "whisper_download_progress",
+                        "payload": {
+                            "status": "downloading",
+                            "model": model_name,
+                            "downloaded_mb": size_mb,
+                            "total_mb": expected_mb,
+                            "percent": pct,
+                        },
+                    })
+                    last_mb = size_mb
+                try:
+                    await asyncio.wait_for(stop_event.wait(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    continue
+
+        poll_task = asyncio.create_task(_poller())
+        try:
+            await asyncio.to_thread(self._load_model)
+            # On success: emit 'complete' so the UI fills the bar to 100%.
+            # Only emit if we actually saw download activity — for warm loads
+            # (model already in cache) the bar shouldn't flash up just to
+            # close again.
+            if emitted_any:
+                await _ws_manager.broadcast({
+                    "type": "whisper_download_progress",
+                    "payload": {
+                        "status": "complete",
+                        "model": model_name,
+                        "downloaded_mb": expected_mb,
+                        "total_mb": expected_mb,
+                        "percent": 100.0,
+                    },
+                })
+        except Exception as e:
+            await _ws_manager.broadcast({
+                "type": "whisper_download_progress",
+                "payload": {
+                    "status": "failed",
+                    "model": model_name,
+                    "error": str(e),
+                },
+            })
+            raise
+        finally:
+            stop_event.set()
+            try:
+                await poll_task
+            except Exception:
+                pass
 
     def _load_model(self):
         """Lazy-load the Whisper model. Sync, intended to run via to_thread."""
@@ -641,13 +782,13 @@ class WhisperService:
             await progress.start("Loading Whisper model...")
 
         # Load model in a worker thread — first call downloads weights, slow.
-        # Lock serializes concurrent callers so only ONE 770 MB download happens.
+        # Lock serializes concurrent callers so only ONE big HF download happens.
         # Lazy-init the lock here (not in __init__) so it binds to whichever
         # event loop is actually running.
         if self._model_load_lock is None:
             self._model_load_lock = asyncio.Lock()
         async with self._model_load_lock:
-            await asyncio.to_thread(self._load_model)
+            await self._load_model_with_progress()
 
         if progress:
             await progress.update(0.1, "Extracting audio...")
