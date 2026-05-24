@@ -965,6 +965,28 @@ class WhisperService:
         except Exception as e:
             logger.warning(f"Failed to cache transcript for {file_fingerprint[:16]}...: {e}")
 
+        # ── Transcript sidecar ──
+        # Write a human-readable copy next to the source video so the user can
+        # inspect what was transcribed without digging into data/media_cache/.
+        if not self.settings.WRITE_TRANSCRIPT_SIDECAR:
+            return
+        src = result.source_file
+        if not src:
+            return
+        try:
+            src_path = Path(src)
+            if not src_path.parent.exists():
+                return
+            sidecar = src_path.with_name(src_path.stem + ".transcript.json")
+            sidecar.write_text(
+                result.model_dump_json(indent=2),
+                encoding="utf-8",
+            )
+            logger.info(f"Wrote transcript sidecar: {sidecar}")
+        except (OSError, PermissionError) as e:
+            # Read-only volume, network drive, etc. — non-fatal.
+            logger.debug(f"Skipped transcript sidecar for {src}: {e}")
+
     async def transcribe_fingerprinted(
         self,
         source_path: str,

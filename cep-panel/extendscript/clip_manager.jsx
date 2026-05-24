@@ -117,11 +117,10 @@ clipManager = (function() {
                 }
             }
 
-            var startTicks = editflowUtils.secondsToTicksString(startTime);
-
-            // insertClip(projectItem, time, videoTrackIndex, audioTrackIndex)
-            // Places both video AND audio in one call — the correct Adobe API.
-            seq.insertClip(projectItem, startTicks, videoTrackIndex, audioTrackIndex);
+            // insertClip's time parameter expects a Time object or seconds (number),
+            // NOT a tick string — passing a tick string causes PPro to interpret the
+            // huge value as seconds and overflows GDI when drawing the clip.
+            seq.insertClip(projectItem, startTime, videoTrackIndex, audioTrackIndex);
 
             // After placing, find the clip on the video track and trim
             // in/out points on the TIMELINE clip (not the projectItem).
@@ -130,11 +129,15 @@ clipManager = (function() {
                 try {
                     var placedClip = _findClipAtTime(seq.videoTracks[videoTrackIndex], startTime);
                     if (placedClip) {
+                        // clip.inPoint / clip.outPoint are Time OBJECTS — assign
+                        // their .ticks (a string property) rather than overwriting the
+                        // Time object itself. Direct string assignment makes PPro
+                        // re-parse the digits as seconds → GDI ValueOverflow.
                         if (inPoint > 0) {
-                            placedClip.inPoint = editflowUtils.secondsToTicksString(inPoint);
+                            placedClip.inPoint.ticks = editflowUtils.secondsToTicksString(inPoint);
                         }
                         if (outPoint > 0) {
-                            placedClip.outPoint = editflowUtils.secondsToTicksString(outPoint);
+                            placedClip.outPoint.ticks = editflowUtils.secondsToTicksString(outPoint);
                         }
                     }
                 } catch (e) {
