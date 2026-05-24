@@ -34,7 +34,7 @@ async def propose_cuts(
     5. Build plan via cut_planner
     6. Save to plan_store
     """
-    from ...services.whisper_service import whisper_service, filter_junk_segments
+    from ...services.whisper_service import whisper_service
     from ...services.take_segmenter import segment_into_takes
     from ...services.cut_planner import build_plan, Plan
     from ...services.plan_store import plan_store
@@ -52,8 +52,22 @@ async def propose_cuts(
                 language=None,
                 force=False,
             )
-            result, _junk = filter_junk_segments(result)
+            # NOTE: we intentionally skip filter_junk_segments here.
+            # That filter's avg_logprob_min=-1.0 threshold is calibrated
+            # for English; for Urdu, Hindi, Arabic etc. the model produces
+            # avg_logprob in -1.5..-0.5 even for correct transcriptions,
+            # so the filter drops the majority of valid segments and leaves
+            # only a few seconds of material.  The LLM take-selection step
+            # below already skips false starts and mumbled content, and
+            # validate_and_fix catches bad word indices — so the junk filter
+            # is redundant in this path and actively harmful for non-English.
             transcripts[p] = result
+            logger.info(
+                f"propose_cuts: transcript for {Path(p).name}: "
+                f"{len(result.segments)} segments, "
+                f"{sum(len(s.words) for s in result.segments)} words, "
+                f"language={result.language}"
+            )
         except Exception as e:
             logger.warning(f"Failed to get transcript for {p}: {e}")
 
@@ -71,6 +85,8 @@ async def propose_cuts(
 
     if not all_takes:
         raise ValueError("No takes could be extracted from the transcripts.")
+
+    logger.info(f"propose_cuts: {len(all_takes)} takes extracted from {len(transcripts)} clip(s)")
 
     # 3. Build takes description for the LLM
     takes_desc = []
