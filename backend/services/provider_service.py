@@ -368,9 +368,23 @@ class ProviderService:
         requested_model: Optional[str] = None,
         role: str = "chat",
     ) -> str:
-        """Resolve the best model for a provider and role."""
+        """Resolve the best model for a provider and role.
+
+        Selection order:
+        1. If requested_model is provided, return it (caller knows best).
+        2. Otherwise the provider's configured chat_model / vision_model.
+        3. Otherwise the first LOCALLY INSTALLED, non-:cloud model from the
+           provider's model cache (Ollama-style — has a size_bytes > 0).
+        4. Otherwise the first entry of any kind from the model cache.
+        5. Otherwise empty string.
+
+        Step 3 is the new behavior. Previously the first cache entry was
+        picked unconditionally, which sometimes returned a `:cloud` model
+        that needed Ollama-account auth or a model the user had uninstalled
+        (Ollama caches model metadata even after `ollama rm`).
+        """
         if requested_model:
-            return requested_model
+            return requested_model.strip()
 
         provider = self._providers.get(provider_id) or {}
         role_key = "vision_model" if role == "vision" else "chat_model"
@@ -380,7 +394,23 @@ class ProviderService:
 
         known = self.get_cached_or_configured_models(provider_id)
         if known:
-            return known[0].get("id") or known[0].get("name") or ""
+            # Prefer real local models (size_bytes > 0 and no ":cloud" suffix).
+            for m in known:
+                mid = (m.get("id") or m.get("name") or "").strip()
+                if not mid:
+                    continue
+                if ":cloud" in mid:
+                    continue
+                size = m.get("size_bytes", 0) or 0
+                if size > 0 or m.get("is_local"):
+                    return mid
+            # No "obviously local" entries — fall back to the first non-cloud.
+            for m in known:
+                mid = (m.get("id") or m.get("name") or "").strip()
+                if mid and ":cloud" not in mid:
+                    return mid
+            # Last resort: whatever the first cached entry is.
+            return (known[0].get("id") or known[0].get("name") or "").strip()
 
         return ""
 
@@ -1148,7 +1178,19 @@ class ProviderService:
     # ── Active Model Management ──
 
     def set_active_chat(self, provider_id: str, model: str):
-        """Set the active chat provider and model."""
+        """Set the active chat provider and model.
+
+        Validates that `model` is a non-empty string. Empty values used to
+        silently clear the active model, causing every subsequent chat to
+        fall through to `_resolve_model_for_provider` which picked the first
+        cached entry (often a stale `gemma3:4b` that the user had uninstalled).
+        """
+        if not isinstance(model, str) or not model.strip():
+            logger.warning(
+                f"set_active_chat: refusing empty/invalid model name (provider={provider_id})"
+            )
+            return
+        model = model.strip()
         self._active_chat_provider = provider_id
         self._active_chat_model = model
         # Also update the provider's stored chat_model

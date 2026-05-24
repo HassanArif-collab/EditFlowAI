@@ -24,6 +24,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/whisper", tags=["whisper"])
 
 
+# Pydantic models for request bodies. Missing this class was the cause of the
+# 422 "Field required" error: FastAPI fell back to interpreting `request` as a
+# query parameter when the type annotation referenced an undefined class.
+class SetModelRequest(BaseModel):
+    model: str
+    preload: bool = False
+
+
 # Catalog of supported Whisper models with size hints and HuggingFace repo
 # fragments. The "hf_repo_fragments" list contains substrings that appear in
 # the cache directory name (`models--{org}--{repo}`). We check all of them

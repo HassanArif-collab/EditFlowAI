@@ -290,27 +290,21 @@ class ChatEngine:
         return None
 
     def _fallback_response(self, message: str) -> str:
-        """Rule-based fallback when LLM is unavailable."""
-        msg = message.lower()
+        """User-facing message when the LLM is unreachable.
 
-        if any(w in msg for w in ["analyze", "transcribe", "scan"]):
-            return "To analyze videos, use: POST /api/pipeline/analyze with your video folder path."
-
-        if any(w in msg for w in ["cut", "script", "edit", "clean"]):
-            return "To cut video based on a script, use: POST /api/pipeline/cut with your English script content."
-
-        if any(w in msg for w in ["visual", "image", "overlay", "place"]):
-            return "To place visuals, use: POST /api/pipeline/visuals with your mapping document and visual folder."
-
-        if any(w in msg for w in ["provider", "model", "ollama", "openai"]):
-            return "To manage providers, use the /api/providers endpoints. Check /api/models/list for available models."
-
-        if any(w in msg for w in ["premiere", "timeline", "sequence", "project", "edl"]):
-            return "To control Premiere Pro, use the CEP panel's Sync Sequence / Scan Project buttons, or the /api/premiere endpoints."
-
+        The previous version returned developer-doc strings like
+        "use POST /api/pipeline/analyze ..." which leaked into the chat and
+        confused users. Now we return ONE clear actionable message — the
+        user shouldn't see internal API endpoint names in chat.
+        """
         return (
-            "I'm currently in offline mode. For full AI capabilities, please configure an LLM provider. "
-            "Type 'help' for available commands."
+            "I couldn't reach the chat model. Most common causes:\n"
+            "  - Ollama isn't running (start it, then retry).\n"
+            "  - The selected model isn't installed (open Settings -> Active "
+            "Chat Model and pick one marked 'local').\n"
+            "  - The model timed out (try a smaller model like "
+            "nemotron-3-nano:4b).\n"
+            "Click the info icon in the header for live provider status."
         )
 
 

@@ -22,6 +22,27 @@ logger = logging.getLogger(__name__)
 _MAX_ITERS = 6
 
 
+def _looks_like_provider_fallback(text: str) -> bool:
+    """Detect chat_engine / provider_service rule-based fallback output.
+
+    When the LLM is unreachable, provider_service returns a canned text body
+    instead of a real reply. If we feed that to the parser as if it were the
+    model's tool-call JSON, parsing fails and the user sees confusing errors.
+    Catching it explicitly lets us return a clean message instead.
+    """
+    if not text:
+        return False
+    markers = [
+        "couldn't reach the chat model",
+        "POST /api/",
+        "use the /api/",
+        "GET /api/",
+        "currently in offline mode",
+    ]
+    low = text.lower()
+    return any(m.lower() in low for m in markers)
+
+
 def _build_tool_descriptions() -> str:
     """Build a compact text description of available tools for the LLM."""
     lines = []
@@ -98,6 +119,23 @@ async def step(
                 max_tokens=512,
             )
             raw_text = raw_result.get("response") or ""
+            # If provider_service returned a rule-based fallback (LLM unreachable),
+            # surface a clear error instead of feeding the fallback text back as
+            # the agent's reply. Without this, "I couldn't reach the chat model..."
+            # gets treated like an LLM reply and the parser fails or worse, the
+            # legacy docs-style fallback shows up in chat as if it were intentional.
+            if raw_result.get("error") or _looks_like_provider_fallback(raw_text):
+                logger.warning(f"Agent LLM unreachable. raw_result.error={raw_result.get('error')!r}")
+                messages_out.append({
+                    "kind": "agent_text",
+                    "text": (
+                        "I couldn't reach the chat model. Open Settings -> Active "
+                        "Chat Model and pick one marked 'local', or start Ollama "
+                        "if it isn't running. The info icon in the header shows "
+                        "live provider status."
+                    ),
+                })
+                return messages_out
         except Exception as e:
             logger.error(f"Agent LLM call failed: {e}")
             messages_out.append({
