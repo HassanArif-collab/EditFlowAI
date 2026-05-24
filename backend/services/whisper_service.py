@@ -1041,6 +1041,9 @@ class WhisperService:
                         f"Transcript cache hit for {Path(source_path).name} "
                         f"(fp={file_fingerprint[:16]}..., engine={engine_name})"
                     )
+                    # Stamp source_file: JSON cache may have a stale/empty
+                    # value (e.g. promoted from DB which doesn't store it).
+                    cached.source_file = str(Path(source_path))
                     return cached
                 else:
                     logger.info(
@@ -1058,6 +1061,11 @@ class WhisperService:
                 model=model_name,
             )
             if db_result is not None:
+                # Stamp source_file: the DB doesn't store it per-transcript,
+                # so _lookup_transcript_from_db always returns source_file="".
+                # The caller (transcribe_fingerprinted) always knows the real
+                # source_path, so stamp it here before returning.
+                db_result.source_file = str(Path(source_path))
                 # Also store in the faster caches for next time
                 self._save_transcript_cache(file_fingerprint, db_result)
                 return db_result
