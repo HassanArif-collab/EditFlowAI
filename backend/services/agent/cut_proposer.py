@@ -40,7 +40,7 @@ async def propose_cuts(
     from ...services.plan_store import plan_store
     from ...services.provider_service import provider_service
     from ...models.schemas import TranscriptWord
-    from ...services.match_validator import ValidatedMatch
+    from ...services.match_validator import ValidatedMatch, validate_and_fix
     from ..script_matcher import MatchedBeat
 
     # 1. Pull transcripts (cache-hit)
@@ -64,7 +64,7 @@ async def propose_cuts(
     all_takes = []
     for path, tr in transcripts.items():
         try:
-            takes = segment_into_takes(path, tr)
+            takes = segment_into_takes(path, tr, language=tr.language or "en")
             all_takes.extend(takes)
         except Exception as e:
             logger.warning(f"Failed to segment takes for {path}: {e}")
@@ -101,7 +101,15 @@ async def propose_cuts(
             for i in range(min(len(all_takes), 20))
         ]
 
-    # 5. Convert to ValidatedMatch objects
+    # 5. Build word lookup (needed before validation)
+    word_lookup: Dict[str, List[TranscriptWord]] = {}
+    for path, tr in transcripts.items():
+        flat_words = []
+        for seg in tr.segments:
+            flat_words.extend(seg.words)
+        word_lookup[path] = flat_words
+
+    # 6. Convert to ValidatedMatch objects
     validated = []
     for beat_idx, sel in enumerate(selected_takes):
         take_idx = sel.get("take_index", beat_idx)
@@ -114,19 +122,19 @@ async def propose_cuts(
             beat_index=beat_idx,
             beat_text=beat_text,
             take=take,
-            confidence=0.7,
+            word_start_index=0,
+            word_end_index=max(0, take.word_count - 1),
+            word_start_text=take.text.split()[0] if take.text and take.text.split() else "",
+            word_end_text=take.text.split()[-1] if take.text and take.text.split() else "",
+            llm_score=0.7,
+            confidence="high",
             rationale=sel.get("rationale", "LLM-selected take"),
         )
-        vm = ValidatedMatch(matched=mb)
+        # Validate + fix word indices (mirrors the edit.py pipeline)
+        take_words = word_lookup.get(take.source_file, [])
+        take_words_slice = take_words[take.word_offset:take.word_offset + take.word_count]
+        vm = validate_and_fix(mb, take_words_slice)
         validated.append(vm)
-
-    # 6. Build word lookup
-    word_lookup: Dict[str, List[TranscriptWord]] = {}
-    for path, tr in transcripts.items():
-        flat_words = []
-        for seg in tr.segments:
-            flat_words.extend(seg.words)
-        word_lookup[path] = flat_words
 
     # 7. Determine engine
     engine = "faster_whisper"
