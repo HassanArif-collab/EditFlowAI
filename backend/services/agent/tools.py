@@ -180,16 +180,64 @@ async def resolve_clips_in_bin_tool(args: dict, ws_emit: Callable, session: Any 
 
 # ── Tool: transcribe_clips ─────────────────────────────────────
 
+def _recover_clip_path(p: str, session: Any) -> str:
+    """If the LLM dropped the path and gave us only a filename, look it up in
+    session.context['selected_clips'].
+
+    Small local models (nemotron-3-nano:4b, gemma3:4b, etc.) frequently
+    reduce a clip object like {path: 'C:/foo/IMG_1694.MOV', name: 'IMG_1694.MOV'}
+    down to just 'IMG_1694.MOV' when they have to emit a tool-call JSON.
+    The disk lookup then fails. Recovering from session context is what
+    a smarter model would do internally — so we do it for it.
+
+    Returns the original path if a recovery isn't available.
+    """
+    if not p or not session:
+        return p
+    # If it's already a real file, no recovery needed.
+    try:
+        if Path(p).is_file():
+            return p
+    except Exception:
+        pass
+
+    selected = (getattr(session, "context", {}) or {}).get("selected_clips") or []
+    target_basename = Path(p).name.lower()
+    for clip in selected:
+        if not isinstance(clip, dict):
+            continue
+        clip_path = clip.get("path", "")
+        clip_name = clip.get("name", "")
+        if not clip_path:
+            continue
+        # Match by name, basename, or path-suffix — the model might mangle any of these
+        if (
+            clip_name.lower() == target_basename
+            or Path(clip_path).name.lower() == target_basename
+            or clip_path.lower().endswith(p.lower().replace("\\", "/").replace("/", ""))
+        ):
+            if Path(clip_path).is_file():
+                logger.info(
+                    f"transcribe_clips: recovered path {p!r} -> {clip_path!r} "
+                    "from session.selected_clips (LLM dropped the path)"
+                )
+                return clip_path
+    return p
+
+
 async def transcribe_clips_tool(args: dict, ws_emit: Callable, session: Any = None) -> dict:
     """Transcribe clips using Whisper with WS progress events."""
-    paths = args.get("clip_paths", [])
-    if not paths:
+    raw_paths = args.get("clip_paths", [])
+    if not raw_paths:
         return _envelope(
             tool="transcribe_clips",
             success=False,
             summary="clip_paths is required and must be a non-empty list.",
             error="Missing clip_paths",
         )
+
+    # Auto-recover paths the LLM truncated to bare filenames.
+    paths = [_recover_clip_path(p, session) for p in raw_paths]
 
     await ws_emit({
         "type": "agent_tool",
