@@ -85,9 +85,9 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
     },
     {
         "name": "propose_cuts_from_transcripts",
-        "description": "Build an edit plan from transcripts without a script. The LLM selects the best takes. Use this when the user does NOT have a written script.",
+        "description": "Build an edit plan from transcripts without a script. The LLM selects the best takes. Use this when the user does NOT have a written script. clip_paths is optional; if omitted, all transcribed clips are used.",
         "args": {
-            "clip_paths": {"type": "array", "items": {"type": "string"}, "description": "Clip paths to cut from"},
+            "clip_paths": {"type": "array", "items": {"type": "string"}, "description": "Clip paths to cut from (optional; defaults to all transcribed clips)"},
             "instruction": {"type": "string", "description": "What kind of cut the user wants (e.g. 'clean 2-minute highlight')"},
             "hint": {"type": "string", "description": "Optional additional hint", "default": ""},
         },

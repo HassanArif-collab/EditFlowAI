@@ -455,9 +455,26 @@ async def read_document_tool(args: dict, ws_emit: Callable, session: Any = None)
 
 async def match_script_to_transcripts_tool(args: dict, ws_emit: Callable, session: Any = None) -> dict:
     """Wrap the existing /api/edit/analyze pipeline."""
-    bin_references = args.get("bin_references", [])
+    raw_bin_refs = args.get("bin_references", [])
     script = args.get("script", "")
     user_hint = args.get("user_hint", "")
+
+    # Auto-recover bare filenames in bin_references the LLM may have
+    # truncated (same defect class as transcribe_clips bare-filename bug).
+    # Also fall back to all transcribed clips if bin_references is empty —
+    # the user may say "match the script" after a transcribe without
+    # restating which clips, and the LLM sometimes omits the arg.
+    if raw_bin_refs:
+        bin_references = [_recover_clip_path(ref, session) for ref in raw_bin_refs]
+    else:
+        # Default to all transcribed clips when the LLM omits bin_references.
+        transcripts_ready = (getattr(session, "context", {}) or {}).get("transcripts_ready") or {}
+        bin_references = list(transcripts_ready.keys()) if transcripts_ready else []
+        if bin_references:
+            logger.info(
+                f"match_script_to_transcripts: no bin_references given, "
+                f"falling back to {len(bin_references)} path(s) from transcripts_ready"
+            )
 
     if not bin_references:
         return _envelope(
@@ -474,10 +491,33 @@ async def match_script_to_transcripts_tool(args: dict, ws_emit: Callable, sessio
             error="Missing script",
         )
 
+    # Filter out paths that still didn't resolve — they'd cause a confusing
+    # ValueError deep in the matcher. Log each failure so the dev can see
+    # which paths the LLM mangled beyond recovery.
+    resolved = []
+    for ref in bin_references:
+        # bin_references can be @bin:XXX tokens (not file paths) — keep those as-is.
+        if ref.startswith("@bin:"):
+            resolved.append(ref)
+        elif Path(ref).is_file():
+            resolved.append(ref)
+        else:
+            logger.warning(
+                f"match_script_to_transcripts: skipping unresolved path {ref!r}"
+            )
+
+    if not resolved:
+        return _envelope(
+            tool="match_script_to_transcripts",
+            success=False,
+            summary="None of the provided bin_references resolved to real paths or bins.",
+            error="No valid bin_references after recovery",
+        )
+
     try:
         from ...routes.edit import run_analyze, AnalyzeRequest
         req = AnalyzeRequest(
-            bin_references=bin_references,
+            bin_references=resolved,
             script=script,
             user_hint=user_hint or None,
         )
@@ -517,22 +557,59 @@ async def match_script_to_transcripts_tool(args: dict, ws_emit: Callable, sessio
 
 async def propose_cuts_from_transcripts_tool(args: dict, ws_emit: Callable, session: Any = None) -> dict:
     """Build an edit plan from transcripts without a script."""
-    clip_paths = args.get("clip_paths", [])
+    raw_paths = args.get("clip_paths", [])
     instruction = args.get("instruction", "clean cut")
     hint = args.get("hint", "")
 
-    if not clip_paths:
+    # When the LLM omits clip_paths entirely (or passes []), fall back to
+    # all keys in session.context["transcripts_ready"]. The user can say
+    # "cut the video" after a successful transcribe and get a plan card
+    # without re-transcribing — the transcripts are already cached.
+    if not raw_paths:
+        transcripts_ready = (getattr(session, "context", {}) or {}).get("transcripts_ready") or {}
+        raw_paths = list(transcripts_ready.keys()) if transcripts_ready else []
+        if raw_paths:
+            logger.info(
+                f"propose_cuts_from_transcripts: no clip_paths given, "
+                f"falling back to {len(raw_paths)} path(s) from transcripts_ready"
+            )
+
+    if not raw_paths:
         return _envelope(
             tool="propose_cuts_from_transcripts",
             success=False,
-            summary="clip_paths is required.",
+            summary="clip_paths is required. Transcribe clips first, then request cuts.",
             error="Missing clip_paths",
+        )
+
+    # Auto-recover paths the LLM truncated to bare filenames — mirrors the
+    # _recover_clip_path pattern added in commit 177dd6e for transcribe_clips.
+    clip_paths = [_recover_clip_path(p, session) for p in raw_paths]
+
+    # Filter out paths that still didn't resolve — they'd cause a confusing
+    # ValueError deep in cut_proposer. Log each failure so the dev can see
+    # which paths the LLM mangled beyond recovery.
+    resolved = []
+    for p in clip_paths:
+        if Path(p).is_file():
+            resolved.append(p)
+        else:
+            logger.warning(
+                f"propose_cuts_from_transcripts: skipping unresolved path {p!r}"
+            )
+
+    if not resolved:
+        return _envelope(
+            tool="propose_cuts_from_transcripts",
+            success=False,
+            summary="None of the provided clip_paths resolved to real files. Transcribe clips first.",
+            error="No valid clip_paths after recovery",
         )
 
     try:
         from .cut_proposer import propose_cuts
         plan = await propose_cuts(
-            clip_paths=clip_paths,
+            clip_paths=resolved,
             instruction=instruction,
             hint=hint or None,
         )
