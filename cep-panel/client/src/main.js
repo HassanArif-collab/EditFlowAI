@@ -16,20 +16,28 @@ import { initSettings, openSettings } from './settings.js';
 // Feature flag: agent mode vs. legacy orchestrator
 const AGENT_MODE = localStorage.getItem('editflow_agent_mode') === 'on';
 
-// Dynamic import based on feature flag
-const _orchModule = AGENT_MODE
-  ? await import('./agent-client.js')
-  : await import('./orchestrator.js');
+// IMPORTANT: do NOT use top-level `await` here. CEP's bundled Chromium can
+// either reject top-level await outright or race with DOMContentLoaded, which
+// kills init() before any button listeners get attached. Instead, we register
+// the DOMContentLoaded listener synchronously and load the orchestrator
+// module inside init() — keeping the top-level code dead simple.
+let onScanClicked, onSourceProvided, onPProItemsProvided, onMediaFileDropped,
+    onScriptFileDropped, onUserMessage, onNewEdit, onWsProgress;
 
-const {
-  onScanClicked,
-  onSourceProvided,
-  onPProItemsProvided,
-  onMediaFileDropped,
-  onScriptFileDropped,
-  onUserMessage,
-  onNewEdit,
-} = _orchModule;
+async function _loadOrchestrator() {
+  const mod = AGENT_MODE
+    ? await import('./agent-client.js')
+    : await import('./orchestrator.js');
+  onScanClicked        = mod.onScanClicked;
+  onSourceProvided     = mod.onSourceProvided;
+  onPProItemsProvided  = mod.onPProItemsProvided;
+  onMediaFileDropped   = mod.onMediaFileDropped;
+  onScriptFileDropped  = mod.onScriptFileDropped;
+  onUserMessage        = mod.onUserMessage;
+  onNewEdit            = mod.onNewEdit;
+  onWsProgress         = mod.onWsProgress;
+  console.log(`[EditFlow] Loaded ${AGENT_MODE ? 'agent-client' : 'orchestrator'}`);
+}
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -58,6 +66,22 @@ document.addEventListener('DOMContentLoaded', init);
 
 async function init() {
   console.log('[EditFlow] Initializing single-chat frontend...');
+
+  try {
+    // 0. Load the chosen orchestrator module (was top-level — moved here so a
+    //    dynamic-import failure doesn't kill the DOMContentLoaded listener.)
+    await _loadOrchestrator();
+  } catch (err) {
+    console.error('[EditFlow] Failed to load orchestrator:', err);
+    const heroEl = $('#hero');
+    if (heroEl) {
+      heroEl.innerHTML = `<p style="color:#e57373;padding:24px;text-align:center">
+        Failed to load EditFlow: ${err.message}.<br>
+        Open the CEP debug console and check the error.
+      </p>`;
+    }
+    return;
+  }
 
   // 1. Initialize ExtendScript bridge
   const esAvailable = await initExtendScript();
@@ -233,8 +257,8 @@ function _initWebSocket() {
       // progress message ticks as work happens (esp. transcription).
       if (data && (data.type === 'progress' || data.type === 'agent_tool')) {
         try {
-          if (_orchModule && _orchModule.onWsProgress) {
-            _orchModule.onWsProgress(data.payload || data);
+          if (typeof onWsProgress === 'function') {
+            onWsProgress(data.payload || data);
           }
         } catch (_) { /* ignore */ }
       }
