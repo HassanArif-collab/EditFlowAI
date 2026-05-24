@@ -93,12 +93,34 @@ def _is_model_installed(model_name: str, fragments: list[str]) -> bool:
         snapshots = entry / "snapshots"
         if not snapshots.exists():
             continue
+
+        # If there's an in-progress download (HF writes blobs/<hash>.incomplete
+        # during the chunked download), this model is NOT installed yet — even
+        # if the metadata files (config.json, tokenizer.json, vocabulary.txt)
+        # are already present. Previously the >1KB fallback below misidentified
+        # such half-downloaded entries as "installed", causing the panel UI to
+        # claim 'medium' was ready when only 2 KB of metadata existed and the
+        # 770 MB model.bin was still partial.
+        blobs = entry / "blobs"
+        if blobs.exists():
+            try:
+                if any(p.name.endswith(".incomplete") for p in blobs.iterdir()):
+                    continue
+            except OSError:
+                pass
+
         for rev in snapshots.iterdir():
             if (rev / "model.bin").exists():
                 return True
-            # Some converted checkpoints store separate files; treat any non-empty rev as installed
+            # Some converted checkpoints publish model.safetensors instead.
+            if (rev / "model.safetensors").exists():
+                return True
+            # Fallback for unusual layouts: accept if a *weight-shaped* file
+            # exists (>10 MB, not metadata). Was previously >1 KB, which let
+            # metadata-only directories slip through.
             try:
-                if any(p.is_file() and p.stat().st_size > 1024 for p in rev.iterdir()):
+                if any(p.is_file() and p.stat().st_size > 10 * 1024 * 1024
+                       for p in rev.iterdir()):
                     return True
             except OSError:
                 continue
