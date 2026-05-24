@@ -91,10 +91,22 @@ clipManager = (function() {
 
     function addClipToSequence(seq, options) {
         var mediaPath = editflowUtils.getParam(options, 'mediaPath', 'path');
-        var trackIndex = editflowUtils.getParam(options, 'trackIndex', 'track') || 0;
         var startTime = editflowUtils.getParam(options, 'startTime', 'time') || 0;
         var inPoint = editflowUtils.getParam(options, 'inPoint', 'in') || 0;
         var outPoint = editflowUtils.getParam(options, 'outPoint', 'out') || 0;
+
+        // Track indices for insertClip's 4-arg form
+        var videoTrackIndex = editflowUtils.getParam(options, 'video_track_index', 'videoTrackIndex');
+        var audioTrackIndex = editflowUtils.getParam(options, 'audio_track_index', 'audioTrackIndex');
+
+        // Backward-compat: legacy callers pass trackIndex only (defaults to V1/A1)
+        if (videoTrackIndex === undefined) {
+            var legacyTrack = editflowUtils.getParam(options, 'trackIndex', 'track');
+            videoTrackIndex = (legacyTrack !== undefined) ? legacyTrack : 0;
+        }
+        if (audioTrackIndex === undefined) {
+            audioTrackIndex = 0;
+        }
 
         try {
             var projectItem = findProjectItem(mediaPath);
@@ -105,35 +117,45 @@ clipManager = (function() {
                 }
             }
 
-            var targetTrack = seq.videoTracks[trackIndex];
-            if (!targetTrack) {
-                return { success: false, error: "Video track " + trackIndex + " not found" };
-            }
+            var startTicks = editflowUtils.secondsToTicksString(startTime);
 
-            // Set in/out points if specified
+            // insertClip(projectItem, time, videoTrackIndex, audioTrackIndex)
+            // Places both video AND audio in one call — the correct Adobe API.
+            seq.insertClip(projectItem, startTicks, videoTrackIndex, audioTrackIndex);
+
+            // After placing, find the clip on the video track and trim
+            // in/out points on the TIMELINE clip (not the projectItem).
+            // Setting in/out on projectItem would affect every instance.
             if (inPoint > 0 || outPoint > 0) {
                 try {
-                    if (inPoint > 0) projectItem.setInPoint(editflowUtils.secondsToTicks(inPoint));
-                    if (outPoint > 0) projectItem.setOutPoint(editflowUtils.secondsToTicks(outPoint));
-                } catch (e) {}
+                    var placedClip = _findClipAtTime(seq.videoTracks[videoTrackIndex], startTime);
+                    if (placedClip) {
+                        if (inPoint > 0) {
+                            placedClip.inPoint = editflowUtils.secondsToTicksString(inPoint);
+                        }
+                        if (outPoint > 0) {
+                            placedClip.outPoint = editflowUtils.secondsToTicksString(outPoint);
+                        }
+                    }
+                } catch (e) {
+                    // In/out trim failed — non-critical, clip still placed
+                }
             }
-
-            targetTrack.overwriteClip(projectItem, editflowUtils.secondsToTicks(startTime));
 
             // ── Phase 2 (M13): Audio fade support ────────────────────────
             // After the clip is placed, try to set audio fade-in / fade-out
             // via the Premiere API.  Non-critical: gracefully degrades on
             // older PPro builds that don't expose these methods.
             try {
-                var lastClip = targetTrack.clips[targetTrack.clips.numItems - 1];
-                if (lastClip && op.audio_fade_in_ms) {
-                    var fadeInTicks = editflowUtils.secondsToTicks(op.audio_fade_in_ms / 1000);
+                var lastClip = seq.videoTracks[videoTrackIndex].clips[seq.videoTracks[videoTrackIndex].clips.numItems - 1];
+                if (lastClip && options.audio_fade_in_ms) {
+                    var fadeInTicks = editflowUtils.secondsToTicksString(options.audio_fade_in_ms / 1000);
                     if (typeof lastClip.setAudioFadeIn === 'function') {
                         lastClip.setAudioFadeIn(fadeInTicks);
                     }
                 }
-                if (lastClip && op.audio_fade_out_ms) {
-                    var fadeOutTicks = editflowUtils.secondsToTicks(op.audio_fade_out_ms / 1000);
+                if (lastClip && options.audio_fade_out_ms) {
+                    var fadeOutTicks = editflowUtils.secondsToTicksString(options.audio_fade_out_ms / 1000);
                     if (typeof lastClip.setAudioFadeOut === 'function') {
                         lastClip.setAudioFadeOut(fadeOutTicks);
                     }
@@ -147,6 +169,28 @@ clipManager = (function() {
         } catch (e) {
             return { success: false, error: e.toString() };
         }
+    }
+
+    function _findClipAtTime(track, startTimeSeconds) {
+        /* Find the clip on a track whose start matches startTimeSeconds.
+         * Used after insertClip to locate the placed clip for in/out trimming.
+         * Compares within ±0.05s tolerance to handle frame snapping. */
+        if (!track) return null;
+        var targetTicks = editflowUtils.secondsToTicks(startTimeSeconds);
+        var tolerance = editflowUtils.secondsToTicks(0.05);
+        for (var c = 0; c < track.clips.numItems; c++) {
+            var clip = track.clips[c];
+            var clipStart = parseFloat(clip.start.ticks);
+            if (Math.abs(clipStart - targetTicks) <= tolerance) {
+                return clip;
+            }
+        }
+        // Fallback: if there's only one clip on the track, it must be
+        // the one we just placed — return it.
+        if (track.clips.numItems === 1) {
+            return track.clips[0];
+        }
+        return null;
     }
 
     function removeClipFromSequence(seq, options) {
@@ -400,7 +444,8 @@ clipManager = (function() {
     function createNewSequence(options) {
         var name = editflowUtils.getParam(options, 'name') || "EditFlow Cut";
         try {
-            var seq = app.project.createSequence(name);
+            var seqID = name + '-' + new Date().getTime();
+            var seq = app.project.createNewSequence(name, seqID);
             return editflowUtils.safeStringify({ success: true, name: name, id: seq.sequenceID });
         } catch (e) {
             return editflowUtils.safeStringify({ success: false, error: e.toString() });
@@ -561,7 +606,8 @@ clipManager = (function() {
     function createSequenceFromOps(options) {
         var name = editflowUtils.getParam(options, 'name') || "EditFlow Cut";
         try {
-            var newSeq = app.project.createSequence(name);
+            var seqID = name + '-' + new Date().getTime();
+            var newSeq = app.project.createNewSequence(name, seqID);
             return { success: true, name: name, id: newSeq.sequenceID };
         } catch (e) {
             return { success: false, error: e.toString() };

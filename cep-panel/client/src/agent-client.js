@@ -234,14 +234,38 @@ async function _dispatchEDL(payload) {
 
   try {
     if (isExtendScriptAvailable()) {
-      await callExtendScript('processEDL', JSON.stringify({ ops }));
-      updateProgress(_progressMsgId, { pct: 100, detail: 'Done.' });
-      appendMessage('success', {
-        text: `Done. "${seqName}" is in your Premiere project. Switch to Premiere to play it back.`,
-        newEditFn: onNewEdit,
-      });
-      // Notify the agent
-      await _postTurn('extendscript_done', { sequence_name: seqName });
+      const result = await callExtendScript('processEDL', JSON.stringify({
+        ops,
+        sequence_name: seqName,
+      }));
+
+      // Validate individual op results — don't claim "Done" if ops failed
+      const opResults = (result && result.results) || [];
+      const failedOps = opResults.filter(r => r.success === false);
+
+      if (failedOps.length > 0) {
+        const failedSummary = failedOps
+          .map(r => `${r.action || 'op'}:${r.error || 'unknown'}`)
+          .join('; ');
+        updateProgress(_progressMsgId, { pct: 100, detail: 'Some operations failed.' });
+        appendMessage('error', {
+          text: `Plan partially applied: ${failedOps.length} of ${opResults.length} operations failed. ${failedSummary}`,
+          retryFn: () => _dispatchEDL(payload),
+        });
+        // Still notify the agent so it knows the result
+        await _postTurn('extendscript_done', {
+          sequence_name: seqName,
+          partial_failure: true,
+          failed_count: failedOps.length,
+        });
+      } else {
+        updateProgress(_progressMsgId, { pct: 100, detail: 'Done.' });
+        appendMessage('success', {
+          text: `Done. "${seqName}" is in your Premiere project. Switch to Premiere to play it back.`,
+          newEditFn: onNewEdit,
+        });
+        await _postTurn('extendscript_done', { sequence_name: seqName });
+      }
     } else {
       appendMessage('agent-text', {
         text: `Plan applied. ${ops.length} ExtendScript ops generated. To execute, open the panel inside Premiere Pro.`,

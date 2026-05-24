@@ -489,26 +489,14 @@ def plan_to_edl_ops(plan: Plan, target_seq_name: str) -> list[dict]:
         "preset_from_clip_path": plan.cuts[0].take_source_file if plan.cuts else None,
     })
 
-    # Add cuts — V1 (track 0) for video, A1 (track 1) for audio
+    # Add cuts — one op per cut using insertClip's 4-arg form
+    # which places both video and audio simultaneously.
     for cut in plan.cuts:
-        # Video track (V1 = trackIndex 0)
         ops.append({
             "action": "add",
             "mediaPath": cut.take_source_file,
-            "trackIndex": 0,
-            "startTime": cut.timeline_position,
-            "inPoint": cut.source_in,
-            "outPoint": cut.source_out,
-            "endTime": cut.timeline_position + cut.duration,
-            "audio_fade_in_ms": cut.audio_fade_in_ms,
-            "audio_fade_out_ms": cut.audio_fade_out_ms,
-        })
-
-        # Audio track (A1 = trackIndex 1)
-        ops.append({
-            "action": "add",
-            "mediaPath": cut.take_source_file,
-            "trackIndex": 1,
+            "video_track_index": 0,   # V1
+            "audio_track_index": 0,   # A1
             "startTime": cut.timeline_position,
             "inPoint": cut.source_in,
             "outPoint": cut.source_out,

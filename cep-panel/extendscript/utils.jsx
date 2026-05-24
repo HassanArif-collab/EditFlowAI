@@ -12,6 +12,13 @@ editflowUtils = (function() {
         return Math.round(seconds * TICKS_PER_SECOND);
     }
 
+    function secondsToTicksString(seconds) {
+        /* String form of ticks for Premiere attribute setters
+         * (clip.inPoint, clip.outPoint, etc.) which require strings
+         * to avoid JS number precision loss at large tick values. */
+        return String(Math.round(seconds * TICKS_PER_SECOND));
+    }
+
     function ticksToSeconds(ticks) {
         if (!ticks) return 0;
         // ticks may come as a string or as a .ticks property
@@ -91,6 +98,7 @@ editflowUtils = (function() {
     return {
         TICKS_PER_SECOND: TICKS_PER_SECOND,
         secondsToTicks: secondsToTicks,
+        secondsToTicksString: secondsToTicksString,
         ticksToSeconds: ticksToSeconds,
         addTicks: addTicks,
         subTicks: subTicks,
