@@ -845,8 +845,12 @@ class ProviderService:
                 if result:
                     return result
             except Exception as e:
-                errors.append(f"{try_pid}: {e}")
-                logger.warning(f"Chat failed with provider {try_pid}: {e}")
+                # Some httpx/asyncio exceptions have an empty str() (just the
+                # type name carries information). Fall back to repr / class
+                # name so the log line is never blank.
+                err_msg = str(e) or repr(e) or e.__class__.__name__
+                errors.append(f"{try_pid}: {err_msg}")
+                logger.warning(f"Chat failed with provider {try_pid}: {err_msg}")
                 continue
 
         # All providers failed - rule-based fallback
@@ -903,13 +907,23 @@ class ProviderService:
                 "model": m,
                 "messages": messages,
                 "stream": False,
+                # keep_alive: 30m keeps the model resident in Ollama after the
+                # response so subsequent calls skip the cold-load. Default is
+                # 5m which is fine for chat but means every >5min gap pays the
+                # full load cost again — for a 4B model on CPU that's 20-40s.
+                "keep_alive": "30m",
                 "options": {"temperature": temperature},
             }
             try:
                 resp = await client.post(
                     "/api/chat",
                     json=payload,
-                    timeout=httpx.Timeout(max(timeout * 3, 30), connect=5.0),
+                    # 180s is long enough for a cold-load + first-token on a 4B
+                    # model on CPU. The provider's configured `timeout` (default 10)
+                    # was multiplied to 30s — far too short — and produced opaque
+                    # "Server disconnected" errors when httpx canceled the call
+                    # mid-load.
+                    timeout=httpx.Timeout(180.0, connect=5.0),
                 )
                 if resp.status_code == 404:
                     # Model not installed — log once and try the next candidate.

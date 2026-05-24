@@ -125,16 +125,35 @@ async def step(
             # gets treated like an LLM reply and the parser fails or worse, the
             # legacy docs-style fallback shows up in chat as if it were intentional.
             if raw_result.get("error") or _looks_like_provider_fallback(raw_text):
-                logger.warning(f"Agent LLM unreachable. raw_result.error={raw_result.get('error')!r}")
-                messages_out.append({
-                    "kind": "agent_text",
-                    "text": (
+                err = raw_result.get("error") or ""
+                logger.warning(f"Agent LLM unreachable. raw_result.error={err!r}")
+
+                # Distinguish "Ollama crashed / disconnected" from "Ollama isn't
+                # running at all" — they need different user actions.
+                lower_err = err.lower()
+                if any(s in lower_err for s in [
+                    "server disconnected",
+                    "remoteprotocolerror",
+                    "readtimeout",
+                    "connecttimeout",
+                ]):
+                    msg = (
+                        "Ollama dropped the request before finishing. This usually means:\n"
+                        "  - The model's cold-load took longer than allowed (try sending the "
+                        "message again — the model is now in memory).\n"
+                        "  - The system ran out of RAM (close other apps, or pick a smaller "
+                        "model in Settings).\n"
+                        "  - The model file is corrupted (`ollama pull <model>` to refresh)."
+                    )
+                else:
+                    msg = (
                         "I couldn't reach the chat model. Open Settings -> Active "
                         "Chat Model and pick one marked 'local', or start Ollama "
                         "if it isn't running. The info icon in the header shows "
                         "live provider status."
-                    ),
-                })
+                    )
+
+                messages_out.append({"kind": "agent_text", "text": msg})
                 return messages_out
         except Exception as e:
             logger.error(f"Agent LLM call failed: {e}")
