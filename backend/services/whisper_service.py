@@ -112,6 +112,79 @@ class WhisperService:
         # Model revision — populated after model load
         self._model_revision: str = ""
 
+        # Runtime model override — set via set_active_model() (POST /api/whisper/set-model).
+        # Persisted to data/whisper_config.json so the choice survives restart.
+        self._active_model_name: Optional[str] = None
+        self._load_active_model_from_disk()
+
+    # ── Runtime model switching ──
+
+    def _whisper_config_path(self) -> Path:
+        return Path(self.settings.DATA_DIR) / "whisper_config.json"
+
+    def _load_active_model_from_disk(self) -> None:
+        """Load the user's preferred Whisper model from disk, if any."""
+        path = self._whisper_config_path()
+        if not path.exists():
+            return
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            name = data.get("active_model")
+            if isinstance(name, str) and name:
+                self._active_model_name = name
+                logger.info(f"Whisper active model loaded from disk: {name}")
+        except Exception as e:
+            logger.warning(f"Failed to load whisper_config.json: {e}")
+
+    def _save_active_model_to_disk(self) -> None:
+        """Persist the current active-model choice to disk."""
+        path = self._whisper_config_path()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps({"active_model": self._active_model_name or ""}, indent=2),
+                encoding="utf-8",
+            )
+        except Exception as e:
+            logger.warning(f"Failed to save whisper_config.json: {e}")
+
+    def get_active_model_name(self) -> str:
+        """The Whisper model that will actually be used for transcription.
+
+        Falls back to settings.WHISPER_MODEL if no runtime override is set.
+        """
+        return self._active_model_name or self.settings.WHISPER_MODEL
+
+    def set_active_model(self, name: str) -> Dict[str, Any]:
+        """Switch the active Whisper model at runtime.
+
+        Unloads the current model so the next transcribe call loads the new one.
+        faster-whisper auto-downloads from HuggingFace on first use, so the
+        first transcribe after switching may include a one-time download
+        (~80 MB for `small`, ~770 MB for `medium`, ~1.5 GB for `large-v3-turbo`).
+
+        Persists the choice so it survives restart.
+        """
+        name = (name or "").strip()
+        allowed = {"tiny", "base", "small", "medium", "large-v3-turbo", "large-v3"}
+        if name not in allowed:
+            raise ValueError(f"Unsupported Whisper model: {name!r}. Allowed: {sorted(allowed)}")
+
+        previous = self.get_active_model_name()
+        self._active_model_name = name
+        self._save_active_model_to_disk()
+
+        # Discard the loaded model — _load_model() will pull the new one on the next transcribe.
+        # We intentionally do NOT preload here: that would block the request for minutes
+        # while a large model downloads. The first transcribe call handles the load+download
+        # and emits WS progress.
+        self._model = None
+        self._model_revision = ""
+        self._model_info = {}
+        logger.info(f"Whisper active model: {previous} -> {name} (will load on next transcribe)")
+
+        return {"previous": previous, "active": name, "persisted": True}
+
     # ── Engine Selection Cascade ──
 
     @staticmethod
@@ -203,7 +276,7 @@ class WhisperService:
                     (self.settings.WHISPER_LOCAL_DIR, self.settings.WHISPER_DEVICE, self.settings.WHISPER_COMPUTE_TYPE)
                 )
 
-            model_name = self.settings.WHISPER_MODEL
+            model_name = self.get_active_model_name()
             attempts.append((model_name, self.settings.WHISPER_DEVICE, self.settings.WHISPER_COMPUTE_TYPE))
 
             # CPU int8 as a same-model fallback (handles missing CUDA, etc.)
@@ -354,12 +427,37 @@ class WhisperService:
     ) -> None:
         """Persist a TranscriptResult to the SQLite registry.
 
-        Writes to source_transcripts (one row) and transcript_words
-        (one row per word).  Best-effort — failures are logged but
-        never raise.
+        Writes to source_files (parent row required by FK), source_transcripts
+        (one row), and transcript_words (one row per word). Best-effort —
+        failures are logged but never raise.
         """
         try:
             from ..models.sqlite_registry import sqlite_registry
+
+            # Ensure the parent source_files row exists. The FK constraint on
+            # source_transcripts.content_hash references source_files.content_hash,
+            # so without this row the INSERT silently fails with IntegrityError
+            # and is swallowed by the outer try/except, leaving NO transcripts
+            # in the DB — every restart re-transcribes from scratch.
+            existing_source = sqlite_registry.find_source_file(content_hash)
+            if existing_source is None:
+                source_path = Path(result.source_file) if result.source_file else None
+                file_size = 0
+                if source_path and source_path.exists():
+                    try:
+                        file_size = source_path.stat().st_size
+                    except OSError:
+                        file_size = 0
+                sqlite_registry.upsert_source_file(
+                    content_hash=content_hash,
+                    path=str(source_path) if source_path else "",
+                    original_name=source_path.name if source_path else "",
+                    file_size=file_size,
+                    duration=result.duration,
+                    has_audio=True,
+                    fingerprint=content_hash,
+                    status="transcribed",
+                )
 
             transcript_id = str(uuid.uuid4())[:12]
 
@@ -403,7 +501,10 @@ class WhisperService:
             )
 
         except Exception as e:
-            logger.debug(f"Failed to persist transcript to DB: {e}")
+            # Upgraded from debug → warning. Silent DB-persist failures meant
+            # transcripts disappeared after restart, forcing a full re-transcribe
+            # every session. Now the user (and the log) see it.
+            logger.warning(f"Failed to persist transcript to DB: {e}", exc_info=True)
 
     def _lookup_transcript_from_db(
         self,
@@ -746,7 +847,7 @@ class WhisperService:
         """
         # ── Step 1: Resolve the engine ──
         engine_name, engine_module, boundary_window_ms = self._resolve_engine()
-        model_name = self.settings.WHISPER_MODEL
+        model_name = self.get_active_model_name()
         model_revision = self._model_revision  # may be "" until model is loaded
 
         # ── Step 2: Compute fingerprint if not provided ──

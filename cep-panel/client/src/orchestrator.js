@@ -19,6 +19,19 @@ const PROMPT_FIND_SCRIPT = `You are EditFlow, an AI editing assistant. The user 
 
 // ── Progress tracking ────────────────────────────────────────
 let _progressMsgId = null;
+// Holds {clipsTotal, clipsDone, currentName} while pre-warm runs so the WS
+// `progress` handler can render sub-clip Whisper progress on the same message.
+let _prewarmCtx = null;
+
+/**
+ * Reject any "agent reply" that smells like the rule-based developer-docs
+ * fallback (`POST /api/pipeline/analyze...`). Belt-and-suspenders so the
+ * user never sees internal docs in the chat.
+ */
+function _looksLikeDocsDump(text) {
+  if (!text || typeof text !== 'string') return false;
+  return /POST\s+\/api\/|GET\s+\/api\/|use\s+the\s+\/api\//i.test(text);
+}
 
 // ── Public API ───────────────────────────────────────────────
 
@@ -306,9 +319,12 @@ async function onUserMessage(text) {
       message: `You are EditFlow, an AI editing assistant. Help the user with their video editing project. Be concise.\n\nUser: ${text}`,
       session_id: state.session.clientId || 'panel-chat',
     });
-    const reply = resp.choices?.[0]?.message?.content || resp.response || resp.message || '';
-    if (reply) {
-      appendMessage('agent-text', { text: reply.content || reply });
+    const replyRaw = resp.choices?.[0]?.message?.content || resp.response || resp.message || '';
+    const reply = (replyRaw && typeof replyRaw === 'object') ? replyRaw.content : replyRaw;
+    if (reply && !_looksLikeDocsDump(reply)) {
+      appendMessage('agent-text', { text: reply });
+    } else {
+      appendMessage('agent-text', { text: "I'm not sure how to help with that yet. Try scanning your project first." });
     }
   } catch (_) {
     appendMessage('agent-text', { text: "I'm not sure how to help with that yet. Try scanning your project first." });
@@ -512,29 +528,60 @@ async function _prewarmTranscripts(clips) {
   const state = getState();
   const clientId = state.session.clientId || '';
   let done = 0;
+  _prewarmCtx = { clipsTotal: clips.length, clipsDone: 0, currentName: '' };
 
   for (const clip of clips) {
     const mediaPath = clip.mediaPath || clip.media_path;
-    if (!mediaPath) {
-      done++;
-      continue;
-    }
+    if (!mediaPath) { done++; _prewarmCtx.clipsDone = done; continue; }
+
+    _prewarmCtx.currentName = clip.name || mediaPath.split(/[\\/]/).pop();
+    const currentIdx = done + 1;
+    updateProgress(_progressMsgId, {
+      pct: Math.round((done / clips.length) * 100),
+      detail: `Clip ${currentIdx} of ${clips.length} — starting "${_prewarmCtx.currentName}"...`,
+    });
 
     try {
       const qs = new URLSearchParams({ path: mediaPath });
       if (clientId) qs.set('client_id', clientId);
-      await apiPost(`/api/media/transcribe?${qs.toString()}`, null, { timeoutMs: 600000 });
+      await apiPost(`/api/media/transcribe?${qs.toString()}`, null, { timeoutMs: 1800000 });
     } catch (err) {
       console.warn(`[orchestrator] Pre-warm failed for ${mediaPath}:`, err);
     }
 
     done++;
-    const pct = Math.round((done / clips.length) * 100);
+    _prewarmCtx.clipsDone = done;
+    const finishedDetail = done === clips.length
+      ? `${done} of ${clips.length} clips complete`
+      : `${done} of ${clips.length} clips done — starting next...`;
     updateProgress(_progressMsgId, {
-      pct,
-      detail: `${done} of ${clips.length} complete`,
+      pct: Math.round((done / clips.length) * 100),
+      detail: finishedDetail,
     });
   }
+  _prewarmCtx = null;
+}
+
+/**
+ * Called from main.js when the WebSocket emits a `progress` event.
+ * Updates the in-flight progress message with sub-clip Whisper progress so
+ * the bar moves DURING a long transcription, not just between clips.
+ */
+function onWsProgress(payload) {
+  if (!payload || !_progressMsgId || !_prewarmCtx) return;
+  const taskType = payload.task_type || payload.taskType || '';
+  if (!/transcribe/i.test(taskType)) return;
+
+  const innerPct = Math.max(0, Math.min(1, Number(payload.progress) || 0));
+  const { clipsTotal, clipsDone, currentName } = _prewarmCtx;
+  const overall = ((clipsDone + innerPct) / Math.max(1, clipsTotal)) * 100;
+  const currentIdx = Math.min(clipsTotal, clipsDone + 1);
+  const innerPctText = `${Math.round(innerPct * 100)}%`;
+  const namePart = currentName ? ` — "${currentName}" ${innerPctText}` : '';
+  updateProgress(_progressMsgId, {
+    pct: Math.round(overall),
+    detail: `Clip ${currentIdx} of ${clipsTotal}${namePart}`,
+  });
 }
 
 // ── Private: Script pipeline ─────────────────────────────────
@@ -737,10 +784,13 @@ function _extractBins(scanResult) {
 async function _narrateBinTour(bins, items) {
   try {
     const resp = await apiPost('/api/chat/message', {
-      message: `${PROMPT_BIN_TOUR}\n\nProject scan:\n${JSON.stringify({ bins, itemCount: items.length })}`,
+      message: `${PROMPT_BIN_TOUR}\n\nProject scan:\n${JSON.stringify({ bins, itemCount: items.length })}\n\nReply in one short paragraph (max 2 sentences). Do NOT mention any API endpoints, URLs, or code.`,
       session_id: 'bin-tour',
     }, { timeoutMs: 10000 });
-    return resp.message?.content || resp.response || null;
+    const reply = resp.message?.content || resp.response || null;
+    // Guard against the rule-based fallback that leaks API docs.
+    if (reply && _looksLikeDocsDump(reply)) return null;
+    return reply;
   } catch (_) {
     return null;
   }
@@ -809,4 +859,5 @@ export {
   onApprovePlan,
   onRegeneratePlan,
   onNewEdit,
+  onWsProgress,
 };

@@ -73,6 +73,58 @@ async function apiPost(path, body, { timeoutMs = 30000 } = {}) {
 }
 
 /**
+ * PUT request with timeout.
+ */
+async function apiPut(path, body, { timeoutMs = 30000 } = {}) {
+  const url = getBaseUrl() + path;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`PUT ${path} → ${res.status}: ${text}`);
+    }
+    return await res.json();
+  } catch (e) {
+    clearTimeout(timer);
+    if (e.name === 'AbortError') throw new Error(`PUT ${path} timed out after ${timeoutMs}ms`);
+    throw e;
+  }
+}
+
+/**
+ * DELETE request with timeout.
+ */
+async function apiDelete(path, { timeoutMs = 10000 } = {}) {
+  const url = getBaseUrl() + path;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      method: 'DELETE',
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`DELETE ${path} → ${res.status}: ${text}`);
+    }
+    return res.status === 204 ? {} : await res.json();
+  } catch (e) {
+    clearTimeout(timer);
+    if (e.name === 'AbortError') throw new Error(`DELETE ${path} timed out after ${timeoutMs}ms`);
+    throw e;
+  }
+}
+
+/**
  * Upload a file via multipart POST.
  */
 async function apiUpload(path, file, fields = {}, { timeoutMs = 60000 } = {}) {
@@ -201,4 +253,4 @@ function connectWS(clientId) {
   return { on, off, close, send };
 }
 
-export { apiGet, apiPost, apiUpload, connectWS, getBaseUrl, setBaseUrl };
+export { apiGet, apiPost, apiPut, apiDelete, apiUpload, connectWS, getBaseUrl, setBaseUrl };

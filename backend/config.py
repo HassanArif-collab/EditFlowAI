@@ -22,7 +22,10 @@ class Settings(BaseSettings):
     DEFAULT_VISION_MODEL: str = "gemma3:4b"
 
     # ── Whisper ──
-    WHISPER_MODEL: str = "large-v3-turbo"
+    # Default: medium — best speed/quality balance on CPU for multilingual.
+    # The actual active model is overridable at runtime via the panel UI
+    # (POST /api/whisper/set-model) and persists in data/whisper_config.json.
+    WHISPER_MODEL: str = "medium"
     WHISPER_DEVICE: str = "cpu"
     WHISPER_COMPUTE_TYPE: str = "int8"
     WHISPER_LOCAL_DIR: Optional[str] = None

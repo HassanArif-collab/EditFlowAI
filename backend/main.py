@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .config import init_dirs
-from .routes import chat, edit, media, models_routes, pipeline, preflight, premiere, providers, script_extract
+from .routes import chat, edit, media, models_routes, pipeline, preflight, premiere, providers, script_extract, whisper_admin
 
 # Configure logging
 logging.basicConfig(
@@ -107,6 +107,7 @@ app.include_router(premiere.router, prefix="/api")
 app.include_router(preflight.router, prefix="/api")
 app.include_router(edit.router, prefix="/api")
 app.include_router(script_extract.router)
+app.include_router(whisper_admin.router, prefix="/api")
 
 panel_dir = Path(__file__).parent.parent / "cep-panel" / "client"
 if panel_dir.exists():

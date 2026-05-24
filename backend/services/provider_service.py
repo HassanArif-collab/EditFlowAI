@@ -853,31 +853,96 @@ class ProviderService:
         self, client: httpx.AsyncClient, provider_id: str, model: str,
         messages: List[Dict], temperature: float, timeout: int
     ) -> Optional[Dict[str, Any]]:
-        """Chat via Ollama's /api/chat endpoint."""
-        payload = {
-            "model": model,
-            "messages": messages,
-            "stream": False,
-            "options": {"temperature": temperature},
-        }
+        """Chat via Ollama's /api/chat endpoint.
 
-        resp = await client.post(
-            "/api/chat",
-            json=payload,
-            timeout=httpx.Timeout(max(timeout * 3, 30), connect=5.0),
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        content = data.get("message", {}).get("content", "")
+        If the requested model returns 404 (not installed), auto-fall back to
+        the first locally-installed model from this provider's cache. The
+        active model is updated in memory so subsequent calls skip the retry.
+        """
+        models_tried: List[str] = []
+        last_error: Optional[Exception] = None
 
-        if content:
-            return {
-                "response": content,
-                "source": "ollama",
-                "provider_id": provider_id,
-                "error": None,
+        # Candidate models: requested first, then any local fallbacks.
+        candidates = [model] + self._local_ollama_fallbacks(provider_id, exclude=model)
+
+        for m in candidates:
+            if m in models_tried:
+                continue
+            models_tried.append(m)
+            payload = {
+                "model": m,
+                "messages": messages,
+                "stream": False,
+                "options": {"temperature": temperature},
             }
+            try:
+                resp = await client.post(
+                    "/api/chat",
+                    json=payload,
+                    timeout=httpx.Timeout(max(timeout * 3, 30), connect=5.0),
+                )
+                if resp.status_code == 404:
+                    # Model not installed — log once and try the next candidate.
+                    logger.warning(
+                        f"Ollama returned 404 for model '{m}'. Trying next local model."
+                    )
+                    last_error = httpx.HTTPStatusError(
+                        f"model '{m}' not installed", request=resp.request, response=resp
+                    )
+                    continue
+                resp.raise_for_status()
+                data = resp.json()
+                content = data.get("message", {}).get("content", "")
+                if content:
+                    # If we recovered with a fallback model, update the active
+                    # chat model so the rest of the session uses it directly.
+                    if m != model and provider_id == self._active_chat_provider:
+                        logger.info(
+                            f"Auto-switched active chat model: '{model}' -> '{m}' (original not installed)"
+                        )
+                        self._active_chat_model = m
+                        try:
+                            self._save_config()
+                        except Exception:
+                            pass
+                    return {
+                        "response": content,
+                        "source": "ollama",
+                        "provider_id": provider_id,
+                        "error": None,
+                    }
+            except httpx.HTTPStatusError as e:
+                last_error = e
+                if e.response.status_code != 404:
+                    # Non-404 errors are not "missing model" — bubble up.
+                    raise
+            except Exception as e:
+                last_error = e
+                raise
+
+        if last_error:
+            raise last_error
         return None
+
+    def _local_ollama_fallbacks(self, provider_id: str, exclude: str = "") -> List[str]:
+        """Return Ollama model IDs that are locally installed (not :cloud).
+
+        Cloud-suffixed models require an Ollama account; if the user is offline
+        or hasn't authenticated, they 404. Local models are the safest fallback.
+        """
+        cache = self._model_cache.get(provider_id, [])
+        names: List[str] = []
+        for entry in cache:
+            mid = entry.get("id") if isinstance(entry, dict) else None
+            if not mid or mid == exclude:
+                continue
+            if ":cloud" in mid:
+                continue
+            # Heuristic: real local models have non-zero size_bytes.
+            size = entry.get("size_bytes", 0) if isinstance(entry, dict) else 0
+            if size and size > 0:
+                names.append(mid)
+        return names
 
     async def _openai_chat(
         self, client: httpx.AsyncClient, provider_id: str, model: str,
