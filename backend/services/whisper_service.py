@@ -339,37 +339,49 @@ class WhisperService:
                          or (Path.home() / ".cache" / "huggingface" / "hub"))
 
         stop_event = asyncio.Event()
-        emitted_any = False  # only emit 'complete' if we saw the download
+        emitted_any = False  # only emit 'complete' if we saw a real download
 
         async def _poller():
             nonlocal emitted_any
-            # First event: 'started' at 0%. The UI snaps the bar visible.
-            await _ws_manager.broadcast({
-                "type": "whisper_download_progress",
-                "payload": {
-                    "status": "started",
-                    "model": model_name,
-                    "downloaded_mb": 0,
-                    "total_mb": expected_mb,
-                    "percent": 0.0,
-                },
-            })
+            # Do NOT emit a 'started' event up front. Previously we sent
+            # status='started' at 0% before checking for an .incomplete file,
+            # which meant warm loads (model already in cache) showed a bar at
+            # 0% that never advanced — because no .incomplete file ever
+            # appeared, no 'downloading' or 'complete' events followed, and
+            # the bar got stuck at "medium  0.0 / 1500 MB (0.0%)" forever.
+            #
+            # Now we wait until we actually see byte-1 of an .incomplete
+            # file. If the load completes without one appearing (warm load),
+            # the poller emits nothing and the UI stays silent — correct.
             last_mb = -1.0
             while not stop_event.is_set():
                 size_mb = self._largest_incomplete_blob_mb(cache_dir, model_name)
                 if size_mb > 0 and size_mb != last_mb:
-                    emitted_any = True
                     pct = min(99.9, round(100.0 * size_mb / expected_mb, 1)) if expected_mb else 0.0
-                    await _ws_manager.broadcast({
-                        "type": "whisper_download_progress",
-                        "payload": {
-                            "status": "downloading",
-                            "model": model_name,
-                            "downloaded_mb": size_mb,
-                            "total_mb": expected_mb,
-                            "percent": pct,
-                        },
-                    })
+                    if not emitted_any:
+                        # First real bytes: now we tell the UI to make the bar visible.
+                        await _ws_manager.broadcast({
+                            "type": "whisper_download_progress",
+                            "payload": {
+                                "status": "started",
+                                "model": model_name,
+                                "downloaded_mb": size_mb,
+                                "total_mb": expected_mb,
+                                "percent": pct,
+                            },
+                        })
+                        emitted_any = True
+                    else:
+                        await _ws_manager.broadcast({
+                            "type": "whisper_download_progress",
+                            "payload": {
+                                "status": "downloading",
+                                "model": model_name,
+                                "downloaded_mb": size_mb,
+                                "total_mb": expected_mb,
+                                "percent": pct,
+                            },
+                        })
                     last_mb = size_mb
                 try:
                     await asyncio.wait_for(stop_event.wait(), timeout=1.0)
