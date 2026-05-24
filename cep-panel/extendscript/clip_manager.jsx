@@ -117,32 +117,66 @@ clipManager = (function() {
                 }
             }
 
-            // insertClip's time parameter expects a Time object or seconds (number),
-            // NOT a tick string — passing a tick string causes PPro to interpret the
-            // huge value as seconds and overflows GDI when drawing the clip.
-            seq.insertClip(projectItem, startTime, videoTrackIndex, audioTrackIndex);
-
-            // After placing, find the clip on the video track and trim
-            // in/out points on the TIMELINE clip (not the projectItem).
-            // Setting in/out on projectItem would affect every instance.
+            // ── FIX-A: Pre-trim via projectItem.setInPoint/setOutPoint ─────
+            // PPro's insertClip captures the projectItem's current in/out at
+            // placement time, so setting them before insertClip causes the
+            // placed TrackItem to inherit those values.  Each loop iteration
+            // sets fresh values, so previously-placed clips are unaffected.
+            // setInPoint/setOutPoint signature: (timeValue, timeFormat)
+            //   timeFormat 5 = TIME_AS_TICKS (string), 4 = TIME_AS_SECONDS (number)
             if (inPoint > 0 || outPoint > 0) {
                 try {
-                    var placedClip = _findClipAtTime(seq.videoTracks[videoTrackIndex], startTime);
-                    if (placedClip) {
-                        // clip.inPoint / clip.outPoint are Time OBJECTS — assign
-                        // their .ticks (a string property) rather than overwriting the
-                        // Time object itself. Direct string assignment makes PPro
-                        // re-parse the digits as seconds → GDI ValueOverflow.
-                        if (inPoint > 0) {
-                            placedClip.inPoint.ticks = editflowUtils.secondsToTicksString(inPoint);
-                        }
-                        if (outPoint > 0) {
-                            placedClip.outPoint.ticks = editflowUtils.secondsToTicksString(outPoint);
-                        }
+                    if (inPoint > 0 && typeof projectItem.setInPoint === 'function') {
+                        projectItem.setInPoint(editflowUtils.secondsToTicksString(inPoint), 5);
+                    }
+                    if (outPoint > 0 && typeof projectItem.setOutPoint === 'function') {
+                        projectItem.setOutPoint(editflowUtils.secondsToTicksString(outPoint), 5);
                     }
                 } catch (e) {
-                    // In/out trim failed — non-critical, clip still placed
+                    // Diagnostic only — non-fatal; FIX-B may still trim
+                    try { $.writeln("FIX-A setInPoint/setOutPoint failed: " + e.toString()); } catch (_) {}
                 }
+            }
+
+            // insertClip's time parameter expects seconds (number),
+            // NOT a tick string — passing a tick string causes PPro to
+            // interpret the huge value as seconds and overflows GDI.
+            seq.insertClip(projectItem, startTime, videoTrackIndex, audioTrackIndex);
+
+            // ── FIX-B: Post-placement direct string assignment ───────────
+            // Belt-and-suspenders with FIX-A.  The premiere-pro-mcp reference
+            // repo uses direct string assignment (no .ticks).  We try both
+            // strategies and capture before/after diagnostics so the panel can
+            // prove which one actually trims the clip.
+            var placedClip = _findClipAtTime(seq.videoTracks[videoTrackIndex], startTime);
+            var diag = {
+                found: !!placedClip,
+                requested_in: inPoint,
+                requested_out: outPoint
+            };
+            if (placedClip) {
+                try {
+                    // Capture BEFORE state
+                    diag.before_in_ticks    = String(placedClip.inPoint.ticks || "");
+                    diag.before_out_ticks   = String(placedClip.outPoint.ticks || "");
+                    diag.before_start_ticks = String(placedClip.start.ticks || "");
+                    diag.before_end_ticks   = String(placedClip.end.ticks || "");
+                } catch (e) {}
+
+                if (inPoint > 0) {
+                    try { placedClip.inPoint = editflowUtils.secondsToTicksString(inPoint); } catch (e) { diag.in_err = e.toString(); }
+                }
+                if (outPoint > 0) {
+                    try { placedClip.outPoint = editflowUtils.secondsToTicksString(outPoint); } catch (e) { diag.out_err = e.toString(); }
+                }
+
+                try {
+                    // Capture AFTER state — proof of whether trim stuck
+                    diag.after_in_ticks    = String(placedClip.inPoint.ticks || "");
+                    diag.after_out_ticks   = String(placedClip.outPoint.ticks || "");
+                    diag.after_start_ticks = String(placedClip.start.ticks || "");
+                    diag.after_end_ticks   = String(placedClip.end.ticks || "");
+                } catch (e) {}
             }
 
             // ── Phase 2 (M13): Audio fade support ────────────────────────
@@ -167,7 +201,7 @@ clipManager = (function() {
                 // Audio fade API not available in this PPro version — non-critical
             }
 
-            return { success: true, name: projectItem.name, startTime: startTime };
+            return { success: true, name: projectItem.name, startTime: startTime, trim_diag: diag };
 
         } catch (e) {
             return { success: false, error: e.toString() };
