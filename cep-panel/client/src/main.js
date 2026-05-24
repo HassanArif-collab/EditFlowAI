@@ -4,7 +4,7 @@
  * Initializes all modules, wires up DOM events, and starts the app.
  * This file owns no business logic — it delegates to the modules.
  */
-const BUILD_TAG = 'nocache-5';  // bump when shipping a fix; visible in header
+const BUILD_TAG = 'bust-deep-6';  // bump when shipping a fix; visible in header
 
 // FIRST thing on parse: clear the inline boot-check banner. If the user sees
 // the banner disappear, we KNOW main.js parsed successfully and modules are
@@ -44,9 +44,23 @@ let onScanClicked, onSourceProvided, onPProItemsProvided, onMediaFileDropped,
     onScriptFileDropped, onUserMessage, onNewEdit, onWsProgress;
 
 async function _loadOrchestrator() {
+  // Append a cache buster tied to BUILD_TAG so every shipped fix forces a
+  // fresh fetch of the orchestrator module. Without this, CEF's HTTP cache
+  // returns the OLD copy of agent-client.js for hours after we deploy a
+  // fix — because the cached response's max-age hasn't expired yet, and
+  // Cache-Control headers on NEW responses can't override an existing
+  // cache entry. The query string makes the URL different → guaranteed
+  // fresh request → my latest agent-client.js actually runs.
+  //
+  // This only busts the dynamic-import URL. Static imports (state.js,
+  // api.js, etc.) still hit the cache, but those modules haven't been
+  // edited recently — the cached versions are correct. The Cache-Control
+  // headers we send now will prevent the same trap from recurring once
+  // those files do change.
+  const bust = '?v=' + encodeURIComponent(BUILD_TAG);
   const mod = AGENT_MODE
-    ? await import('./agent-client.js')
-    : await import('./orchestrator.js');
+    ? await import('./agent-client.js' + bust)
+    : await import('./orchestrator.js' + bust);
   onScanClicked        = mod.onScanClicked;
   onSourceProvided     = mod.onSourceProvided;
   onPProItemsProvided  = mod.onPProItemsProvided;
