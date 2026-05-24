@@ -20,6 +20,48 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 
+# ── Retake detection helpers ──────────────────────────────────────────────
+
+
+def _cosine_sim(a: List[float], b: List[float]) -> float:
+    """Cosine similarity between two embedding vectors.  Returns 0 on empty input."""
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    import math
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(y * y for y in b))
+    if na == 0.0 or nb == 0.0:
+        return 0.0
+    return dot / (na * nb)
+
+
+def _compute_retake_pairs(takes: List[Any], threshold: float = 0.80) -> List[Dict]:
+    """Find pairs of takes whose embeddings are similar enough to be retakes.
+
+    Returns a list of {"take_a": i, "take_b": j, "similarity": float} dicts
+    with i < j.  Takes without an embedding are silently skipped.
+    """
+    pairs: List[Dict] = []
+    n = len(takes)
+    for i in range(n):
+        ei = getattr(takes[i], "embedding", None) or []
+        if not ei:
+            continue
+        for j in range(i + 1, n):
+            ej = getattr(takes[j], "embedding", None) or []
+            if not ej:
+                continue
+            sim = _cosine_sim(ei, ej)
+            if sim >= threshold:
+                pairs.append({
+                    "take_a": i,
+                    "take_b": j,
+                    "similarity": round(sim, 3),
+                })
+    return pairs
+
+
 async def propose_cuts(
     clip_paths: List[str],
     instruction: str,
@@ -91,15 +133,36 @@ async def propose_cuts(
     # 3. Build takes description for the LLM
     takes_desc = []
     for i, take in enumerate(all_takes):
+        q = take.quality or {}
+        # Prefer clean_text (fillers + false starts stripped) if available, but
+        # cap to keep the prompt manageable for small local LLMs.
+        full_text = (take.clean_text or take.text or "").strip()
+        if len(full_text) > 1500:
+            full_text = full_text[:1500] + "... [truncated]"
         takes_desc.append({
             "take_index": i,
             "source_file": Path(take.source_file).name,
-            "duration": round(take.duration, 1),
-            "text_preview": take.text[:200] if take.text else "(no text)",
+            "source_start_sec": round(take.source_start, 1),
+            "duration_sec": round(take.duration, 1),
+            "text": full_text or "(no text)",
+            # Quality signals from take_segmenter — empty dict if unavailable
+            "false_starts": q.get("false_starts", 0),
+            "filler_ratio": round(q.get("filler_ratio", 0.0), 2),
+            "wpm": round(q.get("wpm", 0.0), 1),
+            "quality_score": round(q.get("score", 0.0), 2),
         })
 
+    # Compute cosine similarity between all take pairs using the eager embeddings
+    # that take_segmenter already produced. Pairs with similarity >= 0.80 are
+    # almost certainly retakes of the same content.
+    similarity_pairs = _compute_retake_pairs(all_takes, threshold=0.80)
+    logger.info(
+        f"propose_cuts: {len(similarity_pairs)} retake pair(s) detected "
+        f"(similarity >= 0.80) across {len(all_takes)} takes"
+    )
+
     # 4. Ask the LLM to pick takes
-    prompt_text = _build_selection_prompt(takes_desc, instruction, hint)
+    prompt_text = _build_selection_prompt(takes_desc, similarity_pairs, instruction, hint)
     raw = await provider_service.chat(
         messages=[{"role": "user", "content": prompt_text}],
         temperature=0.0,
@@ -186,35 +249,58 @@ async def propose_cuts(
 
 def _build_selection_prompt(
     takes_desc: List[Dict],
+    similarity_pairs: List[Dict],
     instruction: str,
     hint: Optional[str],
 ) -> str:
-    """Build the LLM prompt for take selection."""
+    """Build the LLM prompt for take selection.
+
+    Now passes full take text, per-take quality metrics, and a list of
+    likely retake pairs (computed from embedding similarity).  The prompt
+    instructs the model to prefer later/cleaner takes when a retake is
+    detected, and to skip filler-heavy / false-start takes outright.
+    """
     takes_json = json.dumps(takes_desc[:50], indent=2)  # cap at 50 takes
+    sim_json = json.dumps(similarity_pairs[:80], indent=2)  # cap noise
     hint_section = f"\nAdditional hint: {hint}" if hint else ""
 
-    return f"""You are an expert video editor. Below is a list of takes from video clips.
+    return f"""You are an expert video editor.  Below is a list of takes from one or more video clips, with their full transcribed text and quality metrics.
 
 User's instruction: {instruction}{hint_section}
 
-Select takes that form the best sequence. Skip false starts, hesitations, mumbled words, and repeated content. Prefer later takes when content is equivalent (they're usually more polished).
+For each take you see:
+- text          : the full transcribed words spoken in that take
+- source_start_sec : when this take starts within its source clip (seconds)
+- duration_sec  : how long the take is
+- false_starts  : count of detected false starts (lower is better)
+- filler_ratio  : 0.0-1.0 fraction of filler words (lower is better)
+- wpm           : words per minute of delivery (higher is usually more polished)
+- quality_score : 0.0-1.0 overall quality (higher is better)
+
+SOME TAKES ARE RETAKES OF THE SAME CONTENT.  The similarity_pairs list at the bottom shows pairs of takes whose embeddings are >= 0.80 cosine similar — those are almost certainly two attempts at the same line.
+
+RULES — apply in order:
+1. RETAKES: For each pair in similarity_pairs, NEVER include both takes.  Prefer the one with HIGHER take_index (speakers usually improve on retry).  If quality_score differs by more than 0.2, override and pick the higher quality_score.
+2. QUALITY: Among non-retake takes covering distinct topics, prefer takes with low false_starts, low filler_ratio, and higher quality_score.
+3. SKIP: Drop any take that is purely a false start ("matlab... nahin... aisa..."), dead air, or fillers only.
+4. ORDER: Output selections in chronological order of source_start_sec, so the final cut plays as natural narrative.
+5. LENGTH: Don't pad — if only 3 takes are good, return 3, not 7.
 
 Takes:
 {takes_json}
 
+Similarity pairs (likely retakes, >= 0.80 cosine):
+{sim_json}
+
 Return a JSON object with this exact format:
 {{
   "selections": [
-    {{"take_index": 0, "beat_text": "short description of this beat", "rationale": "why this take"}},
-    {{"take_index": 2, "beat_text": "next beat description", "rationale": "why this take"}}
+    {{"take_index": 0, "beat_text": "short English description of this beat", "rationale": "why this take"}},
+    {{"take_index": 3, "beat_text": "...", "rationale": "..."}}
   ]
 }}
 
-Rules:
-- Order selections by how they should appear in the final cut
-- Each beat_text should be 5-15 words describing what's said
-- Skip takes that are just false starts or dead air
-- Aim for a coherent, flowing sequence
+Each beat_text: 5-15 words, in English even if the source is non-English.
 """
 
 

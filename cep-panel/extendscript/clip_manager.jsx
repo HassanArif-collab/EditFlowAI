@@ -138,10 +138,12 @@ clipManager = (function() {
                 }
             }
 
-            // insertClip's time parameter expects seconds (number),
-            // NOT a tick string — passing a tick string causes PPro to
-            // interpret the huge value as seconds and overflows GDI.
-            seq.insertClip(projectItem, startTime, videoTrackIndex, audioTrackIndex);
+            // Pass startTime as a tick STRING (not a seconds number) so video and audio
+            // both anchor on the exact same integer tick — eliminates frame-rounding
+            // drift that surfaced as PPro's red sync-offset badge between V and A.
+            // Safe now that FIX-A pre-trims in/out via projectItem.setInPoint/setOutPoint.
+            var startTicksStr = editflowUtils.secondsToTicksString(startTime);
+            seq.insertClip(projectItem, startTicksStr, videoTrackIndex, audioTrackIndex);
 
             // ── FIX-B: Post-placement direct string assignment ───────────
             // Belt-and-suspenders with FIX-A.  The premiere-pro-mcp reference
@@ -663,11 +665,9 @@ clipManager = (function() {
         try {
             var markers = seq.markers;
             if (markers && markers.createMarker) {
-                // createMarker expects a tick STRING (or Time object),
-                // not a raw number — passing a number causes silent failure
-                // or wrong position in some PPro versions.
-                var tickStr = editflowUtils.secondsToTicksString(time);
-                var marker = markers.createMarker(tickStr);
+                // createMarker takes seconds (number) in modern Premiere Pro (>= v11).
+                // Earlier "fix" to tick string caused 'Illegal Parameter type' rejections.
+                var marker = markers.createMarker(time);
                 if (marker) {
                     marker.name = markerName;
                     try { marker.comments = "EditFlow auto-marker"; } catch (e) {}
