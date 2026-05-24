@@ -32,7 +32,13 @@ class TurnRequest(BaseModel):
 
 @router.post("/turn")
 async def agent_turn(req: TurnRequest):
-    """Execute one agent turn and return messages for the frontend."""
+    """Execute one agent turn and return messages for the frontend.
+
+    Wrapped in a top-level try/except so any exception inside the loop is
+    converted into a chat message instead of an opaque 500. The full
+    traceback is still logged server-side; the user sees a debuggable
+    in-chat error with the exception type and message.
+    """
     session = session_store.get_or_create(req.session_id)
 
     async def ws_emit(msg: dict):
@@ -49,7 +55,26 @@ async def agent_turn(req: TurnRequest):
         if extracted_text:
             session.context.setdefault("pending_documents", {})[file_id] = extracted_text
 
-    messages = await loop.step(session, req.event, req.payload, ws_emit)
+    try:
+        messages = await loop.step(session, req.event, req.payload, ws_emit)
+    except Exception as e:
+        # Don't let exceptions become opaque 500s on the panel.
+        # Log the full traceback for diagnosis, return a useful in-chat message.
+        logger.exception(
+            f"Agent loop crashed handling event={req.event!r} for session={req.session_id!r}"
+        )
+        err_name = e.__class__.__name__
+        err_text = str(e) or repr(e)
+        messages = [
+            {
+                "kind": "agent_text",
+                "text": (
+                    f"Internal error in the agent: {err_name}: {err_text}. "
+                    f"Check the backend log for the full traceback (search for "
+                    f"'Agent loop crashed handling event={req.event!r}')."
+                ),
+            }
+        ]
 
     return {
         "session_id": session.id,
