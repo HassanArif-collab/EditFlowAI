@@ -243,6 +243,25 @@ async function _dispatchEDL(payload) {
       const opResults = (result && result.results) || [];
       const failedOps = opResults.filter(r => r.success === false);
 
+      // ── FIX-C: Surface trim diagnostics for add ops ─────────────
+      // The JSX now returns a trim_diag object per 'add' op with before/after
+      // tick values so we can prove whether the in/out trim actually stuck.
+      const addOps = opResults.filter(r => r.action === 'add' && r.trim_diag);
+      if (addOps.length > 0) {
+        const trimLines = addOps.map((r, i) => {
+          const d = r.trim_diag;
+          if (!d.found) {
+            return `  cut${i}: placed clip NOT found on track (trim skipped)`;
+          }
+          const inOK  = d.after_in_ticks  !== d.before_in_ticks;
+          const outOK = d.after_out_ticks !== d.before_out_ticks;
+          const inErr  = d.in_err  ? ` [err: ${d.in_err}]`  : '';
+          const outErr = d.out_err ? ` [err: ${d.out_err}]` : '';
+          return `  cut${i}: in ${inOK ? '\u2713' : '\u2717'} (${d.before_in_ticks}\u2192${d.after_in_ticks})${inErr}  out ${outOK ? '\u2713' : '\u2717'} (${d.before_out_ticks}\u2192${d.after_out_ticks})${outErr}`;
+        }).join('\n');
+        appendMessage('agent-text', { text: `Trim diagnostics:\n${trimLines}` });
+      }
+
       if (failedOps.length > 0) {
         const failedSummary = failedOps
           .map(r => `${r.action || 'op'}:${r.error || 'unknown'}`)
