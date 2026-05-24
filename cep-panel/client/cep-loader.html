@@ -2,73 +2,100 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <!--
+    cep-loader.html — the actual panel.
+
+    History: this file used to be a tiny redirect that did
+      window.location.replace("http://127.0.0.1:8765/panel/index.html")
+    after a ping check. That redirect silently fails inside Premiere's CEP
+    runtime (file:// → http:// navigation is blocked), so the panel froze on
+    "Opening panel through the local backend..." and the user could not get
+    past it. All edits to index.html / main.js never reached the screen.
+
+    Fix: serve the panel content directly here, with absolute http URLs
+    pointing at the backend's mounted /panel route so the modules are
+    fetched through CORS-friendly origins rather than file://.
+  -->
+  <base href="http://127.0.0.1:8765/panel/">
+  <link rel="stylesheet" href="styles/chat.css?v=20260524c">
   <title>EditFlow AI</title>
-  <style>
-    body {
-      margin: 0;
-      min-height: 100vh;
-      display: grid;
-      place-items: center;
-      background: #181a1f;
-      color: #eef1f7;
-      font: 14px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    }
-
-    main {
-      width: min(320px, calc(100vw - 40px));
-      text-align: center;
-    }
-
-    h1 {
-      margin: 0 0 8px;
-      font-size: 18px;
-      font-weight: 700;
-    }
-
-    p {
-      margin: 0 0 14px;
-      color: #aeb6c6;
-    }
-
-    button {
-      border: 0;
-      border-radius: 6px;
-      padding: 9px 13px;
-      background: #2388ff;
-      color: #f7fbff;
-      font-weight: 700;
-      cursor: pointer;
-    }
-  </style>
 </head>
 <body>
-  <main>
-    <h1>EditFlow AI</h1>
-    <p id="status">Opening panel through the local backend...</p>
-    <button id="retry" type="button">Retry</button>
-  </main>
+  <header id="app-header">
+    <span class="logo">EditFlow AI</span>
+    <span id="boot-tag" class="boot-tag" title="Frontend build tag — must match latest commit">build:unloaded</span>
+    <span class="header-spacer"></span>
+    <button id="btn-diagnostics" class="icon-btn" title="Diagnostics">&#9432;</button>
+    <button id="btn-settings" class="icon-btn" title="Settings">&#9881;</button>
+  </header>
 
+  <!-- Inline fallback boot indicator — proves at least HTML is fresh.
+       main.js clears this once it starts. If it stays after 4 seconds the
+       text updates to tell the user exactly what to do. -->
+  <div id="inline-boot-check" style="position:fixed;top:0;left:0;right:0;padding:4px 12px;background:#5a2d2d;color:#fff;font:11px monospace;text-align:center;z-index:9999">
+    Boot pending — modules have not loaded yet.
+  </div>
+  <div id="backend-check" style="position:fixed;bottom:0;left:0;right:0;padding:4px 12px;background:#3a1d1d;color:#fff;font:11px monospace;text-align:center;z-index:9999;display:none"></div>
   <script>
+    // Step 0 — confirm the backend is reachable BEFORE loading modules.
+    // If the backend is down, the module imports (which resolve via the <base>
+    // tag) would fail in opaque ways. Catch it here with a clear message.
     (function () {
-      var target = "http://127.0.0.1:8765/panel/index.html";
-      var status = document.getElementById("status");
-      var retry = document.getElementById("retry");
+      var bootStart = Date.now();
+      window.__editflowBootStart = bootStart;
 
-      function openPanel() {
-        status.textContent = "Opening panel through the local backend...";
-        fetch("http://127.0.0.1:8765/api/ping")
-          .then(function (response) {
-            if (!response.ok) throw new Error("Backend returned " + response.status);
-            window.location.replace(target);
-          })
-          .catch(function () {
-            status.textContent = "Start the backend with python run.py, then click Retry.";
-          });
-      }
+      var pingUrl = 'http://127.0.0.1:8765/api/ping';
+      fetch(pingUrl).then(function (r) {
+        if (!r.ok) throw new Error('ping ' + r.status);
+        // Backend is up. main.js will be fetched via the <base> + script tag.
+        document.getElementById('inline-boot-check').textContent =
+          'Backend up. Loading modules...';
+      }).catch(function (err) {
+        var box = document.getElementById('backend-check');
+        box.style.display = 'block';
+        box.textContent = 'Backend NOT reachable at http://127.0.0.1:8765. ' +
+          'Run python run.py and reload the panel.';
+        var top = document.getElementById('inline-boot-check');
+        if (top) { top.style.background = '#5a2d2d'; top.textContent = 'Cannot reach backend — see message at bottom.'; }
+      });
 
-      retry.addEventListener("click", openPanel);
-      openPanel();
+      // If main.js hasn't cleared the banner in 6 seconds, show the help text.
+      setTimeout(function() {
+        var el = document.getElementById('inline-boot-check');
+        if (el && !el.dataset.cleared) {
+          el.innerHTML = 'Boot FAILED — main.js did not execute. ' +
+            'Open the CEP debug console (chrome://inspect or :8088) and check for module errors.';
+        }
+      }, 6000);
     })();
   </script>
+
+  <main id="app-main">
+    <div id="hero" class="hero">
+      <button id="btn-scan" class="hero-btn">&#8853; Scan Project</button>
+      <p class="hero-subtitle">Connect to your open Premiere project to begin.</p>
+    </div>
+    <div id="chat-scroll" class="chat-scroll hidden"></div>
+    <div id="drop-overlay" class="drop-overlay hidden">
+      <span>Drop here: bin, clip, folder, or document</span>
+    </div>
+  </main>
+
+  <footer id="app-footer" class="hidden">
+    <div id="selection-chip" class="selection-chip hidden"></div>
+    <div class="input-row">
+      <textarea id="chat-input" rows="1" placeholder="Type a message, or drop a file&#8230;"></textarea>
+      <button id="btn-attach" class="icon-btn" title="Attach script">&#128206;</button>
+      <button id="btn-send" class="send-btn">Send</button>
+    </div>
+  </footer>
+
+  <div id="settings-overlay" class="overlay hidden"></div>
+  <div id="diagnostics-popover" class="popover hidden"></div>
+
+  <script src="lib/CSInterface.js?v=20260524c"></script>
+  <!-- ?v= cache-buster: force CEP to refetch each release so module hot-swap
+       is reliable. Bump the value whenever any module changes. -->
+  <script type="module" src="src/main.js?v=20260524c"></script>
 </body>
 </html>
