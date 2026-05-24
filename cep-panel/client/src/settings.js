@@ -55,12 +55,14 @@ function initSettings() {
           <div class="settings-field">
             <label for="whisper-model-select">Whisper Model</label>
             <select id="whisper-model-select" class="settings-input">
-              <option value="tiny">tiny (39 MB, fastest, low quality)</option>
-              <option value="base">base (74 MB, fast, basic)</option>
-              <option value="small">small (244 MB, English-friendly)</option>
-              <option value="medium">medium (769 MB, multilingual sweet spot)</option>
-              <option value="large-v3-turbo">large-v3-turbo (1.5 GB, best quality)</option>
-              <option value="large-v3">large-v3 (3 GB, GPU recommended)</option>
+              <!-- Sizes reflect faster-whisper CT2-converted artifacts on disk,
+                   not the original OpenAI PT sizes which are smaller. -->
+              <option value="tiny">tiny (75 MB, fastest, low quality)</option>
+              <option value="base">base (145 MB, fast, basic)</option>
+              <option value="small">small (466 MB, English-friendly)</option>
+              <option value="medium">medium (1.5 GB, multilingual sweet spot)</option>
+              <option value="large-v3-turbo">large-v3-turbo (1.6 GB, best quality)</option>
+              <option value="large-v3">large-v3 (3.1 GB, GPU recommended)</option>
             </select>
             <div class="settings-help" id="whisper-help"></div>
             <div class="provider-form-actions" style="justify-content: flex-start;">
@@ -68,6 +70,15 @@ function initSettings() {
               <button id="whisper-preload-btn" class="btn btn-secondary btn-small">Set &amp; preload now</button>
             </div>
             <div id="whisper-apply-status" class="test-result hidden"></div>
+            <div id="whisper-download-progress" class="whisper-progress hidden">
+              <div class="whisper-progress-label">
+                <span id="whisper-progress-model">model</span>
+                <span id="whisper-progress-text">0 / 0 MB</span>
+              </div>
+              <div class="whisper-progress-bar">
+                <div class="whisper-progress-fill" id="whisper-progress-fill" style="width: 0%"></div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -337,8 +348,76 @@ async function _loadWhisperModel() {
 
 function _onWhisperChange(e) {
   _whisperModel = e.target.value;
-  // Re-fetch status so the help text + button label update with the new selection.
-  _loadWhisperModel();
+  // Update help text + button label LOCALLY only. Previously this called
+  // _loadWhisperModel() which re-fetched /api/whisper/status and used the
+  // response's still-unchanged active_model to set sel.value, snapping the
+  // dropdown back to whatever the server last persisted. That made it
+  // impossible to actually pick a new model — every selection reverted to
+  // 'medium' (or whatever was active) within milliseconds.
+  _updateWhisperHelp();
+  _updateWhisperApplyButton();
+}
+
+/**
+ * Render Whisper download progress in the Settings panel.
+ *
+ * Called by main.js when the backend broadcasts `whisper_download_progress`
+ * over the WebSocket. Each event carries:
+ *   { status: 'started'|'downloading'|'complete'|'failed',
+ *     model: string,
+ *     downloaded_mb: number, total_mb: number, percent: number,
+ *     error?: string }
+ *
+ * The progress bar element lives inside the Settings panel HTML and stays
+ * hidden until the first event arrives. On 'complete' or 'failed' we hide
+ * it again after a short delay so the user can see the final state.
+ */
+export function onWhisperDownloadProgress(payload) {
+  if (!payload || typeof payload !== 'object') return;
+  const bar = document.querySelector('#whisper-download-progress');
+  if (!bar) return;  // settings panel not currently mounted — ignore
+
+  const fill = document.querySelector('#whisper-progress-fill');
+  const text = document.querySelector('#whisper-progress-text');
+  const modelLabel = document.querySelector('#whisper-progress-model');
+  const status = payload.status || 'downloading';
+
+  if (status === 'failed') {
+    bar.classList.add('whisper-progress-failed');
+    if (text) text.textContent = 'Failed: ' + (payload.error || 'unknown error');
+    // Auto-hide after 8 s so the user has time to read the error.
+    setTimeout(() => bar.classList.add('hidden'), 8000);
+    return;
+  }
+
+  bar.classList.remove('hidden');
+  bar.classList.remove('whisper-progress-failed');
+  if (modelLabel) modelLabel.textContent = payload.model || 'model';
+
+  const pct = Math.min(100, Math.max(0, Number(payload.percent) || 0));
+  if (fill) fill.style.width = pct.toFixed(1) + '%';
+
+  if (status === 'complete') {
+    if (text) text.textContent = `${payload.total_mb} MB — done`;
+    if (fill) fill.style.width = '100%';
+    // Hold the bar at 100% briefly so it doesn't vanish mid-click.
+    setTimeout(() => bar.classList.add('hidden'), 2500);
+  } else {
+    const dl = Number(payload.downloaded_mb) || 0;
+    const total = Number(payload.total_mb) || 0;
+    if (text) text.textContent = `${dl.toFixed(1)} / ${total} MB (${pct.toFixed(1)}%)`;
+  }
+}
+
+/** Local re-render of the "Set & install / Set & preload" button label. */
+function _updateWhisperApplyButton() {
+  const applyBtn = $('#whisper-apply-btn');
+  if (!applyBtn) return;
+  // Find the catalog entry for the current selection from the rendered
+  // dropdown options (already labeled with '✓ installed' or '~XXX MB download').
+  const selectedOption = $('#whisper-model-select')?.selectedOptions?.[0];
+  const isInstalled = selectedOption && selectedOption.textContent.includes('✓ installed');
+  applyBtn.textContent = isInstalled ? 'Set as active' : 'Set & install on next use';
 }
 
 function _updateWhisperHelp() {

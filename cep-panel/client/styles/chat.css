@@ -948,6 +948,47 @@ select.settings-input {
   border: 1px solid #5a2d2d;
 }
 
+/* Whisper download progress bar.  Mounted inside the Whisper section of the
+ * Settings panel; visibility toggled by settings.js based on WS events. */
+.whisper-progress {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 4px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border, #333);
+  font-size: 12px;
+}
+.whisper-progress.hidden { display: none; }
+.whisper-progress-label {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  color: var(--text-dim);
+}
+.whisper-progress-label #whisper-progress-model {
+  font-weight: 600;
+  color: var(--text);
+}
+.whisper-progress-bar {
+  height: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.whisper-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent, #6aa1ff), var(--accent-hover, #5a91ef));
+  width: 0%;
+  transition: width 0.4s ease-out;
+  border-radius: 4px;
+}
+.whisper-progress.whisper-progress-failed .whisper-progress-fill {
+  background: #c94c4c;
+}
+.whisper-progress.whisper-progress-failed {
+  border-color: #5a2d2d;
+}
+
 .backend-status {
   margin-left: 10px;
   font-size: 12px;

@@ -4,7 +4,7 @@
  * Initializes all modules, wires up DOM events, and starts the app.
  * This file owns no business logic — it delegates to the modules.
  */
-const BUILD_TAG = 'f030e6c-2';  // bump when shipping a fix; visible in header
+const BUILD_TAG = 'whisper-ui-3';  // bump when shipping a fix; visible in header
 
 // FIRST thing on parse: clear the inline boot-check banner. If the user sees
 // the banner disappear, we KNOW main.js parsed successfully and modules are
@@ -31,7 +31,7 @@ import { attachAutocomplete } from './autocomplete.js';
 import { setupDropZone, setupSelectionChip, stopSelectionPoll } from './dnd.js';
 import { pickScriptFile } from './upload.js';
 import { initDiagnostics } from './diagnostics.js';
-import { initSettings, openSettings } from './settings.js';
+import { initSettings, openSettings, onWhisperDownloadProgress } from './settings.js';
 // Feature flag: agent mode vs. legacy orchestrator
 const AGENT_MODE = localStorage.getItem('editflow_agent_mode') === 'on';
 
@@ -280,6 +280,16 @@ function _initWebSocket() {
             onWsProgress(data.payload || data);
           }
         } catch (_) { /* ignore */ }
+      }
+      // Whisper download progress — routed to the Settings panel's progress bar.
+      // settings.js handles the case where the panel isn't currently mounted
+      // (no-op early return), so this is safe to dispatch unconditionally.
+      if (data && data.type === 'whisper_download_progress') {
+        try {
+          onWhisperDownloadProgress(data.payload || data);
+        } catch (e) {
+          console.warn('[ws] whisper_download_progress handler threw:', e);
+        }
       }
       if (data && data.type === 'chat_response') {
         console.log('[ws] Chat response:', data);
