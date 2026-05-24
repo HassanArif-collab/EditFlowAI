@@ -269,7 +269,14 @@ async def transcribe_clips_tool(args: dict, ws_emit: Callable, session: Any = No
             results.append({"path": p, "error": err_msg})
         else:
             try:
-                progress = ProgressReporter("transcribe", client_id=client_id)
+                # task_type must be keyword. The first positional arg is task_id.
+                # Passing 'transcribe' positionally set task_id='transcribe' and
+                # left task_type at the default 'generic' — every progress event
+                # came through with task_type='generic' and the panel's regex
+                # filter (/transcribe/i.test(msgType)) silently dropped them.
+                # That's why the chat card sat at 'Starting...' for the whole
+                # transcription. Every other route does this correctly.
+                progress = ProgressReporter(task_type="transcribe", client_id=client_id)
                 tr = await whisper_service.transcribe_fingerprinted(
                     source_path=p,
                     language=None,
