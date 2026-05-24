@@ -208,22 +208,45 @@ async def transcribe_clips_tool(args: dict, ws_emit: Callable, session: Any = No
 
     results = []
     for i, p in enumerate(paths):
-        try:
-            progress = ProgressReporter("transcribe", client_id=client_id)
-            tr = await whisper_service.transcribe_fingerprinted(
-                source_path=p,
-                language=None,
-                progress=progress,
-            )
-            results.append({
-                "path": p,
-                "duration": round(tr.duration, 1),
-                "language": tr.language,
-                "segments": len(tr.segments),
-                "fingerprint": tr.content_hash,
-            })
-        except Exception as e:
-            results.append({"path": p, "error": str(e)})
+        # Pre-check the file exists on disk before calling Whisper.
+        # Premiere's ExtendScript scan can hand back paths that look real but
+        # aren't filesystem-resolvable (network drives that aren't mounted,
+        # offline media, paths with stale drive letters, etc.). Catching this
+        # upfront produces a much clearer error than a deep-stack FileNotFoundError
+        # from compute_file_fingerprint() that was previously being swallowed
+        # silently in this same except block.
+        if not p or not Path(p).is_file():
+            err_msg = f"Source file not found on disk: {p!r}"
+            logger.error(f"transcribe_clips: {err_msg}")
+            results.append({"path": p, "error": err_msg})
+        else:
+            try:
+                progress = ProgressReporter("transcribe", client_id=client_id)
+                tr = await whisper_service.transcribe_fingerprinted(
+                    source_path=p,
+                    language=None,
+                    progress=progress,
+                )
+                results.append({
+                    "path": p,
+                    "duration": round(tr.duration, 1),
+                    "language": tr.language,
+                    "segments": len(tr.segments),
+                    "fingerprint": tr.content_hash,
+                })
+            except Exception as e:
+                # Log the FULL exception (with traceback) so we can diagnose
+                # what actually broke. Previously we just stored str(e) in the
+                # result dict — the agent paraphrased it as "I encountered an
+                # error" and the real cause vanished. Now both the user (via
+                # the result envelope) AND the backend log get the truth.
+                logger.exception(
+                    f"transcribe_clips: Whisper failed for {p!r}"
+                )
+                results.append({
+                    "path": p,
+                    "error": f"{e.__class__.__name__}: {e}",
+                })
 
         await ws_emit({
             "type": "agent_tool",
