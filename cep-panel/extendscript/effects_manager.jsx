@@ -25,7 +25,8 @@ effectsManager = (function() {
                     var t = transitions[i];
                     // Set duration if specified
                     if (duration) {
-                        try { t.setDuration(editflowUtils.secondsToTicks(duration)); } catch (e) {}
+                        // setDuration expects a tick STRING, not a raw number
+                        try { t.setDuration(editflowUtils.secondsToTicksString(duration)); } catch (e) {}
                     }
                 }
             }
