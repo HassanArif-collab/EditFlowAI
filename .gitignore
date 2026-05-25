@@ -27,6 +27,10 @@ data/catalogs/
 data/provider_config.json
 data/provider_config.tmp
 data/output/
+data/llm_handoff/
+data/hf-cache/
+data/plans/
+data/transcripts/
 logs/
 *.log
 *.sqlite3-shm

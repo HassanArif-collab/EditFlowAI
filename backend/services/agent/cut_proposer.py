@@ -10,6 +10,7 @@ plan_store, provider_service.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
@@ -18,6 +19,115 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+
+# ── External-LLM file handoff ─────────────────────────────────────────────
+
+
+async def _external_llm_chat(prompt_text: str) -> str:
+    """File-based LLM handoff for testing without an API key.
+
+    Writes the prompt to data/llm_handoff/cut_proposer.prompt.txt, then
+    polls data/llm_handoff/cut_proposer.response.json every few seconds
+    until the user (acting as the LLM) drops a response there.  Returns
+    the raw response text; the existing _parse_llm_selection downstream
+    handles the JSON.
+
+    Does NOT touch provider_service.  Toggled by settings.USE_EXTERNAL_LLM.
+    """
+    from ...config import get_settings
+
+    settings = get_settings()
+    handoff_dir = Path(settings.MEDIA_CACHE_DIR).parent / "llm_handoff"
+    handoff_dir.mkdir(parents=True, exist_ok=True)
+    prompt_path = handoff_dir / "cut_proposer.prompt.txt"
+    response_path = handoff_dir / "cut_proposer.response.json"
+
+    # Clear any stale response file from a previous Build so we don't
+    # immediately pick up an old result.
+    if response_path.exists():
+        try:
+            response_path.unlink()
+        except OSError as e:
+            logger.warning(f"Could not delete stale response file: {e}")
+
+    # Write the prompt with an instructions header at the top.  The body
+    # below is the exact prompt the LLM would have received via provider_service.
+    header = (
+        "================================================================\n"
+        " EXTERNAL LLM MODE — backend is waiting for your response.\n"
+        "\n"
+        " 1. Paste the full prompt below (starting from '=== PROMPT ===')\n"
+        "    into Claude (or another frontier LLM).\n"
+        " 2. Save the model's JSON response — just the {\"selections\": [...]}\n"
+        "    object — to this file:\n"
+        f"      {response_path}\n"
+        " 3. The backend polls every few seconds; it will pick up the file\n"
+        "    automatically.  No /continue command needed.\n"
+        f" Timeout: {settings.EXTERNAL_LLM_TIMEOUT_SEC // 60} minutes.\n"
+        "================================================================\n"
+        "\n=== PROMPT ===\n\n"
+    )
+    prompt_path.write_text(header + prompt_text, encoding="utf-8")
+
+    # Loud terminal banner — the user has the backend log open, this is
+    # the most reliable place to tell them what to do.
+    banner = (
+        "\n"
+        + "=" * 70 + "\n"
+        + "  EXTERNAL LLM MODE — propose_cuts is waiting on you.\n"
+        + "=" * 70 + "\n"
+        + f"  Prompt file:    {prompt_path}\n"
+        + f"  Response file:  {response_path}\n"
+        + f"  Polling every:  {settings.EXTERNAL_LLM_POLL_INTERVAL_SEC}s\n"
+        + f"  Timeout:        {settings.EXTERNAL_LLM_TIMEOUT_SEC // 60} minutes\n"
+        + "=" * 70 + "\n"
+    )
+    print(banner, flush=True)
+    logger.info(
+        "propose_cuts: external LLM mode — waiting on %s", response_path
+    )
+
+    # Poll for the response file
+    waited = 0
+    timeout = settings.EXTERNAL_LLM_TIMEOUT_SEC
+    interval = settings.EXTERNAL_LLM_POLL_INTERVAL_SEC
+
+    while waited < timeout:
+        if response_path.exists():
+            try:
+                content = response_path.read_text(encoding="utf-8").strip()
+                if content:
+                    # Sanity-check it parses as JSON before trusting it.
+                    json.loads(content)
+                    # Clean up both files
+                    for p in (prompt_path, response_path):
+                        try:
+                            p.unlink()
+                        except OSError:
+                            pass
+                    logger.info(
+                        "propose_cuts: external LLM response received (%d bytes)",
+                        len(content),
+                    )
+                    return content
+            except json.JSONDecodeError as e:
+                # File present but malformed — log once and keep polling so
+                # the user can fix and re-save.
+                logger.warning(
+                    "propose_cuts: response file exists but is not valid JSON "
+                    "(%s); waiting for a corrected version", e
+                )
+            except OSError as e:
+                logger.warning("propose_cuts: response file read failed: %s", e)
+        await asyncio.sleep(interval)
+        waited += interval
+
+    raise TimeoutError(
+        f"External LLM mode timed out after {timeout}s. "
+        f"Expected response at {response_path}. "
+        f"Set EDITFLOW_USE_EXTERNAL_LLM=false to use the local model instead."
+    )
 
 
 # ── Retake detection helpers ──────────────────────────────────────────────
@@ -382,13 +492,20 @@ async def propose_cuts(
 
     # 4. Ask the LLM to pick takes
     prompt_text = _build_selection_prompt(takes_desc, retake_clusters, instruction, hint)
-    raw = await provider_service.chat(
-        messages=[{"role": "user", "content": prompt_text}],
-        temperature=0.0,
-        max_tokens=1024,
-    )
 
-    raw_response = raw.get("response") or ""
+    # Two paths: file-based handoff (default while no API key) or provider_service.
+    from ...config import get_settings as _get_cfg
+    _cfg = _get_cfg()
+    if getattr(_cfg, "USE_EXTERNAL_LLM", False):
+        raw_response = await _external_llm_chat(prompt_text)
+    else:
+        raw = await provider_service.chat(
+            messages=[{"role": "user", "content": prompt_text}],
+            temperature=0.0,
+            max_tokens=1024,
+        )
+        raw_response = raw.get("response") or ""
+
     selected_takes = _parse_llm_selection(raw_response, len(all_takes))
 
     if not selected_takes:
