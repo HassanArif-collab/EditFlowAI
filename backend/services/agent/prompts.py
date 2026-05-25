@@ -70,11 +70,16 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
     },
     {
         "name": "get_transcript",
-        "description": "Get the transcript for a specific clip. Returns truncated text; the full transcript stays in session state.",
+        "description": "Get the transcript text + sidecar file path for a specific clip. The sidecar path points to a {stem}.transcript.json file next to the source video that the user can open in any editor and copy into an external LLM. Use this when the user asks for a transcript, its location, or its file path.",
         "args": {
-            "clip_path": {"type": "string", "description": "Path to the clip"},
-            "max_chars": {"type": "integer", "description": "Max characters to return (default 2000)", "default": 2000},
+            "clip_path": {"type": "string", "description": "Path to the clip (bare filename like 'IMG_1694.MOV' is also accepted; auto-resolved against the session's clip list)"},
+            "max_chars": {"type": "integer", "description": "Max characters to return in the inline preview (default 2000)", "default": 2000},
         },
+    },
+    {
+        "name": "list_transcript_paths",
+        "description": "List the sidecar file paths for EVERY transcribed clip in the current session. Use this when the user asks 'where are my transcripts', 'show me all transcript files', or wants to copy them into an external LLM (Option B workflow). Takes no arguments.",
+        "args": {},
     },
     {
         "name": "read_document",

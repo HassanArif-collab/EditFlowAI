@@ -282,12 +282,18 @@ async def transcribe_clips_tool(args: dict, ws_emit: Callable, session: Any = No
                     language=None,
                     progress=progress,
                 )
+                # Compute sidecar path so the chat can show it.  Matches the
+                # logic in whisper_service._save_transcript_cache.
+                src_path = Path(p)
+                sidecar = src_path.with_name(src_path.stem + ".transcript.json")
                 results.append({
                     "path": p,
                     "duration": round(tr.duration, 1),
                     "language": tr.language,
                     "segments": len(tr.segments),
                     "fingerprint": tr.content_hash,
+                    "sidecar_path": str(sidecar),
+                    "sidecar_exists": sidecar.is_file(),
                 })
             except Exception as e:
                 # Log the FULL exception (with traceback) so we can diagnose
@@ -328,25 +334,44 @@ async def transcribe_clips_tool(args: dict, ws_emit: Callable, session: Any = No
 
 
 def _make_transcribe_summary(results: list) -> str:
-    """Build a short summary of transcription results."""
+    """Build a multi-line summary of transcription results.
+
+    Each successful clip lists its sidecar path so the user can open the
+    full transcript JSON in any text editor (Option B workflow — copy into
+    an external LLM, get back a clean script, paste into the panel chat).
+    """
     ok = [r for r in results if "error" not in r]
     fail = [r for r in results if "error" in r]
-    parts = [f"Transcribed {len(ok)} clip(s)."]
+    lines = [f"Transcribed {len(ok)} clip(s)."]
     for r in ok[:5]:
         dur = r.get("duration", 0)
         lang = r.get("language", "?")
         name = Path(r["path"]).name
-        parts.append(f"{name} ({dur}s, {lang})")
+        line = f"  • {name} ({dur}s, {lang})"
+        sidecar = r.get("sidecar_path")
+        if sidecar and r.get("sidecar_exists"):
+            line += f"\n    transcript file: {sidecar}"
+        lines.append(line)
     if fail:
-        parts.append(f"{len(fail)} clip(s) failed.")
-    return " ".join(parts)[:600]
+        lines.append(f"{len(fail)} clip(s) failed.")
+    return "\n".join(lines)[:1200]
 
 
 # ── Tool: get_transcript ───────────────────────────────────────
 
 async def get_transcript_tool(args: dict, ws_emit: Callable, session: Any = None) -> dict:
-    """Get transcript text for a clip (reads from cache)."""
+    """Get transcript text for a clip (reads from cache).
+
+    Also returns the sidecar file path (<stem>.transcript.json next to the
+    source video) so the user can open the full transcript in any text editor
+    and copy it into an external LLM.  See Option B workflow.
+    """
     clip_path = args.get("clip_path", "")
+    # Auto-recover bare filenames the LLM may have truncated (same defect
+    # class as transcribe_clips). Lets the user ask "show me the transcript
+    # for IMG_1694.MOV" without giving the full path.
+    if clip_path:
+        clip_path = _recover_clip_path(clip_path, session)
     max_chars = args.get("max_chars", 2000)
 
     if not clip_path:
@@ -356,6 +381,14 @@ async def get_transcript_tool(args: dict, ws_emit: Callable, session: Any = None
             summary="clip_path is required.",
             error="Missing clip_path",
         )
+
+    # Compute the sidecar path the user can copy from.  This mirrors the
+    # path used by whisper_service._save_transcript_cache so the two always
+    # agree.  We don't require the file to exist (it may not on read-only
+    # volumes); we just report whether it does.
+    src_path = Path(clip_path)
+    sidecar_path = src_path.with_name(src_path.stem + ".transcript.json")
+    sidecar_exists = sidecar_path.is_file()
 
     try:
         from ...services.whisper_service import whisper_service
@@ -371,12 +404,28 @@ async def get_transcript_tool(args: dict, ws_emit: Callable, session: Any = None
         if len(text) > max_chars:
             truncated += f"...(truncated; {len(tr.segments)} segments, {total_words} words total)"
 
+        # Lead the summary with the file path so the user sees where to copy
+        # from at a glance.  The first 200 chars of text follow for context.
+        path_hint = (
+            f"Full transcript file: {sidecar_path}" if sidecar_exists
+            else f"Sidecar not on disk (would be at: {sidecar_path})"
+        )
+        summary = (
+            f"Transcript for {src_path.name} "
+            f"({total_words} words, {tr.language}, {tr.duration:.1f}s).\n"
+            f"{path_hint}\n"
+            f"Preview: {truncated[:200]}"
+            + ("..." if len(text) > 200 else "")
+        )
+
         return _envelope(
             tool="get_transcript",
             success=True,
-            summary=f"Transcript for {Path(clip_path).name}: {truncated[:200]}...",
+            summary=summary,
             data={
                 "clip_path": clip_path,
+                "sidecar_path": str(sidecar_path),
+                "sidecar_exists": sidecar_exists,
                 "text": truncated,
                 "full_length": len(text),
                 "duration": tr.duration,
@@ -389,9 +438,56 @@ async def get_transcript_tool(args: dict, ws_emit: Callable, session: Any = None
         return _envelope(
             tool="get_transcript",
             success=False,
-            summary=f"Transcript not available for {Path(clip_path).name}: {e}",
+            summary=f"Transcript not available for {src_path.name}: {e}",
             error=str(e),
+            data={"sidecar_path": str(sidecar_path), "sidecar_exists": sidecar_exists},
         )
+
+
+# ── Tool: list_transcript_paths ───────────────────────────────
+
+async def list_transcript_paths_tool(args: dict, ws_emit: Callable, session: Any = None) -> dict:
+    """List the sidecar file paths for every transcribed clip in this session.
+
+    Used when the user asks "where are my transcripts" or wants to copy them
+    into an external LLM (Option B workflow).  Returns the absolute path of
+    each <stem>.transcript.json sidecar next to the source video, along with
+    whether the file actually exists on disk.
+    """
+    transcripts_ready = (getattr(session, "context", {}) or {}).get("transcripts_ready") or {}
+    if not transcripts_ready:
+        return _envelope(
+            tool="list_transcript_paths",
+            success=True,
+            summary="No transcripts in this session yet. Transcribe some clips first.",
+            data={"transcripts": []},
+        )
+
+    items = []
+    for clip_path in transcripts_ready.keys():
+        src = Path(clip_path)
+        sidecar = src.with_name(src.stem + ".transcript.json")
+        items.append({
+            "clip_name": src.name,
+            "clip_path": clip_path,
+            "sidecar_path": str(sidecar),
+            "sidecar_exists": sidecar.is_file(),
+        })
+
+    # Build a multi-line summary that prominently lists each path
+    on_disk = [i for i in items if i["sidecar_exists"]]
+    lines = [f"{len(on_disk)} transcript file(s) available:"]
+    for i in items:
+        marker = "✓" if i["sidecar_exists"] else "✗ (missing)"
+        lines.append(f"  {marker}  {i['sidecar_path']}")
+    summary = "\n".join(lines)
+
+    return _envelope(
+        tool="list_transcript_paths",
+        success=True,
+        summary=summary,
+        data={"transcripts": items, "count": len(items), "on_disk_count": len(on_disk)},
+    )
 
 
 # ── Tool: read_document ────────────────────────────────────────
@@ -877,6 +973,7 @@ TOOLS: Dict[str, Callable] = {
     "resolve_clips_in_bin": resolve_clips_in_bin_tool,
     "transcribe_clips": transcribe_clips_tool,
     "get_transcript": get_transcript_tool,
+    "list_transcript_paths": list_transcript_paths_tool,
     "read_document": read_document_tool,
     "match_script_to_transcripts": match_script_to_transcripts_tool,
     "propose_cuts_from_transcripts": propose_cuts_from_transcripts_tool,
