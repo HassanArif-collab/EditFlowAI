@@ -36,11 +36,15 @@ def _cosine_sim(a: List[float], b: List[float]) -> float:
     return dot / (na * nb)
 
 
-def _compute_retake_pairs(takes: List[Any], threshold: float = 0.80) -> List[Dict]:
+def _compute_retake_pairs(takes: List[Any], threshold: float = 0.60) -> List[Dict]:
     """Find pairs of takes whose embeddings are similar enough to be retakes.
 
     Returns a list of {"take_a": i, "take_b": j, "similarity": float} dicts
     with i < j.  Takes without an embedding are silently skipped.
+
+    Threshold 0.60 (down from earlier 0.80) — verbal retakes of the same
+    sentence with slightly different surface words land at 0.60-0.78 cosine.
+    Empirically observed on Urdu rephrasings; 0.80 missed nearly all retakes.
     """
     pairs: List[Dict] = []
     n = len(takes)
@@ -60,6 +64,51 @@ def _compute_retake_pairs(takes: List[Any], threshold: float = 0.80) -> List[Dic
                     "similarity": round(sim, 3),
                 })
     return pairs
+
+
+def _cluster_retakes(pairs: List[Dict], num_takes: int) -> List[List[int]]:
+    """Group retake pairs into transitive clusters.
+
+    If pair (A,B) and pair (B,C) both exist, return a single cluster {A,B,C}
+    so the LLM sees one decision per cluster ("pick one of these N retakes")
+    rather than independent pairs.
+
+    Returns a list of clusters, each cluster a sorted list of take indices
+    with >= 2 members.  Takes not in any pair don't appear.
+    """
+    parent = list(range(num_takes))
+
+    def find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(x: int, y: int) -> None:
+        rx, ry = find(x), find(y)
+        if rx != ry:
+            parent[rx] = ry
+
+    for p in pairs:
+        union(int(p["take_a"]), int(p["take_b"]))
+
+    buckets: Dict[int, List[int]] = {}
+    seen = set()
+    for p in pairs:
+        for idx in (int(p["take_a"]), int(p["take_b"])):
+            if idx in seen:
+                continue
+            seen.add(idx)
+            root = find(idx)
+            buckets.setdefault(root, []).append(idx)
+
+    return [sorted(b) for b in buckets.values() if len(b) >= 2]
+
+
+# Junk-take filter thresholds (drop before LLM sees them)
+_MIN_TAKE_SEC = 3.0      # drop sub-3-second takes (usually trail-offs)
+_MIN_TAKE_WORDS = 8      # drop takes with fewer than 8 spoken words
+_MAX_FILLER_RATIO = 0.45  # drop takes that are mostly filler words
 
 
 async def propose_cuts(
@@ -130,12 +179,26 @@ async def propose_cuts(
 
     logger.info(f"propose_cuts: {len(all_takes)} takes extracted from {len(transcripts)} clip(s)")
 
-    # 3. Build takes description for the LLM
+    # 3. Build takes description for the LLM — pre-filter junk takes so the
+    # model isn't tempted to pick obvious fragments / trail-offs / fillers.
     takes_desc = []
+    dropped: List[tuple] = []
     for i, take in enumerate(all_takes):
         q = take.quality or {}
-        # Prefer clean_text (fillers + false starts stripped) if available, but
-        # cap to keep the prompt manageable for small local LLMs.
+        duration = float(take.duration or 0.0)
+        word_count = int(take.word_count or 0)
+        filler_ratio = float(q.get("filler_ratio", 0.0))
+
+        if duration < _MIN_TAKE_SEC:
+            dropped.append((i, f"too short ({duration:.1f}s)"))
+            continue
+        if word_count < _MIN_TAKE_WORDS:
+            dropped.append((i, f"too few words ({word_count})"))
+            continue
+        if filler_ratio > _MAX_FILLER_RATIO:
+            dropped.append((i, f"filler-heavy ({filler_ratio:.0%})"))
+            continue
+
         full_text = (take.clean_text or take.text or "").strip()
         if len(full_text) > 1500:
             full_text = full_text[:1500] + "... [truncated]"
@@ -145,24 +208,32 @@ async def propose_cuts(
             "source_start_sec": round(take.source_start, 1),
             "duration_sec": round(take.duration, 1),
             "text": full_text or "(no text)",
-            # Quality signals from take_segmenter — empty dict if unavailable
             "false_starts": q.get("false_starts", 0),
-            "filler_ratio": round(q.get("filler_ratio", 0.0), 2),
+            "filler_ratio": round(filler_ratio, 2),
             "wpm": round(q.get("wpm", 0.0), 1),
             "quality_score": round(q.get("score", 0.0), 2),
         })
 
-    # Compute cosine similarity between all take pairs using the eager embeddings
-    # that take_segmenter already produced. Pairs with similarity >= 0.80 are
-    # almost certainly retakes of the same content.
-    similarity_pairs = _compute_retake_pairs(all_takes, threshold=0.80)
+    if dropped:
+        logger.info(
+            f"propose_cuts: dropped {len(dropped)} junk take(s): "
+            + "; ".join(f"#{i}={reason}" for i, reason in dropped[:10])
+            + (f"; +{len(dropped) - 10} more" if len(dropped) > 10 else "")
+        )
+
+    # Compute retake similarity pairs across ALL takes (including dropped ones,
+    # so a junk-filtered take can still cluster with a substantive retake of it).
+    # Threshold 0.60 catches verbal rephrasings that 0.80 missed.
+    similarity_pairs = _compute_retake_pairs(all_takes, threshold=0.60)
+    retake_clusters = _cluster_retakes(similarity_pairs, len(all_takes))
     logger.info(
-        f"propose_cuts: {len(similarity_pairs)} retake pair(s) detected "
-        f"(similarity >= 0.80) across {len(all_takes)} takes"
+        f"propose_cuts: {len(similarity_pairs)} retake pair(s), "
+        f"{len(retake_clusters)} cluster(s) of size >= 2 "
+        f"across {len(all_takes)} takes (threshold 0.60)"
     )
 
     # 4. Ask the LLM to pick takes
-    prompt_text = _build_selection_prompt(takes_desc, similarity_pairs, instruction, hint)
+    prompt_text = _build_selection_prompt(takes_desc, retake_clusters, instruction, hint)
     raw = await provider_service.chat(
         messages=[{"role": "user", "content": prompt_text}],
         temperature=0.0,
@@ -249,58 +320,72 @@ async def propose_cuts(
 
 def _build_selection_prompt(
     takes_desc: List[Dict],
-    similarity_pairs: List[Dict],
+    retake_clusters: List[List[int]],
     instruction: str,
     hint: Optional[str],
 ) -> str:
     """Build the LLM prompt for take selection.
 
-    Now passes full take text, per-take quality metrics, and a list of
-    likely retake pairs (computed from embedding similarity).  The prompt
-    instructs the model to prefer later/cleaner takes when a retake is
-    detected, and to skip filler-heavy / false-start takes outright.
+    Passes full take text, per-take quality metrics, and a list of retake
+    CLUSTERS (transitively merged similarity pairs).  Instructs the model to
+    pick exactly ONE take per cluster and to prefer substance over short
+    transitional phrases.
     """
-    takes_json = json.dumps(takes_desc[:50], indent=2)  # cap at 50 takes
-    sim_json = json.dumps(similarity_pairs[:80], indent=2)  # cap noise
+    takes_json = json.dumps(takes_desc[:50], indent=2)
+    clusters_json = json.dumps(retake_clusters[:30], indent=2)
     hint_section = f"\nAdditional hint: {hint}" if hint else ""
 
-    return f"""You are an expert video editor.  Below is a list of takes from one or more video clips, with their full transcribed text and quality metrics.
+    return f"""You are an expert video editor selecting takes for the final cut.
 
 User's instruction: {instruction}{hint_section}
 
-For each take you see:
-- text          : the full transcribed words spoken in that take
-- source_start_sec : when this take starts within its source clip (seconds)
-- duration_sec  : how long the take is
-- false_starts  : count of detected false starts (lower is better)
-- filler_ratio  : 0.0-1.0 fraction of filler words (lower is better)
-- wpm           : words per minute of delivery (higher is usually more polished)
-- quality_score : 0.0-1.0 overall quality (higher is better)
+You receive a list of TAKES (segments of spoken content) and a list of
+RETAKE_CLUSTERS (groups of takes that say roughly the same thing).
 
-SOME TAKES ARE RETAKES OF THE SAME CONTENT.  The similarity_pairs list at the bottom shows pairs of takes whose embeddings are >= 0.80 cosine similar — those are almost certainly two attempts at the same line.
+Each take has:
+  - text             : full transcribed words spoken
+  - source_start_sec : when it starts within its source clip
+  - duration_sec     : how long the take is
+  - false_starts     : count of detected false starts (lower is better)
+  - filler_ratio     : 0-1 fraction of fillers (lower is better)
+  - wpm              : delivery pace
+  - quality_score    : 0-1 overall (higher is better)
 
-RULES — apply in order:
-1. RETAKES: For each pair in similarity_pairs, NEVER include both takes.  Prefer the one with HIGHER take_index (speakers usually improve on retry).  If quality_score differs by more than 0.2, override and pick the higher quality_score.
-2. QUALITY: Among non-retake takes covering distinct topics, prefer takes with low false_starts, low filler_ratio, and higher quality_score.
-3. SKIP: Drop any take that is purely a false start ("matlab... nahin... aisa..."), dead air, or fillers only.
-4. ORDER: Output selections in chronological order of source_start_sec, so the final cut plays as natural narrative.
-5. LENGTH: Don't pad — if only 3 takes are good, return 3, not 7.
+HARD RULES — follow strictly:
 
-Takes:
+1. RETAKE CLUSTERS.  For EVERY cluster in retake_clusters, pick EXACTLY ONE
+   take from that cluster — never two, never three.  Prefer the take with
+   the HIGHEST take_index in the cluster (speakers usually improve on retry).
+   If quality_score differs by more than 0.2 within a cluster, override and
+   pick the higher quality_score.
+
+2. SUBSTANCE OVER TRANSITIONS.  Prefer takes that express a FULL THOUGHT
+   over short transitional phrases.  A 12-second take with a complete
+   argument is almost always better than a 3-second take that just says
+   "and then" or "so now".  Lean toward duration_sec >= 5.
+
+3. SKIP FRAGMENTS.  Drop takes that read like trail-offs, false starts,
+   or partial sentences cut off mid-thought.  Skip pure fillers / dead air.
+
+4. CHRONOLOGICAL ORDER.  Output selections in ascending source_start_sec
+   so the final cut plays as natural narrative flow.
+
+5. DON'T PAD.  If only 3 takes are substantive, return 3, not 7.
+   Padding with weak takes is the #1 reason cuts feel random.
+
+TAKES:
 {takes_json}
 
-Similarity pairs (likely retakes, >= 0.80 cosine):
-{sim_json}
+RETAKE_CLUSTERS (pick exactly ONE take from each cluster):
+{clusters_json}
 
-Return a JSON object with this exact format:
+Return JSON in EXACTLY this format and nothing else:
 {{
   "selections": [
-    {{"take_index": 0, "beat_text": "short English description of this beat", "rationale": "why this take"}},
-    {{"take_index": 3, "beat_text": "...", "rationale": "..."}}
+    {{"take_index": <int>, "beat_text": "5-15 word English description", "rationale": "<one sentence>"}},
+    ...
   ]
 }}
-
-Each beat_text: 5-15 words, in English even if the source is non-English.
 """
 
 

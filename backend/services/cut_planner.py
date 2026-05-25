@@ -491,15 +491,28 @@ def plan_to_edl_ops(plan: Plan, target_seq_name: str) -> list[dict]:
 
     # Add cuts — one op per cut using insertClip's 4-arg form
     # which places both video and audio simultaneously.
+    #
+    # Frame-align inPoint/outPoint to a 1/24-sec grid before emitting the op.
+    # PPro snaps video to frame boundaries but audio to sample boundaries;
+    # at non-frame-aligned source times this surfaces as the red sync-offset
+    # badge between V and A tracks.  1/24 is the coarsest common cinema FPS,
+    # so values aligned to it land on valid frames for 24/30/60 fps sources.
+    _SOURCE_FPS = 24.0
+
+    def _frame_align(seconds: float) -> float:
+        return round(float(seconds) * _SOURCE_FPS) / _SOURCE_FPS
+
     for cut in plan.cuts:
+        src_in_aligned = _frame_align(cut.source_in)
+        src_out_aligned = _frame_align(cut.source_out)
         ops.append({
             "action": "add",
             "mediaPath": cut.take_source_file,
             "video_track_index": 0,   # V1
             "audio_track_index": 0,   # A1
             "startTime": cut.timeline_position,
-            "inPoint": cut.source_in,
-            "outPoint": cut.source_out,
+            "inPoint": src_in_aligned,
+            "outPoint": src_out_aligned,
             "endTime": cut.timeline_position + cut.duration,
             "audio_fade_in_ms": cut.audio_fade_in_ms,
             "audio_fade_out_ms": cut.audio_fade_out_ms,

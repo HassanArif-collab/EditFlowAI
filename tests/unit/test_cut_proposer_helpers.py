@@ -6,7 +6,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from backend.services.agent.cut_proposer import _cosine_sim, _compute_retake_pairs
+from backend.services.agent.cut_proposer import (
+    _cosine_sim,
+    _compute_retake_pairs,
+    _cluster_retakes,
+)
 
 
 # ── _cosine_sim ──────────────────────────────────────────────────────────
@@ -85,3 +89,57 @@ class TestRetakePairs:
 
         for p in pairs:
             assert p["take_a"] < p["take_b"]
+
+
+# ── _cluster_retakes ──────────────────────────────────────────────────────
+
+
+class TestClusterRetakes:
+    def test_transitive_merge(self):
+        """Pairs (0,1) and (1,2) → single cluster [0,1,2]."""
+        pairs = [
+            {"take_a": 0, "take_b": 1, "similarity": 0.85},
+            {"take_a": 1, "take_b": 2, "similarity": 0.82},
+        ]
+        clusters = _cluster_retakes(pairs, num_takes=5)
+        assert len(clusters) == 1
+        assert clusters[0] == [0, 1, 2]
+
+    def test_disjoint_groups(self):
+        """Pairs (0,1) and (3,4) → two separate clusters."""
+        pairs = [
+            {"take_a": 0, "take_b": 1, "similarity": 0.9},
+            {"take_a": 3, "take_b": 4, "similarity": 0.9},
+        ]
+        clusters = _cluster_retakes(pairs, num_takes=5)
+        assert len(clusters) == 2
+        clusters_sorted = sorted(clusters, key=lambda c: c[0])
+        assert clusters_sorted[0] == [0, 1]
+        assert clusters_sorted[1] == [3, 4]
+
+    def test_no_pairs_returns_empty(self):
+        """Empty input → empty cluster list."""
+        assert _cluster_retakes([], num_takes=5) == []
+
+    def test_each_cluster_sorted(self):
+        """Each returned cluster is sorted ascending."""
+        # Build pairs out of order to stress sorting
+        pairs = [
+            {"take_a": 5, "take_b": 2, "similarity": 0.9},
+            {"take_a": 2, "take_b": 8, "similarity": 0.9},
+        ]
+        clusters = _cluster_retakes(pairs, num_takes=10)
+        assert len(clusters) == 1
+        # Must be sorted ascending regardless of pair insertion order
+        assert clusters[0] == sorted(clusters[0])
+
+    def test_chain_of_four(self):
+        """Long chain (0,1) (1,2) (2,3) → single cluster of 4."""
+        pairs = [
+            {"take_a": 0, "take_b": 1, "similarity": 0.8},
+            {"take_a": 1, "take_b": 2, "similarity": 0.8},
+            {"take_a": 2, "take_b": 3, "similarity": 0.8},
+        ]
+        clusters = _cluster_retakes(pairs, num_takes=4)
+        assert len(clusters) == 1
+        assert clusters[0] == [0, 1, 2, 3]
