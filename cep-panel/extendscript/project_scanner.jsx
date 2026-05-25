@@ -76,9 +76,20 @@ projectScanner = (function() {
             info.hasVideo = !!editflowUtils.hasVideo(item);
             info.hasAudio = !!editflowUtils.hasAudio(item);
 
-            if (item.getDuration) {
-                info.duration = editflowUtils.ticksToSeconds({ ticks: String(item.getDuration()) });
-            }
+            // ProjectItem has NO getDuration() method — confirmed by
+            // ppro-scripting.docsforadobe.dev ProjectItem reference.
+            // Calculate duration from getOutPoint() - getInPoint() instead.
+            // These return Time objects with .seconds and .ticks properties.
+            try {
+                if (typeof item.getOutPoint === 'function' && typeof item.getInPoint === 'function') {
+                    var outPt = item.getOutPoint();
+                    var inPt  = item.getInPoint();
+                    if (outPt && inPt) {
+                        var durSec = (outPt.seconds || 0) - (inPt.seconds || 0);
+                        if (durSec > 0) info.duration = durSec;
+                    }
+                }
+            } catch (e) {}
         } catch (e) {
             info.error = e.toString();
         }
@@ -137,7 +148,18 @@ function getSelectedProjectItems() {
     if (!app || !app.project || !app.project.rootItem) {
         return JSON.stringify({success: false, error: "No project open"});
     }
-    var selection = (app.project.getSelection) ? app.project.getSelection() : [];
+    // Project.getSelection() does NOT exist — only Sequence.getSelection()
+    // returns timeline clip selections. For Project panel selections, Adobe's
+    // recommended approach is the event-based app.bind("onSourceClipSelectedInProjectPanel", cb).
+    // As a fallback, return empty selection with a diagnostic flag.
+    var selection = [];
+    try {
+        // Try the sequence-level getSelection as a partial fallback
+        // (returns timeline clips, not project panel items)
+        if (app.project.activeSequence && typeof app.project.activeSequence.getSelection === 'function') {
+            // Not useful for project panel items — leave empty
+        }
+    } catch (e) {}
     var items = [];
     for (var i = 0; i < selection.length; i++) {
         var item = selection[i];
@@ -178,16 +200,28 @@ function _describeItemMinimal(item) {
     };
     try {
         info.mediaPath = item.getMediaPath ? item.getMediaPath() : "";
-        if (item.getDuration) {
-            var ticks = String(item.getDuration());
-            info.duration = parseFloat(ticks) / 254016000000; // Premiere ticks to seconds
-        }
-        // Check XMP for audio/video
-        if (item.xmpMetadata) {
-            var xmp = item.xmpMetadata;
-            info.hasAudio = xmp.indexOf("Audio") >= 0;
-            info.hasVideo = xmp.indexOf("Video") >= 0;
-        }
+        // ProjectItem has NO getDuration() method — use getOutPoint/getInPoint
+        try {
+            if (typeof item.getOutPoint === 'function' && typeof item.getInPoint === 'function') {
+                var outPt = item.getOutPoint();
+                var inPt  = item.getInPoint();
+                if (outPt && inPt) {
+                    var durSec = (outPt.seconds || 0) - (inPt.seconds || 0);
+                    if (durSec > 0) info.duration = durSec;
+                }
+            }
+        } catch (e) {}
+        // Check XMP for audio/video — must use getXMPMetadata() (method),
+        // NOT xmpMetadata (property that doesn't exist on ProjectItem).
+        try {
+            if (typeof item.getXMPMetadata === 'function') {
+                var xmp = item.getXMPMetadata();
+                if (xmp) {
+                    info.hasAudio = xmp.indexOf("Audio") >= 0;
+                    info.hasVideo = xmp.indexOf("Video") >= 0;
+                }
+            }
+        } catch (e) {}
     } catch(e) {
         info.error = e.toString();
     }

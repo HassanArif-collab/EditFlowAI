@@ -324,7 +324,7 @@ function editflowDispatch(command, payloadData) {
             try {
                 if (typeof qe !== 'undefined') {
                     for (var i = 0; i < steps; i++) {
-                        qe.project.undoAction();
+                        qe.project.undo();
                         undone++;
                     }
                 }
@@ -430,7 +430,7 @@ function undoLastAction() {
         var undone = 0;
         try {
             if (typeof qe !== 'undefined') {
-                qe.project.undoAction();
+                qe.project.undo();
                 undone = 1;
             }
         } catch (e) {}

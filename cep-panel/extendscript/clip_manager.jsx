@@ -146,11 +146,12 @@ clipManager = (function() {
             var startTicksStr = editflowUtils.secondsToTicksString(startTime);
             seq.insertClip(projectItem, startTicksStr, videoTrackIndex, audioTrackIndex);
 
-            // ── FIX-B: Post-placement direct string assignment ───────────
-            // Belt-and-suspenders with FIX-A.  The premiere-pro-mcp reference
-            // repo uses direct string assignment (no .ticks).  We try both
-            // strategies and capture before/after diagnostics so the panel can
-            // prove which one actually trims the clip.
+            // ── FIX-B: Post-placement .ticks assignment ───────────────────
+            // Belt-and-suspenders with FIX-A.  TrackItem.inPoint / .outPoint
+            // are Time objects — assign to their .ticks property (the official
+            // PProPanel pattern), not replace the object with a string.
+            // Capture before/after diagnostics so the panel can verify which
+            // strategy actually trims the clip.
             var placedClip = _findClipAtTime(seq.videoTracks[videoTrackIndex], startTime);
             var diag = {
                 found: !!placedClip,
@@ -167,10 +168,12 @@ clipManager = (function() {
                 } catch (e) {}
 
                 if (inPoint > 0) {
-                    try { placedClip.inPoint = editflowUtils.secondsToTicksString(inPoint); } catch (e) { diag.in_err = e.toString(); }
+                    // TrackItem.inPoint is a Time object — assign to .ticks, not the object itself.
+                    // PProPanel (official sample): clip.outPoint.ticks = value;
+                    try { placedClip.inPoint.ticks = editflowUtils.secondsToTicksString(inPoint); } catch (e) { diag.in_err = e.toString(); }
                 }
                 if (outPoint > 0) {
-                    try { placedClip.outPoint = editflowUtils.secondsToTicksString(outPoint); } catch (e) { diag.out_err = e.toString(); }
+                    try { placedClip.outPoint.ticks = editflowUtils.secondsToTicksString(outPoint); } catch (e) { diag.out_err = e.toString(); }
                 }
 
                 try {
@@ -266,9 +269,10 @@ clipManager = (function() {
             }
 
             var clip = track.clips[clipIndex];
-            // clip.start expects a tick STRING, not a raw number — matching the
-            // premiere-pro-mcp reference and PPro's Time-object property setter.
-            clip.start = editflowUtils.secondsToTicksString(newStartTime);
+            // clip.start is a Time object — assign to .ticks property, not the
+            // object itself.  PProPanel (official sample) modifies .ticks on
+            // existing Time objects rather than replacing them with strings.
+            clip.start.ticks = editflowUtils.secondsToTicksString(newStartTime);
             return { success: true, name: clip.name, newStartTime: newStartTime };
 
         } catch (e) {

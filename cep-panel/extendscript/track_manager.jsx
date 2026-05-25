@@ -5,13 +5,40 @@ trackManager = (function() {
     "use strict";
 
     function ensureTracks(seq, requiredVideoTracks, requiredAudioTracks) {
+        /* Add video/audio tracks until the sequence has the required count.
+         *
+         * IMPORTANT: The standard ExtendScript Sequence object has NO
+         * createVideoTrack() / createAudioTrack() methods — those do not
+         * exist in the API (confirmed by ppro-scripting.docsforadobe.dev
+         * and Adobe Community).  The only way to add tracks is via the
+         * undocumented QE DOM.  If QE is unavailable, we return 0 and
+         * the caller must handle the shortfall.
+         */
         var added = 0;
-        while (seq.videoTracks.numTracks < requiredVideoTracks) {
-            try { seq.createVideoTrack("Video " + (seq.videoTracks.numTracks + 1)); added++; } catch (e) { break; }
+
+        // Try QE DOM for track creation
+        var qeAvailable = false;
+        try {
+            if (typeof qe !== 'undefined') {
+                qeAvailable = true;
+            }
+        } catch (e) {}
+
+        if (qeAvailable) {
+            try {
+                var qeSeq = qe.project.getActiveSequence();
+                while (seq.videoTracks.numTracks < requiredVideoTracks) {
+                    try { qeSeq.addTracks(); added++; } catch (e) { break; }
+                }
+                while (seq.audioTracks.numTracks < requiredAudioTracks) {
+                    try { qeSeq.addTracks(); added++; } catch (e) { break; }
+                }
+            } catch (e) {
+                // QE sequence not available — cannot add tracks
+            }
         }
-        while (seq.audioTracks.numTracks < requiredAudioTracks) {
-            try { seq.createAudioTrack("Audio " + (seq.audioTracks.numTracks + 1)); added++; } catch (e) { break; }
-        }
+
+        // If QE not available, we simply cannot add tracks — return what we have
         return added;
     }
 
@@ -31,7 +58,9 @@ trackManager = (function() {
     function setTrackMute(seq, trackIndex, trackType, mute) {
         var tracks = (trackType === "audio") ? seq.audioTracks : seq.videoTracks;
         if (trackIndex >= tracks.numTracks) return false;
-        tracks[trackIndex].setMute(mute);
+        // setMute() expects an Integer (0 or 1), not a Boolean.
+        // JS coerces true→1 / false→0, but the documented API is Integer.
+        tracks[trackIndex].setMute(mute ? 1 : 0);
         return true;
     }
 
