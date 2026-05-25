@@ -14,11 +14,10 @@ markerManager = (function() {
         var color = editflowUtils.getParam(options, 'color') || 0; // Green
 
         try {
-            // createMarker expects a tick STRING (or Time object),
-            // not a raw number — passing a number causes silent failure
-            // or wrong position in some PPro versions.
-            var tickStr = editflowUtils.secondsToTicksString(time);
-            var marker = seq.markers.createMarker(tickStr);
+            // createMarker takes seconds (number) in modern Premiere Pro (>= v11).
+            // Earlier "fix" to tick string caused 'Illegal Parameter type' rejections
+            // on every marker creation.
+            var marker = seq.markers.createMarker(time);
             if (name) marker.name = name;
             if (comment) marker.comments = comment;
             try { marker.setColorByIndex(color); } catch (e) {}
@@ -52,10 +51,8 @@ markerManager = (function() {
             var start = parseFloat(range.start || 0);
             var end = parseFloat(range.end || 0);
             try {
-                // createMarker expects a tick STRING, not a raw number —
-                // matching the premiere-pro-mcp reference and clip_manager.jsx.
-                var startTickStr = editflowUtils.secondsToTicksString(start);
-                var marker = seq.markers.createMarker(startTickStr);
+                // createMarker takes seconds (number) in modern Premiere Pro (>= v11).
+                var marker = seq.markers.createMarker(start);
                 if (marker) {
                     try { marker.name = "EditFlow remove: " + phrase; } catch (e) {}
                     try {
@@ -64,8 +61,8 @@ markerManager = (function() {
                     } catch (e) {}
                     // Convert point marker into a range marker. PPro versions vary —
                     // wrap in try/catch so a single failure doesn't kill the loop.
-                    // marker.end expects a tick STRING (like other Time properties).
-                    try { marker.end = editflowUtils.secondsToTicksString(end); } catch (e) {}
+                    // marker.end also takes seconds in modern PPro.
+                    try { marker.end = end; } catch (e) {}
                     try { marker.setColorByIndex(2); } catch (e) {} // red-ish
                     created++;
                 } else {

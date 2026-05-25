@@ -122,15 +122,16 @@ clipManager = (function() {
             // placement time, so setting them before insertClip causes the
             // placed TrackItem to inherit those values.  Each loop iteration
             // sets fresh values, so previously-placed clips are unaffected.
-            // setInPoint/setOutPoint signature: (timeValue, timeFormat)
-            //   timeFormat 5 = TIME_AS_TICKS (string), 4 = TIME_AS_SECONDS (number)
+            // setInPoint/setOutPoint signature: (timeValue, mediaType)
+            //   timeValue: string (parsed as ticks), number (seconds), or Time object
+            //   mediaType: 1=video, 2=audio, 4=all media types
             if (inPoint > 0 || outPoint > 0) {
                 try {
                     if (inPoint > 0 && typeof projectItem.setInPoint === 'function') {
-                        projectItem.setInPoint(editflowUtils.secondsToTicksString(inPoint), 5);
+                        projectItem.setInPoint(editflowUtils.secondsToTicksString(inPoint), 4);
                     }
                     if (outPoint > 0 && typeof projectItem.setOutPoint === 'function') {
-                        projectItem.setOutPoint(editflowUtils.secondsToTicksString(outPoint), 5);
+                        projectItem.setOutPoint(editflowUtils.secondsToTicksString(outPoint), 4);
                     }
                 } catch (e) {
                     // Diagnostic only — non-fatal; FIX-B may still trim
@@ -138,10 +139,12 @@ clipManager = (function() {
                 }
             }
 
-            // insertClip's time parameter expects seconds (number),
-            // NOT a tick string — passing a tick string causes PPro to
-            // interpret the huge value as seconds and overflows GDI.
-            seq.insertClip(projectItem, startTime, videoTrackIndex, audioTrackIndex);
+            // Pass startTime as a tick STRING (not a seconds number) so video and audio
+            // both anchor on the exact same integer tick — eliminates frame-rounding
+            // drift that surfaced as PPro's red sync-offset badge between V and A.
+            // Safe now that FIX-A pre-trims in/out via projectItem.setInPoint/setOutPoint.
+            var startTicksStr = editflowUtils.secondsToTicksString(startTime);
+            seq.insertClip(projectItem, startTicksStr, videoTrackIndex, audioTrackIndex);
 
             // ── FIX-B: Post-placement direct string assignment ───────────
             // Belt-and-suspenders with FIX-A.  The premiere-pro-mcp reference
@@ -180,20 +183,22 @@ clipManager = (function() {
             }
 
             // ── Phase 2 (M13): Audio fade support ────────────────────────
-            // After the clip is placed, try to set audio fade-in / fade-out
-            // via the Premiere API.  Non-critical: gracefully degrades on
-            // older PPro builds that don't expose these methods.
+            // NOTE: setAudioFadeIn/setAudioFadeOut do NOT exist in the official
+            // PPro TrackItem API. Audio fades must be set via keyframes on the
+            // Volume component (see audio_manager.jsx applyAudioFade()). The
+            // audio_manager is the correct path for fades; this placeholder is
+            // kept for forward-compat if Adobe adds these methods later.
             try {
                 var lastClip = seq.videoTracks[videoTrackIndex].clips[seq.videoTracks[videoTrackIndex].clips.numItems - 1];
                 if (lastClip && options.audio_fade_in_ms) {
-                    var fadeInTicks = editflowUtils.secondsToTicksString(options.audio_fade_in_ms / 1000);
                     if (typeof lastClip.setAudioFadeIn === 'function') {
+                        var fadeInTicks = editflowUtils.secondsToTicksString(options.audio_fade_in_ms / 1000);
                         lastClip.setAudioFadeIn(fadeInTicks);
                     }
                 }
                 if (lastClip && options.audio_fade_out_ms) {
-                    var fadeOutTicks = editflowUtils.secondsToTicksString(options.audio_fade_out_ms / 1000);
                     if (typeof lastClip.setAudioFadeOut === 'function') {
+                        var fadeOutTicks = editflowUtils.secondsToTicksString(options.audio_fade_out_ms / 1000);
                         lastClip.setAudioFadeOut(fadeOutTicks);
                     }
                 }
@@ -284,13 +289,14 @@ clipManager = (function() {
             var clip = track.clips[clipIndex];
             var modified = [];
 
-            // Speed
+            // Speed — NOTE: There is NO official ExtendScript API to set clip
+            // speed. Only getSpeed() (getter) exists. Speed must be changed
+            // manually or via the QE DOM (unsupported). Log the request but
+            // do not attempt to call a non-existent setter.
             var speed = editflowUtils.getParam(options, 'speed');
             if (speed !== undefined) {
-                try {
-                    clip.setSpeed(speed);
-                    modified.push("speed=" + speed);
-                } catch (e) {}
+                // No-op: clip speed cannot be set via ExtendScript API
+                modified.push("speed=" + speed + " (unsupported)");
             }
 
             // Scale
@@ -419,7 +425,8 @@ clipManager = (function() {
                 try {
                     var currentLabel = sequenceReader.getClipLabelName(clip);
                     if (currentLabel === labelName) {
-                        clip.setColorLabel(0); // Reset to Violet/Default
+                        // setColorLabel is a ProjectItem method, not TrackItem
+                        try { clip.projectItem.setColorLabel(0); } catch (e) {} // Reset to Violet/Default
                         cleared++;
                     }
                 } catch (e) {}
@@ -544,7 +551,8 @@ clipManager = (function() {
                 return editflowUtils.safeStringify({ success: false, error: "Clip not found" });
             }
             var clip = track.clips[clipIndex];
-            clip.setColorLabel(labelIndex);
+            // setColorLabel is a ProjectItem method, not TrackItem
+            clip.projectItem.setColorLabel(labelIndex);
             return editflowUtils.safeStringify({ success: true });
         } catch (e) {
             return editflowUtils.safeStringify({ success: false, error: e.toString() });
@@ -663,11 +671,9 @@ clipManager = (function() {
         try {
             var markers = seq.markers;
             if (markers && markers.createMarker) {
-                // createMarker expects a tick STRING (or Time object),
-                // not a raw number — passing a number causes silent failure
-                // or wrong position in some PPro versions.
-                var tickStr = editflowUtils.secondsToTicksString(time);
-                var marker = markers.createMarker(tickStr);
+                // createMarker takes seconds (number) in modern Premiere Pro (>= v11).
+                // Earlier "fix" to tick string caused 'Illegal Parameter type' rejections.
+                var marker = markers.createMarker(time);
                 if (marker) {
                     marker.name = markerName;
                     try { marker.comments = "EditFlow auto-marker"; } catch (e) {}
