@@ -492,12 +492,13 @@ def plan_to_edl_ops(plan: Plan, target_seq_name: str) -> list[dict]:
     # Add cuts — one op per cut using insertClip's 4-arg form
     # which places both video and audio simultaneously.
     #
-    # Frame-align inPoint/outPoint to a 1/24-sec grid before emitting the op.
+    # Frame-align inPoint/outPoint to a 1/30-sec grid before emitting the op.
     # PPro snaps video to frame boundaries but audio to sample boundaries;
     # at non-frame-aligned source times this surfaces as the red sync-offset
-    # badge between V and A tracks.  1/24 is the coarsest common cinema FPS,
-    # so values aligned to it land on valid frames for 24/30/60 fps sources.
-    _SOURCE_FPS = 24.0
+    # badge between V and A tracks.  30fps is the iPhone default (the user's
+    # IMG_*.MOV is iPhone footage) and the most common modern source rate.
+    # Values aligned to 1/30 still land on valid frames at 60fps.
+    _SOURCE_FPS = 30.0
 
     def _frame_align(seconds: float) -> float:
         return round(float(seconds) * _SOURCE_FPS) / _SOURCE_FPS

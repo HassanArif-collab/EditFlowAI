@@ -110,6 +110,154 @@ _MIN_TAKE_SEC = 3.0      # drop sub-3-second takes (usually trail-offs)
 _MIN_TAKE_WORDS = 8      # drop takes with fewer than 8 spoken words
 _MAX_FILLER_RATIO = 0.45  # drop takes that are mostly filler words
 
+# Post-LLM dedup threshold — pairwise compare FINAL selections and drop
+# duplicates that scored too low to cluster but are still effectively retakes.
+_POSTHOC_DEDUP_THRESHOLD = 0.55
+
+# Trailing-filler words that signal an "and that's it" closer the user
+# usually doesn't want in the cut.  Compared against the last 1-3 words
+# of the final selected take.
+_TRAILING_FILLERS = frozenset({
+    # English / common
+    "okay", "ok", "yeah", "yep", "right", "alright", "so", "anyway",
+    # Urdu / Hindi
+    "haan", "haan ji", "ji", "bas", "theek", "theek hai",
+    "हाँ", "हाँ जी", "जी", "बस", "ठीक", "ठीक है",
+    "ہاں", "ہاں جی", "جی", "بس", "ٹھیک", "ٹھیک ہے",
+})
+
+
+def _enforce_cluster_constraint(
+    selected: List[Dict],
+    retake_clusters: List[List[int]],
+    takes: List[Any],
+) -> List[Dict]:
+    """For each retake cluster, keep at most ONE of the LLM's selections.
+
+    The small local LLM often ignores the 'pick exactly one per cluster' rule
+    in the prompt.  This enforces it deterministically: if the LLM picked
+    multiple takes from the same cluster, keep the one with the highest
+    quality_score; if tied, the LATEST take_index (speakers improve on retry).
+
+    Preserves the LLM's chosen order otherwise.
+    """
+    if not selected or not retake_clusters:
+        return selected
+
+    # Build a take_index → cluster_id map (None if not in any cluster)
+    take_to_cluster: Dict[int, int] = {}
+    for cluster_id, cluster in enumerate(retake_clusters):
+        for idx in cluster:
+            take_to_cluster[idx] = cluster_id
+
+    # Pick the best take per cluster among LLM's selections
+    cluster_winners: Dict[int, Dict] = {}  # cluster_id → selection dict
+    standalone: List[Dict] = []  # selections not in any cluster
+    for sel in selected:
+        idx = int(sel.get("take_index", -1))
+        cid = take_to_cluster.get(idx)
+        if cid is None:
+            standalone.append(sel)
+            continue
+        incumbent = cluster_winners.get(cid)
+        if incumbent is None:
+            cluster_winners[cid] = sel
+            continue
+        # Tie-break: higher quality_score wins; if equal, higher take_index
+        cur_q = float((takes[idx].quality or {}).get("score", 0.0))
+        inc_idx = int(incumbent["take_index"])
+        inc_q = float((takes[inc_idx].quality or {}).get("score", 0.0))
+        if cur_q > inc_q + 0.001 or (abs(cur_q - inc_q) <= 0.001 and idx > inc_idx):
+            cluster_winners[cid] = sel
+
+    # Reassemble in the LLM's original order; drop later duplicates from the same cluster
+    seen_clusters: set = set()
+    kept: List[Dict] = []
+    for sel in selected:
+        idx = int(sel.get("take_index", -1))
+        cid = take_to_cluster.get(idx)
+        if cid is None:
+            kept.append(sel)
+            continue
+        if cid in seen_clusters:
+            continue  # already kept a winner for this cluster
+        seen_clusters.add(cid)
+        kept.append(cluster_winners[cid])
+    return kept
+
+
+def _dedup_by_similarity(
+    selected: List[Dict],
+    takes: List[Any],
+    threshold: float = _POSTHOC_DEDUP_THRESHOLD,
+) -> List[Dict]:
+    """Catch retakes that didn't cluster.
+
+    Pairwise compares all final selections.  If any two have cosine
+    similarity >= threshold (and weren't already in the same cluster),
+    drop the one with lower quality_score.
+    """
+    if len(selected) < 2:
+        return selected
+    keep_mask = [True] * len(selected)
+    for i in range(len(selected)):
+        if not keep_mask[i]:
+            continue
+        ti = int(selected[i].get("take_index", -1))
+        ei = getattr(takes[ti], "embedding", None) or []
+        if not ei:
+            continue
+        for j in range(i + 1, len(selected)):
+            if not keep_mask[j]:
+                continue
+            tj = int(selected[j].get("take_index", -1))
+            ej = getattr(takes[tj], "embedding", None) or []
+            if not ej:
+                continue
+            if _cosine_sim(ei, ej) >= threshold:
+                # Drop the lower-quality one (ties → later take_index wins)
+                qi = float((takes[ti].quality or {}).get("score", 0.0))
+                qj = float((takes[tj].quality or {}).get("score", 0.0))
+                if qj > qi + 0.001 or (abs(qi - qj) <= 0.001 and tj > ti):
+                    keep_mask[i] = False
+                    break  # i is dropped; move to next i
+                else:
+                    keep_mask[j] = False
+    return [s for s, k in zip(selected, keep_mask) if k]
+
+
+def _drop_trailing_filler(
+    selected: List[Dict],
+    takes: List[Any],
+) -> List[Dict]:
+    """If the LAST selected take is short and ends with an affirmation
+    filler ("haan ji", "bas", "ok", etc.), drop it.
+
+    Speakers often trail off into 'okay yeah that's all' which makes the
+    final cut feel abrupt or low-effort.
+    """
+    if not selected:
+        return selected
+    last = selected[-1]
+    idx = int(last.get("take_index", -1))
+    if idx < 0 or idx >= len(takes):
+        return selected
+    take = takes[idx]
+    duration = float(take.duration or 0.0)
+    text = (take.text or "").strip().lower()
+    if duration > 5.0:
+        return selected
+    # Check if the last 1-3 tokens are all filler
+    tokens = text.split()[-3:]
+    if not tokens:
+        return selected
+    # Drop if ALL trailing tokens are filler, OR text is JUST 2 words of filler
+    if all(t in _TRAILING_FILLERS for t in tokens):
+        return selected[:-1]
+    if len(tokens) <= 2 and any(t in _TRAILING_FILLERS for t in tokens):
+        return selected[:-1]
+    return selected
+
 
 async def propose_cuts(
     clip_paths: List[str],
@@ -223,13 +371,13 @@ async def propose_cuts(
 
     # Compute retake similarity pairs across ALL takes (including dropped ones,
     # so a junk-filtered take can still cluster with a substantive retake of it).
-    # Threshold 0.60 catches verbal rephrasings that 0.80 missed.
-    similarity_pairs = _compute_retake_pairs(all_takes, threshold=0.60)
+    # Threshold 0.55 catches verbal rephrasings with different word orderings.
+    similarity_pairs = _compute_retake_pairs(all_takes, threshold=0.55)
     retake_clusters = _cluster_retakes(similarity_pairs, len(all_takes))
     logger.info(
         f"propose_cuts: {len(similarity_pairs)} retake pair(s), "
         f"{len(retake_clusters)} cluster(s) of size >= 2 "
-        f"across {len(all_takes)} takes (threshold 0.60)"
+        f"across {len(all_takes)} takes (threshold 0.55)"
     )
 
     # 4. Ask the LLM to pick takes
@@ -250,6 +398,23 @@ async def propose_cuts(
             {"take_index": i, "beat_text": all_takes[i].text[:80] if all_takes[i].text else f"Take {i}"}
             for i in range(min(len(all_takes), 20))
         ]
+
+    # ── Deterministic post-processing ─────────────────────────────────────
+    # The small local Ollama LLM often ignores the "pick exactly ONE per
+    # cluster" rule in the prompt.  Enforce it here in Python so retakes
+    # cannot make it into the final cut regardless of LLM compliance.
+    _pre_count = len(selected_takes)
+    selected_takes = _enforce_cluster_constraint(
+        selected_takes, retake_clusters, all_takes
+    )
+    selected_takes = _dedup_by_similarity(selected_takes, all_takes)
+    selected_takes = _drop_trailing_filler(selected_takes, all_takes)
+    if len(selected_takes) != _pre_count:
+        logger.info(
+            f"propose_cuts: post-LLM dedup reduced {_pre_count} → "
+            f"{len(selected_takes)} selections "
+            f"(cluster-enforce + similarity-dedup + trailing-filler)"
+        )
 
     # 5. Build word lookup (needed before validation)
     word_lookup: Dict[str, List[TranscriptWord]] = {}
