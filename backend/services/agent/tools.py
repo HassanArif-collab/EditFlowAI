@@ -367,20 +367,46 @@ async def get_transcript_tool(args: dict, ws_emit: Callable, session: Any = None
     and copy it into an external LLM.  See Option B workflow.
     """
     clip_path = args.get("clip_path", "")
+    max_chars = args.get("max_chars", 2000)
+
     # Auto-recover bare filenames the LLM may have truncated (same defect
     # class as transcribe_clips). Lets the user ask "show me the transcript
     # for IMG_1694.MOV" without giving the full path.
     if clip_path:
         clip_path = _recover_clip_path(clip_path, session)
-    max_chars = args.get("max_chars", 2000)
 
-    if not clip_path:
-        return _envelope(
-            tool="get_transcript",
-            success=False,
-            summary="clip_path is required.",
-            error="Missing clip_path",
-        )
+    # Fallback ladder for when the LLM omits clip_path OR recovery returned
+    # something that isn't a real file:
+    #   1. If exactly one clip in transcripts_ready → use that.
+    #   2. If multiple → return a helpful error listing the candidates so
+    #      the LLM can ask the user which one.
+    transcripts_ready = (getattr(session, "context", {}) or {}).get("transcripts_ready") or {}
+    if not clip_path or not Path(clip_path).is_file():
+        ready_paths = list(transcripts_ready.keys())
+        if len(ready_paths) == 1:
+            clip_path = ready_paths[0]
+            logger.info(
+                f"get_transcript: no resolvable clip_path given, defaulting to "
+                f"only transcript in session: {clip_path}"
+            )
+        elif len(ready_paths) > 1:
+            return _envelope(
+                tool="get_transcript",
+                success=False,
+                summary=(
+                    f"Multiple transcripts in this session. Specify which one: "
+                    + ", ".join(Path(p).name for p in ready_paths)
+                ),
+                error="ambiguous_clip",
+                data={"available_clips": ready_paths},
+            )
+        else:
+            return _envelope(
+                tool="get_transcript",
+                success=False,
+                summary="No transcripts in this session yet. Transcribe a clip first.",
+                error="no_transcripts_ready",
+            )
 
     # Compute the sidecar path the user can copy from.  This mirrors the
     # path used by whisper_service._save_transcript_cache so the two always

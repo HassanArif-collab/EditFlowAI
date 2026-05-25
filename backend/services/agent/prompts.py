@@ -78,7 +78,7 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
     },
     {
         "name": "list_transcript_paths",
-        "description": "List the sidecar file paths for EVERY transcribed clip in the current session. Use this when the user asks 'where are my transcripts', 'show me all transcript files', or wants to copy them into an external LLM (Option B workflow). Takes no arguments.",
+        "description": "Returns the file path (on disk) of every transcript sidecar in the current session. Takes NO arguments — just call it. ALWAYS use this tool when the user asks any of: 'where is the transcript', 'where is my transcript', 'where are the transcripts', 'show me the transcript file', 'transcript path', 'transcript location', 'where is the file saved'. Do NOT call get_transcript for these questions — that one returns the text content and requires a clip_path; this one returns just the paths and needs nothing.",
         "args": {},
     },
     {
