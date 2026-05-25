@@ -136,21 +136,6 @@ class Settings(BaseSettings):
     # lives on a read-only mount.
     WRITE_TRANSCRIPT_SIDECAR: bool = True
 
-    # ── External LLM mode (file-based handoff) ──
-    # When True, cut_proposer writes the LLM prompt to data/llm_handoff/ and
-    # waits for the user to paste it into a frontier model (Claude / GPT-4 /
-    # etc.) and save the JSON response back to the response file.
-    #
-    # Used while no API key is configured.  When you have a real API
-    # endpoint, set this to False and provider_service handles the call.
-    #
-    # Files (deleted after each successful Build):
-    #   data/llm_handoff/cut_proposer.prompt.txt   <-- backend writes
-    #   data/llm_handoff/cut_proposer.response.json <-- user writes
-    USE_EXTERNAL_LLM: bool = True
-    EXTERNAL_LLM_TIMEOUT_SEC: int = 900   # 15 min wall clock to paste-paste
-    EXTERNAL_LLM_POLL_INTERVAL_SEC: int = 3
-
     model_config = {
         "env_prefix": "EDITFLOW_",
         "env_file": ".env",

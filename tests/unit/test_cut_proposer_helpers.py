@@ -2,7 +2,6 @@
 Unit tests for cut_proposer helper functions (_cosine_sim, _compute_retake_pairs).
 Pure math — no LLM or Whisper mocking required.
 """
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -283,98 +282,3 @@ class TestDropTrailingFiller:
     def test_no_op_on_empty(self):
         """Empty input → empty output, no error."""
         assert _drop_trailing_filler([], []) == []
-
-
-# ── _external_llm_chat ────────────────────────────────────────────────────
-
-
-class TestExternalLLMChat:
-    """File-based LLM handoff: writes prompt, polls response, returns content.
-
-    Tests spawn a concurrent task that writes the response file *after*
-    the helper has cleared any stale file and written the prompt, so the
-    next poll iteration picks it up.  No real waiting / hanging.
-    """
-
-    @staticmethod
-    def _set_up_handoff(tmp_path, monkeypatch, timeout=5, poll=1):
-        """Build a fake MEDIA_CACHE_DIR under tmp_path and patch settings."""
-        from backend.config import get_settings
-        settings = get_settings()
-        fake_data = tmp_path / "data"
-        media_cache = fake_data / "media_cache"
-        media_cache.mkdir(parents=True)
-        monkeypatch.setattr(settings, "MEDIA_CACHE_DIR", media_cache)
-        monkeypatch.setattr(settings, "EXTERNAL_LLM_POLL_INTERVAL_SEC", poll)
-        monkeypatch.setattr(settings, "EXTERNAL_LLM_TIMEOUT_SEC", timeout)
-        return fake_data / "llm_handoff"
-
-    def test_returns_response_content(self, tmp_path, monkeypatch):
-        """Happy path: response file dropped mid-poll → content returned."""
-        import asyncio
-        from backend.services.agent.cut_proposer import _external_llm_chat
-
-        handoff_dir = self._set_up_handoff(tmp_path, monkeypatch)
-        expected = '{"selections": [{"take_index": 0, "beat_text": "x", "rationale": "y"}]}'
-
-        async def _drop_response_later():
-            # Wait long enough for the helper to delete-stale, write prompt,
-            # and enter the poll loop, then drop the response file.
-            await asyncio.sleep(0.3)
-            handoff_dir.mkdir(parents=True, exist_ok=True)
-            (handoff_dir / "cut_proposer.response.json").write_text(
-                expected, encoding="utf-8"
-            )
-
-        async def _runner():
-            drop = asyncio.create_task(_drop_response_later())
-            result = await _external_llm_chat("some prompt")
-            await drop
-            return result
-
-        result = asyncio.run(_runner())
-        assert result == expected
-        # Both files cleaned up after a successful read
-        assert not (handoff_dir / "cut_proposer.response.json").exists()
-        assert not (handoff_dir / "cut_proposer.prompt.txt").exists()
-
-    def test_times_out_when_no_response(self, tmp_path, monkeypatch):
-        """No response file appears within the timeout → TimeoutError."""
-        import asyncio
-        from backend.services.agent.cut_proposer import _external_llm_chat
-
-        self._set_up_handoff(tmp_path, monkeypatch, timeout=2, poll=1)
-        with pytest.raises(TimeoutError, match="External LLM"):
-            asyncio.run(_external_llm_chat("some prompt"))
-
-    def test_writes_prompt_with_instructions_header(self, tmp_path, monkeypatch):
-        """The prompt file must include human-readable instructions on top."""
-        import asyncio
-        from backend.services.agent.cut_proposer import _external_llm_chat
-
-        handoff_dir = self._set_up_handoff(tmp_path, monkeypatch)
-        captured: dict = {}
-
-        async def _capture_then_respond():
-            # Wait for the prompt file to be written, capture its contents,
-            # then drop a valid response so the helper finishes.
-            prompt_path = handoff_dir / "cut_proposer.prompt.txt"
-            for _ in range(20):
-                if prompt_path.exists():
-                    captured["prompt"] = prompt_path.read_text(encoding="utf-8")
-                    break
-                await asyncio.sleep(0.1)
-            (handoff_dir / "cut_proposer.response.json").write_text(
-                '{"selections": []}', encoding="utf-8"
-            )
-
-        async def _runner():
-            cap = asyncio.create_task(_capture_then_respond())
-            await _external_llm_chat("the actual prompt body")
-            await cap
-
-        asyncio.run(_runner())
-        written = captured.get("prompt", "")
-        assert "EXTERNAL LLM MODE" in written
-        assert "=== PROMPT ===" in written
-        assert "the actual prompt body" in written
