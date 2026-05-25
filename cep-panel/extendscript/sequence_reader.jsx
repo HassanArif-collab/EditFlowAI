@@ -101,8 +101,10 @@ sequenceReader = (function() {
 
     function getClipLabelName(clip) {
         try {
-            if (clip.getColorLabel) {
-                var labelIndex = clip.getColorLabel();
+            // getColorLabel is a ProjectItem method, not TrackItem.
+            // Must access via clip.projectItem.getColorLabel().
+            if (clip.projectItem && clip.projectItem.getColorLabel) {
+                var labelIndex = clip.projectItem.getColorLabel();
                 return LABEL_COLORS[labelIndex] || "Default";
             }
         } catch (e) {}

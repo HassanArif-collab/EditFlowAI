@@ -37,8 +37,11 @@ editflowUtils = (function() {
     function getSequenceEnd(seq) {
         if (!seq) return 0;
         try {
-            if (seq.end && seq.end.ticks) return ticksToSeconds(seq.end);
-            if (seq.getEnd && typeof seq.getEnd === 'function') return ticksToSeconds(seq.getEnd());
+            // seq.end is a STRING (ticks), not a Time object — confirmed by
+            // ppro-scripting.docsforadobe.dev: "Type: String; read-only"
+            // Strings don't have .ticks, so the old seq.end.ticks check was
+            // always undefined and this function always returned 0.
+            if (seq.end) return ticksToSeconds(seq.end);
         } catch (e) {}
         return 0;
     }
