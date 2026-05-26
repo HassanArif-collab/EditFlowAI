@@ -637,7 +637,14 @@ async def match_script_to_takes(
             best_idx = -1
             if beat_toks:
                 for cand_idx, (_label, _take, _take_words) in enumerate(candidates):
-                    cand_text = " ".join(w.text for w in _take_words) if _take_words else _take.text
+                    # TranscriptWord attribute is `.word` (verified in
+                    # backend/models/schemas.py line 67), NOT `.text` —
+                    # the first version of this fallback crashed here.
+                    cand_text = (
+                        " ".join(w.word for w in _take_words)
+                        if _take_words
+                        else _take.text
+                    )
                     cand_toks = _toks(cand_text)
                     if not cand_toks:
                         continue
@@ -655,8 +662,8 @@ async def match_script_to_takes(
                 chosen_label = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"[best_idx]
                 # Synthesise a "parsed" structure the rest of this loop expects
                 _, _fb_take, _fb_words = candidates[best_idx]
-                fb_first = _fb_words[0].text if _fb_words else ""
-                fb_last = _fb_words[-1].text if _fb_words else ""
+                fb_first = _fb_words[0].word if _fb_words else ""
+                fb_last = _fb_words[-1].word if _fb_words else ""
                 parsed = {
                     "chosen": chosen_label,
                     "first_words": fb_first,
