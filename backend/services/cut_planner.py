@@ -291,6 +291,52 @@ def build_plan(
     # M12 — Snap to frame boundaries
     snap_to_frame_boundaries(plan, fps=24.0)
 
+    # Fix B (overlap-fallback-4): when two consecutive cuts come from the
+    # same take and their source ranges overlap, the same audio plays twice
+    # in the timeline.  Plan 719f6e64a9d6 had beat 10 (281.75-295.04) and
+    # beat 11 (290.5-294.29) — beat 11 lay entirely inside beat 10.
+    #
+    # Resolution: clip the later cut's source_in up to the earlier cut's
+    # source_out.  If that leaves the later cut shorter than 1 second, drop
+    # it entirely and record it as a gap.
+    _MIN_DURATION_S = 1.0
+    _OVERLAP_EPS_S = 1.0 / 30.0  # one 30 fps frame of breathing room
+    deduped: list[Cut] = []
+    overlap_gaps: list[dict] = []
+    for cut in plan.cuts:
+        if deduped:
+            prev = deduped[-1]
+            if (
+                prev.take_source_file == cut.take_source_file
+                and prev.take_id == cut.take_id
+                and cut.source_in < prev.source_out
+            ):
+                new_in = prev.source_out + _OVERLAP_EPS_S
+                if cut.source_out - new_in >= _MIN_DURATION_S:
+                    logger.info(
+                        "Fix B: clipped overlapping cut at beat %d: "
+                        "source_in %.3f -> %.3f (prev cut ended %.3f)",
+                        cut.beat_index, cut.source_in, new_in, prev.source_out,
+                    )
+                    cut.source_in = round(new_in, 3)
+                    cut.duration = round(cut.source_out - cut.source_in, 3)
+                    cut.warnings = list(cut.warnings) + ["overlap_clipped"]
+                else:
+                    logger.info(
+                        "Fix B: dropped overlapping cut at beat %d "
+                        "(would be %.2fs after clip)",
+                        cut.beat_index, cut.source_out - new_in,
+                    )
+                    overlap_gaps.append({
+                        "after_beat": prev.beat_index,
+                        "reason": "overlap_with_prev",
+                        "beat_text": cut.beat_text,
+                    })
+                    continue
+        deduped.append(cut)
+    plan.cuts = deduped
+    plan.gaps.extend(overlap_gaps)
+
     # Recompute durations & summary after snapping
     for cut in plan.cuts:
         cut.duration = round(cut.source_out - cut.source_in, 3)

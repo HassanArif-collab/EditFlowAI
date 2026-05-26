@@ -108,6 +108,23 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
         },
     },
     {
+        "_note": "External-LLM paste workflow.  Use when the user wants to do the matching in a frontier model (Claude/ChatGPT/Gemini) instead of relying on the local matcher.  The flow is: (1) call build_llm_paste_prompt to produce a clipboard payload; (2) user pastes into the frontier model and gets JSON back; (3) call apply_pasted_plan with that JSON.",
+        "name": "build_llm_paste_prompt",
+        "description": "Build the prompt the user copies into an external LLM (Claude/ChatGPT/Gemini). Bundles the script and full word-level transcripts of every transcribed clip in this session. Call when the user asks for 'the LLM prompt', 'the prompt to paste into Claude', 'the external prompt', or wants to do the matching in a bigger model. Pass script='' to auto-recover from chat history.",
+        "args": {
+            "script": {"type": "string", "description": "The script (optional — recovered from history if blank)", "default": ""},
+        },
+    },
+    {
+        "_note": "Companion to build_llm_paste_prompt.  Accepts the JSON the frontier model returned.  Tolerates ```json``` fences and surrounding prose.  After success, immediately suggest the user 'Build sequence' (which calls apply_plan with the returned plan_id).",
+        "name": "apply_pasted_plan",
+        "description": "Ingest a JSON cut plan the user pasted back from an external LLM and turn it into a stored Plan ready to apply. Call when the user says 'here's the plan', 'apply this JSON', 'I pasted the cut plan', or otherwise provides JSON-looking text containing a 'cuts' array.",
+        "args": {
+            "pasted_text": {"type": "string", "description": "The raw JSON the user pasted from the frontier model"},
+            "bin_reference": {"type": "string", "description": "Optional; defaults to the session's last scanned bin", "default": ""},
+        },
+    },
+    {
         "name": "get_plan",
         "description": "Get details of a stored plan by its ID.",
         "args": {

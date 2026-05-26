@@ -689,10 +689,41 @@ async def match_script_to_takes(
                     f"llm_null_but_overlap_fallback={best_overlap:.2f} "
                     f"(searched all {len(takes)} takes, not just candidates)"
                 )
-                fb_first = fb_words[0].word if fb_words else ""
-                fb_last = fb_words[-1].word if fb_words else ""
+                # Fix A (overlap-fallback-4): compute TIGHT word boundaries
+                # within the chosen take instead of grabbing the whole take.
+                # Previous behaviour set first_words/last_words from the take
+                # edges; the validator then couldn't match the (absent) word
+                # text and fell back to _fallback_range(take_words) which IS
+                # the whole take.  That's why beat 10 in plan 719f6e64a9d6
+                # became 13.3 seconds.
+                #
+                # Strategy: find the first and last word in fb_words whose
+                # normalized token appears in beat_toks, then pad outward by
+                # one word on each side (so the cut starts/ends naturally).
+                fb_punct_tbl = str.maketrans({c: " " for c in ",.!?:;\"'()[]{}،۔।"})
+                def _norm_word(w: str) -> str:
+                    return w.translate(fb_punct_tbl).strip().lower()
+
+                fb_first_idx = 0
+                fb_last_idx = max(0, len(fb_words) - 1)
+                if fb_words and beat_toks:
+                    hits = [
+                        i for i, w in enumerate(fb_words)
+                        if _norm_word(w.word) in beat_toks
+                    ]
+                    if hits:
+                        fb_first_idx = max(0, hits[0] - 1)
+                        fb_last_idx = min(len(fb_words) - 1, hits[-1] + 1)
+
+                fb_first = fb_words[fb_first_idx].word if fb_words else ""
+                fb_last = fb_words[fb_last_idx].word if fb_words else ""
                 parsed = {
                     "chosen": chosen_label,
+                    "word_start_index": fb_first_idx,
+                    "word_start_text": fb_first,
+                    "word_end_index": fb_last_idx,
+                    "word_end_text": fb_last,
+                    # Legacy keys kept for any older consumer:
                     "first_words": fb_first,
                     "last_words": fb_last,
                     "score": round(best_overlap, 2),
@@ -746,6 +777,55 @@ async def match_script_to_takes(
         if val_error:
             decisions.append(f"validation_warning={val_error}")
         else:
+            # Fix C (overlap-fallback-4): pad narrow cuts outward to nearest
+            # sentence boundary or natural pause.  The local LLM frequently
+            # returns a word range that's tighter than the actual spoken
+            # phrase ("انکم کو دس گنا" instead of "تو اب کیا کرتے ہیں کہ اب
+            # ہم اپنی انکم کو دس گنا کر دیتے ہیں") which produces 1-2 second
+            # cuts that start mid-sentence in the timeline.
+            #
+            # Bounded expansion: extend backwards while the previous word's
+            # gap to current start is < 0.4s AND we've added < 0.5s of audio.
+            # Same forward.  This prevents grabbing the whole take but does
+            # round out cut starts/ends to natural breath points.
+            try:
+                _PAD_MAX_GAP_S = 0.4
+                _PAD_MAX_ADD_S = 0.5
+                orig_start = start_idx
+                orig_end = end_idx
+                # Extend backwards
+                added = 0.0
+                while start_idx > 0:
+                    prev = take_words[start_idx - 1]
+                    cur = take_words[start_idx]
+                    gap = max(0.0, cur.start - prev.end)
+                    if gap > _PAD_MAX_GAP_S:
+                        break
+                    extra = (cur.start - prev.start)
+                    if added + extra > _PAD_MAX_ADD_S:
+                        break
+                    added += extra
+                    start_idx -= 1
+                # Extend forwards
+                added = 0.0
+                while end_idx < len(take_words) - 1:
+                    cur = take_words[end_idx]
+                    nxt = take_words[end_idx + 1]
+                    gap = max(0.0, nxt.start - cur.end)
+                    if gap > _PAD_MAX_GAP_S:
+                        break
+                    extra = (nxt.end - cur.end)
+                    if added + extra > _PAD_MAX_ADD_S:
+                        break
+                    added += extra
+                    end_idx += 1
+                if start_idx != orig_start or end_idx != orig_end:
+                    decisions.append(
+                        f"padded_indices=({orig_start}->{start_idx},{orig_end}->{end_idx})"
+                    )
+            except Exception as _pad_exc:  # noqa: BLE001
+                # Never let padding regress correctness — log + skip.
+                logger.debug("Padding skipped for beat %d: %s", beat_idx, _pad_exc)
             decisions.append("validated_indices=True")
 
         # ── Update alternates: mark the chosen one with rerank_score ──

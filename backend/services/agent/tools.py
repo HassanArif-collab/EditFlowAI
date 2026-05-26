@@ -1045,6 +1045,195 @@ async def show_help_tool(args: dict, ws_emit: Callable, session: Any = None) -> 
 
 # ── Tool Registry ──────────────────────────────────────────────
 
+# ── Tool: build_llm_paste_prompt ────────────────────────────────
+# Option B / external-LLM workflow.  Bundles the user's script and the full
+# word-level transcript of every clip in this session into a single prompt
+# the user can paste into Claude / ChatGPT / Gemini.  The frontier model
+# returns JSON which the user then pastes back via apply_pasted_plan.
+
+async def build_llm_paste_prompt_tool(args: dict, ws_emit: Callable, session: Any = None) -> dict:
+    """Produce the clipboard text for the external-LLM paste workflow.
+
+    Call when the user asks for "the LLM prompt", "the prompt to paste into
+    Claude", "give me the external prompt", etc.  Returns the full prompt in
+    ``data.prompt`` so the frontend can copy it to the clipboard.
+
+    Args (all optional — recovered from session if missing):
+        script: the user's script.  If absent, recovered from chat history.
+    """
+    transcripts_ready = (getattr(session, "context", {}) or {}).get("transcripts_ready") or {}
+    if not transcripts_ready:
+        return _envelope(
+            tool="build_llm_paste_prompt",
+            success=False,
+            summary="Transcribe at least one clip before building the LLM prompt.",
+            error="no_transcripts_ready",
+        )
+
+    script = (args.get("script") or "").strip()
+    if not script:
+        recovered = _extract_script_from_history(session)
+        if recovered:
+            script = recovered
+            logger.info("build_llm_paste_prompt: recovered script from history (%d chars)", len(script))
+    if not script:
+        return _envelope(
+            tool="build_llm_paste_prompt",
+            success=False,
+            summary="No script in this session yet. Paste your script in chat first.",
+            error="no_script",
+        )
+
+    # Pull word lists for every clip from the Whisper cache.
+    from ...services.whisper_service import whisper_service
+    word_lookup: dict = {}
+    missing: list[str] = []
+    for clip_path in transcripts_ready.keys():
+        try:
+            tr = await whisper_service.transcribe_fingerprinted(
+                source_path=clip_path,
+                language=None,
+                force=False,
+            )
+            words = []
+            for seg in getattr(tr, "segments", []) or []:
+                for w in getattr(seg, "words", []) or []:
+                    words.append(w)
+            if words:
+                word_lookup[clip_path] = words
+            else:
+                missing.append(Path(clip_path).name)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("build_llm_paste_prompt: no cached transcript for %s: %s", clip_path, e)
+            missing.append(Path(clip_path).name)
+
+    if not word_lookup:
+        return _envelope(
+            tool="build_llm_paste_prompt",
+            success=False,
+            summary=f"Couldn't load word-level transcripts for any clip. Missing: {', '.join(missing)}",
+            error="no_word_data",
+        )
+
+    from ...services.external_plan import build_paste_prompt
+    prompt = build_paste_prompt(
+        script=script,
+        transcripts_ready=transcripts_ready,
+        word_lookup=word_lookup,
+    )
+
+    summary_lines = [
+        f"Built LLM prompt: {len(prompt):,} characters, "
+        f"{sum(len(v) for v in word_lookup.values()):,} words across "
+        f"{len(word_lookup)} clip(s).",
+        "Copy the prompt below and paste it into Claude/ChatGPT/Gemini.",
+        "When it replies with JSON, paste that JSON back here to apply.",
+    ]
+    if missing:
+        summary_lines.append(f"(Note: no word data for {', '.join(missing)} — skipped.)")
+
+    return _envelope(
+        tool="build_llm_paste_prompt",
+        success=True,
+        summary="\n".join(summary_lines),
+        data={
+            "prompt": prompt,
+            "prompt_chars": len(prompt),
+            "clips_included": list(word_lookup.keys()),
+            "clips_missing": missing,
+        },
+        ui={"kind": "copy_to_clipboard", "text": prompt},
+    )
+
+
+# ── Tool: apply_pasted_plan ─────────────────────────────────────
+# Companion to build_llm_paste_prompt.  Accepts the frontier model's JSON
+# response, builds a Plan, returns its plan_id.  The user then applies it
+# the same way as an auto-matched plan ("Build sequence" button).
+
+async def apply_pasted_plan_tool(args: dict, ws_emit: Callable, session: Any = None) -> dict:
+    """Ingest a JSON cut plan the user pasted back from a frontier LLM.
+
+    Call when the user says something like "here's the plan", "apply this
+    cut plan", "I pasted the JSON below", and provides JSON text.
+
+    Args:
+        pasted_text: the raw JSON the user copied from the frontier model.
+            Tolerates ```json``` fences and surrounding prose.
+        bin_reference: optional; defaults to the session's last scanned bin.
+    """
+    pasted_text = (args.get("pasted_text") or args.get("plan_json") or args.get("text") or "").strip()
+    if not pasted_text:
+        return _envelope(
+            tool="apply_pasted_plan",
+            success=False,
+            summary="Provide the pasted JSON text in the 'pasted_text' argument.",
+            error="empty_paste",
+        )
+
+    transcripts_ready = (getattr(session, "context", {}) or {}).get("transcripts_ready") or {}
+    if not transcripts_ready:
+        return _envelope(
+            tool="apply_pasted_plan",
+            success=False,
+            summary="No transcribed clips in this session — can't resolve source files.",
+            error="no_transcripts_ready",
+        )
+
+    script = (args.get("script") or "").strip() or (_extract_script_from_history(session) or "")
+    bin_reference = (args.get("bin_reference") or "").strip()
+    if not bin_reference:
+        # Best-effort: pull last scan's bin from session context.
+        ctx = getattr(session, "context", {}) or {}
+        bin_reference = ctx.get("last_bin_reference") or "@external"
+
+    from ...services.external_plan import (
+        ExternalPlanError,
+        build_plan_from_pasted_json,
+    )
+
+    try:
+        plan = build_plan_from_pasted_json(
+            pasted_text,
+            bin_reference=bin_reference,
+            script=script,
+            transcripts_ready=transcripts_ready,
+            user_hint="external_llm_paste",
+        )
+    except ExternalPlanError as exc:
+        return _envelope(
+            tool="apply_pasted_plan",
+            success=False,
+            summary=f"Couldn't build a plan from that JSON: {exc}",
+            error=str(exc),
+        )
+
+    # Stash plan_id on the session so apply_plan can find it without args.
+    try:
+        ctx = getattr(session, "context", {}) or {}
+        ctx["last_plan_id"] = plan.plan_id
+    except Exception:  # noqa: BLE001
+        pass
+
+    return _envelope(
+        tool="apply_pasted_plan",
+        success=True,
+        summary=(
+            f"Built plan {plan.plan_id} from pasted JSON: "
+            f"{len(plan.cuts)} cut(s), {len(plan.gaps)} skipped, "
+            f"{plan.summary.get('total_duration', 0):.1f}s total. "
+            f"Ready to Build sequence."
+        ),
+        data={
+            "plan_id": plan.plan_id,
+            "summary": plan.summary,
+            "gaps": plan.gaps,
+            "cuts_count": len(plan.cuts),
+        },
+        ui={"kind": "plan_ready", "plan_id": plan.plan_id},
+    )
+
+
 TOOLS: Dict[str, Callable] = {
     "scan_project": scan_project_tool,
     "list_bins": list_bins_tool,
@@ -1055,6 +1244,8 @@ TOOLS: Dict[str, Callable] = {
     "read_document": read_document_tool,
     "match_script_to_transcripts": match_script_to_transcripts_tool,
     "propose_cuts_from_transcripts": propose_cuts_from_transcripts_tool,
+    "build_llm_paste_prompt": build_llm_paste_prompt_tool,
+    "apply_pasted_plan": apply_pasted_plan_tool,
     "get_plan": get_plan_tool,
     "regenerate_plan": regenerate_plan_tool,
     "apply_plan": apply_plan_tool,
