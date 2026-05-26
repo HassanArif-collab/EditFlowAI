@@ -618,17 +618,71 @@ async def match_script_to_takes(
         # ── Step 3: Process LLM response ──
         chosen_label = parsed.get("chosen")
         if chosen_label is None:
-            decisions.append("llm_null_choice")
-            results.append(MatchedBeat(
-                beat_index=beat_idx,
-                beat_text=beat_text,
-                beat_kind=beat_kind,
-                unmatched_reason="llm_null_choice",
-                raw_llm_response=json.dumps(parsed),
-                decisions=decisions,
-                alternates=alternates,
-            ))
-            continue
+            # ── FALLBACK: deterministic token-overlap match ────────────────
+            # The local LLM (small Ollama model) routinely returns "no match"
+            # for Urdu/Hindi candidates that ARE perfect matches.  When the
+            # user's script line is a verbatim quote from the transcript,
+            # token overlap will catch it even when the LLM is too timid.
+            #
+            # Algorithm: tokenize beat + each candidate take, drop punctuation,
+            # compute Jaccard overlap (intersection / union of word sets).
+            # If any candidate has overlap >= 0.55, accept it.  Pick the
+            # highest-scoring one.
+            def _toks(s: str) -> set[str]:
+                # Strip common Urdu/Hindi punctuation + ASCII punctuation
+                tbl = str.maketrans({c: " " for c in ",.!?:;\"'()[]{}،۔।"})
+                return {w for w in s.translate(tbl).split() if w}
+            beat_toks = _toks(beat_text)
+            best_overlap = 0.0
+            best_idx = -1
+            if beat_toks:
+                for cand_idx, (_label, _take, _take_words) in enumerate(candidates):
+                    cand_text = " ".join(w.text for w in _take_words) if _take_words else _take.text
+                    cand_toks = _toks(cand_text)
+                    if not cand_toks:
+                        continue
+                    inter = beat_toks & cand_toks
+                    union = beat_toks | cand_toks
+                    jacc = len(inter) / len(union) if union else 0.0
+                    # Also check: do most of the BEAT'S words appear in the candidate?
+                    coverage = len(inter) / len(beat_toks)
+                    score = max(jacc, coverage * 0.9)  # coverage-weighted
+                    if score > best_overlap:
+                        best_overlap = score
+                        best_idx = cand_idx
+            if best_idx >= 0 and best_overlap >= 0.55:
+                decisions.append(f"llm_null_but_overlap_fallback={best_overlap:.2f}")
+                chosen_label = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"[best_idx]
+                # Synthesise a "parsed" structure the rest of this loop expects
+                _, _fb_take, _fb_words = candidates[best_idx]
+                fb_first = _fb_words[0].text if _fb_words else ""
+                fb_last = _fb_words[-1].text if _fb_words else ""
+                parsed = {
+                    "chosen": chosen_label,
+                    "first_words": fb_first,
+                    "last_words": fb_last,
+                    "score": round(best_overlap, 2),
+                    "rationale": "token_overlap_fallback",
+                }
+                logger.info(
+                    f"script_matcher beat {beat_idx}: LLM said null, recovered "
+                    f"with token-overlap {best_overlap:.2f} → candidate "
+                    f"{chosen_label} ({_fb_take.take_id[:8] if hasattr(_fb_take,'take_id') else '?'})"
+                )
+            else:
+                decisions.append(
+                    f"llm_null_choice (overlap_max={best_overlap:.2f}, no fallback)"
+                )
+                results.append(MatchedBeat(
+                    beat_index=beat_idx,
+                    beat_text=beat_text,
+                    beat_kind=beat_kind,
+                    unmatched_reason="llm_null_choice",
+                    raw_llm_response=json.dumps(parsed),
+                    decisions=decisions,
+                    alternates=alternates,
+                ))
+                continue
 
         # Find the chosen candidate
         chosen_idx = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".index(chosen_label.upper()) if len(chosen_label) == 1 else -1

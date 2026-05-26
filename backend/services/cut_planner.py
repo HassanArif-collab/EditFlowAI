@@ -506,15 +506,23 @@ def plan_to_edl_ops(plan: Plan, target_seq_name: str) -> list[dict]:
     for cut in plan.cuts:
         src_in_aligned = _frame_align(cut.source_in)
         src_out_aligned = _frame_align(cut.source_out)
+        # Also frame-align the TIMELINE start position.  Was previously left
+        # unaligned, which is what kept the red A/V sync badge alive even
+        # after we aligned source in/out: V snapped to a frame on placement
+        # but A snapped to a sample, so V and A drifted by one frame.
+        start_aligned = _frame_align(cut.timeline_position)
+        # Duration must also be a multiple of 1/fps to keep end-of-clip in sync.
+        # We derive it from aligned in/out so it's always frame-quantised.
+        duration_aligned = src_out_aligned - src_in_aligned
         ops.append({
             "action": "add",
             "mediaPath": cut.take_source_file,
             "video_track_index": 0,   # V1
             "audio_track_index": 0,   # A1
-            "startTime": cut.timeline_position,
+            "startTime": start_aligned,
             "inPoint": src_in_aligned,
             "outPoint": src_out_aligned,
-            "endTime": cut.timeline_position + cut.duration,
+            "endTime": start_aligned + duration_aligned,
             "audio_fade_in_ms": cut.audio_fade_in_ms,
             "audio_fade_out_ms": cut.audio_fade_out_ms,
         })
