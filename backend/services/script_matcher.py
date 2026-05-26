@@ -36,7 +36,21 @@ logger = logging.getLogger(__name__)
 
 # ── Beat parsing ──
 
-_BEAT_SPLIT = re.compile(r"(?<=[.!?])\s+(?=[A-Z])|\n{2,}", re.MULTILINE)
+_BEAT_SPLIT = re.compile(
+    # Split a script into beats on ANY of:
+    #   1. End of sentence followed by an English capital letter — original
+    #      English-only rule.  "Hello. World." → ["Hello.", "World."].
+    #   2. Urdu / Arabic / Hindi end-of-sentence followed by whitespace —
+    #      "۔" (U+06D4 Arabic Full Stop) or "।" (U+0964 Devanagari Danda),
+    #      common in pasted non-English scripts.
+    #   3. ANY newline (one or more) — script writers commonly put one line
+    #      per beat without blank-line separators.  Was \n{2,} which required
+    #      a BLANK line between beats; that excluded the natural one-line-per-
+    #      beat format Urdu / Hindi scripts use and lumped every line into
+    #      a single beat.  THAT bug surfaced as "1 cut from a 17-line script".
+    r"(?<=[.!?])\s+(?=[A-Z])|(?<=[۔।])\s+|\n+",
+    re.MULTILINE,
+)
 _BRACKET_BEAT = re.compile(r"\[\[(.+?)\]\]", re.DOTALL)
 
 
