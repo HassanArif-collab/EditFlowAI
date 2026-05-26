@@ -632,18 +632,26 @@ async def match_script_to_takes(
                 # Strip common Urdu/Hindi punctuation + ASCII punctuation
                 tbl = str.maketrans({c: " " for c in ",.!?:;\"'()[]{}،۔।"})
                 return {w for w in s.translate(tbl).split() if w}
+
             beat_toks = _toks(beat_text)
             best_overlap = 0.0
-            best_idx = -1
+            best_take_idx = -1  # index into the FULL `takes` list
+
+            # Search the ENTIRE takes list, not just the embedding-filtered
+            # candidates.  The multilingual MiniLM embedding scores Urdu
+            # takes below the 0.3 recall threshold even when they're a
+            # verbatim match, so the correct take never makes it into the
+            # LLM-candidate list.  The fallback's whole purpose is to catch
+            # what embeddings missed — limiting it to the candidate list
+            # was self-defeating.
             if beat_toks:
-                for cand_idx, (_label, _take, _take_words) in enumerate(candidates):
-                    # TranscriptWord attribute is `.word` (verified in
-                    # backend/models/schemas.py line 67), NOT `.text` —
-                    # the first version of this fallback crashed here.
+                for t_idx, t in enumerate(takes):
+                    t_words = word_lookup.get(t.source_file, [])
+                    t_words_slice = t_words[t.word_offset:t.word_offset + t.word_count]
                     cand_text = (
-                        " ".join(w.word for w in _take_words)
-                        if _take_words
-                        else _take.text
+                        " ".join(w.word for w in t_words_slice)
+                        if t_words_slice
+                        else t.text
                     )
                     cand_toks = _toks(cand_text)
                     if not cand_toks:
@@ -651,19 +659,38 @@ async def match_script_to_takes(
                     inter = beat_toks & cand_toks
                     union = beat_toks | cand_toks
                     jacc = len(inter) / len(union) if union else 0.0
-                    # Also check: do most of the BEAT'S words appear in the candidate?
                     coverage = len(inter) / len(beat_toks)
-                    score = max(jacc, coverage * 0.9)  # coverage-weighted
+                    # Equal-weighted: a high-coverage match (most of the
+                    # script line's words appear in the take) is as good as
+                    # a high-Jaccard match.  Previously coverage was * 0.9
+                    # which dropped legit verbatim matches below the bar.
+                    score = max(jacc, coverage)
                     if score > best_overlap:
                         best_overlap = score
-                        best_idx = cand_idx
-            if best_idx >= 0 and best_overlap >= 0.55:
-                decisions.append(f"llm_null_but_overlap_fallback={best_overlap:.2f}")
-                chosen_label = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"[best_idx]
-                # Synthesise a "parsed" structure the rest of this loop expects
-                _, _fb_take, _fb_words = candidates[best_idx]
-                fb_first = _fb_words[0].word if _fb_words else ""
-                fb_last = _fb_words[-1].word if _fb_words else ""
+                        best_take_idx = t_idx
+
+            # Threshold 0.50 because some script lines span take boundaries
+            # (the take-segmenter may split a sentence on a long pause).
+            # At 50% word coverage we're already confident this is the right
+            # span — the matcher's word-level boundary search downstream
+            # will tighten the in/out points within the chosen take.
+            if best_take_idx >= 0 and best_overlap >= 0.50:
+                # Inject the winning take into the candidate list so the
+                # downstream code (which addresses candidates[chosen_idx])
+                # finds it.  Use the next available letter label.
+                fb_take = takes[best_take_idx]
+                fb_words = word_lookup.get(fb_take.source_file, [])
+                fb_words = fb_words[fb_take.word_offset:fb_take.word_offset + fb_take.word_count]
+                fb_label_idx = len(candidates) % 26
+                fb_label = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"[fb_label_idx]
+                candidates.append((fb_label, fb_take, fb_words))
+                chosen_label = fb_label
+                decisions.append(
+                    f"llm_null_but_overlap_fallback={best_overlap:.2f} "
+                    f"(searched all {len(takes)} takes, not just candidates)"
+                )
+                fb_first = fb_words[0].word if fb_words else ""
+                fb_last = fb_words[-1].word if fb_words else ""
                 parsed = {
                     "chosen": chosen_label,
                     "first_words": fb_first,
@@ -673,8 +700,9 @@ async def match_script_to_takes(
                 }
                 logger.info(
                     f"script_matcher beat {beat_idx}: LLM said null, recovered "
-                    f"with token-overlap {best_overlap:.2f} → candidate "
-                    f"{chosen_label} ({_fb_take.take_id[:8] if hasattr(_fb_take,'take_id') else '?'})"
+                    f"with token-overlap {best_overlap:.2f} → take "
+                    f"{getattr(fb_take, 'take_id', '?')[:8]} "
+                    f"({fb_take.source_start:.1f}s-{fb_take.source_end:.1f}s)"
                 )
             else:
                 decisions.append(
