@@ -575,11 +575,63 @@ async def read_document_tool(args: dict, ws_emit: Callable, session: Any = None)
 
 # ── Tool: match_script_to_transcripts ──────────────────────────
 
+def _extract_script_from_history(session: Any, min_lines: int = 2, min_chars: int = 40) -> Optional[str]:
+    """Pull the most recent user message that looks like a pasted script.
+
+    Small local LLMs frequently truncate multi-line / non-Latin script
+    text when they have to embed it in a tool-call JSON argument.  The
+    workaround: store the script in conversation history (which never
+    truncates) and recover it here when the tool's ``script`` arg comes
+    in empty.
+
+    A message qualifies as a "script" if it has at least ``min_lines``
+    newline-separated non-empty lines OR is at least ``min_chars`` long
+    and contains common Urdu / Hindi / RTL characters.
+    """
+    if not session or not hasattr(session, "history"):
+        return None
+    # Walk history in reverse, skip the most recent (which may be the
+    # current tool call) and pick the last "user" content that's long.
+    for entry in reversed(getattr(session, "history", []) or []):
+        if entry.get("role") != "user":
+            continue
+        content = entry.get("content") or ""
+        if not isinstance(content, str):
+            continue
+        # Strip the "اسکرپٹ:" / "here is the script" preamble if present.
+        cleaned = content
+        for prefix_token in ("اسکرپٹ:", "اسکرپٹ", "Here is my script", "Here is the script", "Script:", "script:"):
+            if prefix_token.lower() in cleaned.lower():
+                # Take everything after the last occurrence of the marker
+                idx = cleaned.lower().rfind(prefix_token.lower())
+                cleaned = cleaned[idx + len(prefix_token):].strip(" :\n")
+                break
+        nonblank = [ln for ln in cleaned.splitlines() if ln.strip()]
+        if len(nonblank) >= min_lines:
+            return "\n".join(nonblank)
+        if len(cleaned) >= min_chars:
+            return cleaned
+    return None
+
+
 async def match_script_to_transcripts_tool(args: dict, ws_emit: Callable, session: Any = None) -> dict:
     """Wrap the existing /api/edit/analyze pipeline."""
     raw_bin_refs = args.get("bin_references", [])
     script = args.get("script", "")
     user_hint = args.get("user_hint", "")
+
+    # If the LLM omitted or truncated the script (common with small local
+    # models on long multi-line Urdu / Hindi text), recover the full text
+    # from the most recent user message in session history.
+    if not script.strip() or len(script.strip()) < 40:
+        recovered = _extract_script_from_history(session)
+        if recovered:
+            logger.info(
+                f"match_script_to_transcripts: LLM passed empty/short script "
+                f"({len(script)} chars); recovered {len(recovered)} chars "
+                f"from session history ({len(recovered.splitlines())} lines)"
+            )
+            script = recovered
 
     # Auto-recover bare filenames in bin_references the LLM may have
     # truncated (same defect class as transcribe_clips bare-filename bug).

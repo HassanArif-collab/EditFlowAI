@@ -98,6 +98,7 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
         },
     },
     {
+        "_note": "If the user pasted a long multi-line script into chat (especially in Urdu/Hindi/Arabic), you may pass script='' — the tool will auto-recover the script from the most recent user message. This avoids truncation issues with non-Latin text in tool-call JSON.",
         "name": "match_script_to_transcripts",
         "description": "Match a written script to transcribed takes and build an edit plan. Use this when the user HAS a script.",
         "args": {

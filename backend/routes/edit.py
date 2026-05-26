@@ -129,15 +129,33 @@ async def run_analyze(req: AnalyzeRequest) -> dict:
 
     for i, clip in enumerate(clips):
         try:
-            # Prepare audio
-            from ..services.audio_prepare import audio_prepare_service
-            prepared = audio_prepare_service.prepare(clip.path)
-
-            # Transcribe
-            result = await whisper_service.transcribe_fingerprinted(
-                prepared.prepared_wav_path or clip.path,
-                language=req.language,
-            )
+            # Try to reuse the transcript cached by transcribe_clips first.
+            # transcribe_clips calls whisper_service.transcribe_fingerprinted
+            # with the SOURCE path (clip.path), so its cache key is the
+            # source's content hash.  If we run audio_prepare here and then
+            # pass the prepared WAV's path, we compute a DIFFERENT cache key
+            # and trigger a full re-transcription — 5+ minutes wasted per
+            # script-match call.  Always try the source path first.
+            try:
+                result = await whisper_service.transcribe_fingerprinted(
+                    clip.path,
+                    language=req.language,
+                    force=False,  # cache-only mode in practice when a hit exists
+                )
+            except Exception as cache_miss:
+                # Fallback to the prepared-audio path if direct transcription
+                # of the source fails (e.g. unsupported container that needs
+                # ffmpeg extraction first).
+                logger.info(
+                    f"run_analyze: source-path transcribe failed for {clip.name}, "
+                    f"falling back to audio_prepare ({cache_miss})"
+                )
+                from ..services.audio_prepare import audio_prepare_service
+                prepared = audio_prepare_service.prepare(clip.path)
+                result = await whisper_service.transcribe_fingerprinted(
+                    prepared.prepared_wav_path or clip.path,
+                    language=req.language,
+                )
 
             # Junk filter
             result, junk_reasons = filter_junk_segments(result)
