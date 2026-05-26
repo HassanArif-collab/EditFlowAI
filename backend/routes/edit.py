@@ -209,7 +209,11 @@ async def run_analyze(req: AnalyzeRequest) -> dict:
             take_words = take_words[mb.take.word_offset:mb.take.word_offset + mb.take.word_count]
             vm = validate_and_fix(mb, take_words)
         else:
-            from .match_validator import ValidatedMatch
+            # FIX: was `from .match_validator` (wrong package — would fire
+            # ModuleNotFoundError whenever the matcher returned an unmatched
+            # beat, which is exactly when this fallback is needed).
+            # match_validator lives in backend.services, not backend.routes.
+            from ..services.match_validator import ValidatedMatch
             vm = ValidatedMatch(matched=mb)
         validated.append(vm)
 
