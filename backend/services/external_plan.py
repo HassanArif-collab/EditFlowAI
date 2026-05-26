@@ -50,12 +50,51 @@ class ExternalPlanError(ValueError):
 
 # ── JSON extraction ────────────────────────────────────────────
 
-# Frontier models often wrap JSON in ```json``` fences or surrounding prose.
-# This regex pulls out the first balanced {...} that contains "cuts".
-_JSON_BLOCK_RE = re.compile(
-    r"\{[^{}]*\"cuts\"\s*:\s*\[.*?\]\s*[^{}]*\}",
-    re.DOTALL,
-)
+
+def _find_balanced_objects(text: str):
+    """Yield (start, end_exclusive) indices for every top-level balanced
+    {...} object in *text*.
+
+    Tracks string state so braces inside JSON strings (e.g. ``"foo {bar}"``)
+    don't confuse the counter.  We use this instead of a regex because
+    JSON objects nest arbitrarily and a regex of the form ``\\{[^{}]*\\}``
+    can't see past a nested object — meaning ``{"meta":{"x":1},"cuts":[]}``
+    would fail.  (We hit exactly that on a Claude paste in testing.)
+    """
+    i = 0
+    while i < len(text):
+        if text[i] != "{":
+            i += 1
+            continue
+        # Found a candidate object start — scan forward for the matching brace
+        depth = 0
+        in_string = False
+        escape = False
+        j = i
+        while j < len(text):
+            ch = text[j]
+            if in_string:
+                if escape:
+                    escape = False
+                elif ch == "\\":
+                    escape = True
+                elif ch == '"':
+                    in_string = False
+            else:
+                if ch == '"':
+                    in_string = True
+                elif ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 0:
+                        yield (i, j + 1)
+                        i = j + 1
+                        break
+            j += 1
+        else:
+            # Ran off the end without closing — this candidate is junk.
+            i += 1
 
 
 def _extract_json(raw: str) -> dict:
@@ -63,36 +102,53 @@ def _extract_json(raw: str) -> dict:
 
     Accepts either pure JSON or a fenced/embedded block.  Raises
     ExternalPlanError on failure.
+
+    Strategy (in order):
+      1. Try direct json.loads.
+      2. Find ```json``` fences and parse what's inside.
+      3. Find every balanced {...} block and pick the first one that has a
+         ``cuts`` array (in case the user pasted multiple objects, or there
+         are JSON-looking decoys like config snippets).
     """
     raw = raw.strip()
     if not raw:
         raise ExternalPlanError("Pasted plan is empty.")
 
-    # Try direct parse first
+    # 1. Direct parse
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
         pass
 
-    # Strip common ``` fences
-    fenced = re.search(r"```(?:json)?\s*(.*?)```", raw, re.DOTALL)
-    if fenced:
-        body = fenced.group(1).strip()
+    # 2. Try EACH fenced ``` block (some models emit multiple blocks)
+    for m in re.finditer(r"```(?:json)?\s*(.*?)```", raw, re.DOTALL):
+        body = m.group(1).strip()
         try:
-            return json.loads(body)
+            parsed = json.loads(body)
+            if isinstance(parsed, dict) and "cuts" in parsed:
+                return parsed
         except json.JSONDecodeError:
-            pass
+            continue
 
-    # Last resort: find the first balanced object with "cuts" key
-    match = _JSON_BLOCK_RE.search(raw)
-    if match:
+    # 3. Walk every balanced {...} object in the raw text
+    last_parse_error: Optional[str] = None
+    for start, end in _find_balanced_objects(raw):
+        candidate = raw[start:end]
+        if '"cuts"' not in candidate:
+            # Cheap pre-filter: skip objects that obviously aren't our plan
+            continue
         try:
-            return json.loads(match.group(0))
+            parsed = json.loads(candidate)
         except json.JSONDecodeError as exc:
-            raise ExternalPlanError(
-                f"Found a JSON-looking block but couldn't parse it: {exc}"
-            ) from exc
+            last_parse_error = str(exc)
+            continue
+        if isinstance(parsed, dict) and "cuts" in parsed:
+            return parsed
 
+    if last_parse_error:
+        raise ExternalPlanError(
+            f"Found a JSON-looking block but couldn't parse it: {last_parse_error}"
+        )
     raise ExternalPlanError(
         "Couldn't find a JSON object in the pasted text. "
         "Make sure it contains a 'cuts' array."
@@ -118,9 +174,16 @@ def _resolve_source_file(
         return requested
 
     req_name = Path(requested).name.lower()
-    for clip_path in transcripts_ready.keys():
-        if Path(clip_path).name.lower() == req_name:
-            return clip_path
+    matches = [p for p in transcripts_ready.keys() if Path(p).name.lower() == req_name]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        # Two clips with the same basename in different folders — we can't
+        # safely pick.  Force the user to use the full path.
+        raise ExternalPlanError(
+            f"source_file '{requested}' is ambiguous; multiple transcribed "
+            f"clips have that filename: {matches}.  Use the full path."
+        )
 
     available = sorted({Path(p).name for p in transcripts_ready.keys()})
     raise ExternalPlanError(

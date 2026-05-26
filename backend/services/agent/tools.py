@@ -1122,27 +1122,52 @@ async def build_llm_paste_prompt_tool(args: dict, ws_emit: Callable, session: An
         word_lookup=word_lookup,
     )
 
-    summary_lines = [
-        f"Built LLM prompt: {len(prompt):,} characters, "
-        f"{sum(len(v) for v in word_lookup.values()):,} words across "
-        f"{len(word_lookup)} clip(s).",
-        "Copy the prompt below and paste it into Claude/ChatGPT/Gemini.",
-        "When it replies with JSON, paste that JSON back here to apply.",
-    ]
+    # Frontend has no copy-to-clipboard UI handler (would require new UI
+    # which the user explicitly declined).  Instead, write the prompt to a
+    # file next to one of the source clips so the user can open it in any
+    # text editor, select all, and paste into the frontier model.  We pick
+    # the first clip's directory as the home — that's where the user
+    # already has the transcripts and is the natural copy destination.
+    prompt_path: Path | None = None
+    try:
+        first_clip = next(iter(word_lookup.keys()))
+        home = Path(first_clip).parent
+        prompt_path = home / "editflow_llm_prompt.txt"
+        prompt_path.write_text(prompt, encoding="utf-8")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Couldn't write prompt file: %s", e)
+        prompt_path = None
+
+    # Build the summary so the path is the FIRST line — that's what the LLM
+    # quotes back to the user and what makes the prompt actually findable.
+    if prompt_path:
+        summary_lines = [
+            f"LLM prompt written to: {prompt_path}",
+            f"({len(prompt):,} chars, "
+            f"{sum(len(v) for v in word_lookup.values()):,} words, "
+            f"{len(word_lookup)} clip(s)).",
+            "Open that file, copy ALL of it, paste into Claude/ChatGPT/Gemini.",
+            "When it replies with JSON, paste the JSON back in chat here.",
+        ]
+    else:
+        summary_lines = [
+            f"Built LLM prompt: {len(prompt):,} characters, "
+            f"{sum(len(v) for v in word_lookup.values()):,} words across "
+            f"{len(word_lookup)} clip(s). (Couldn't write to disk — see logs.)",
+        ]
     if missing:
-        summary_lines.append(f"(Note: no word data for {', '.join(missing)} — skipped.)")
+        summary_lines.append(f"(No word data for {', '.join(missing)} — skipped.)")
 
     return _envelope(
         tool="build_llm_paste_prompt",
         success=True,
         summary="\n".join(summary_lines),
         data={
-            "prompt": prompt,
             "prompt_chars": len(prompt),
+            "prompt_path": str(prompt_path) if prompt_path else None,
             "clips_included": list(word_lookup.keys()),
             "clips_missing": missing,
         },
-        ui={"kind": "copy_to_clipboard", "text": prompt},
     )
 
 
@@ -1208,13 +1233,9 @@ async def apply_pasted_plan_tool(args: dict, ws_emit: Callable, session: Any = N
             error=str(exc),
         )
 
-    # Stash plan_id on the session so apply_plan can find it without args.
-    try:
-        ctx = getattr(session, "context", {}) or {}
-        ctx["last_plan_id"] = plan.plan_id
-    except Exception:  # noqa: BLE001
-        pass
-
+    # plan_id is picked up by session._update_context_from_tool because we
+    # registered "apply_pasted_plan" alongside the matcher tools — no manual
+    # context write needed here.
     return _envelope(
         tool="apply_pasted_plan",
         success=True,
@@ -1222,7 +1243,7 @@ async def apply_pasted_plan_tool(args: dict, ws_emit: Callable, session: Any = N
             f"Built plan {plan.plan_id} from pasted JSON: "
             f"{len(plan.cuts)} cut(s), {len(plan.gaps)} skipped, "
             f"{plan.summary.get('total_duration', 0):.1f}s total. "
-            f"Ready to Build sequence."
+            f"Ready to Build sequence (call apply_plan with plan_id={plan.plan_id})."
         ),
         data={
             "plan_id": plan.plan_id,
@@ -1230,7 +1251,6 @@ async def apply_pasted_plan_tool(args: dict, ws_emit: Callable, session: Any = N
             "gaps": plan.gaps,
             "cuts_count": len(plan.cuts),
         },
-        ui={"kind": "plan_ready", "plan_id": plan.plan_id},
     )
 
 

@@ -49,6 +49,51 @@ def test_extract_json_no_object_raises():
         _extract_json("just plain prose with no json")
 
 
+def test_extract_json_with_nested_object_before_cuts():
+    """Regression: the old regex-based extractor choked on objects that had
+    a nested object (e.g. ``meta``) BEFORE the ``cuts`` key.  Frontier
+    models routinely emit JSON with a sibling metadata object, and we must
+    not lose those."""
+    raw = (
+        'Here you go: {"meta":{"author":"claude","model":"opus"},'
+        '"cuts":[{"source_file":"a.mov","source_in":0,"source_out":5}]}'
+    )
+    out = _extract_json(raw)
+    assert "cuts" in out
+    assert out["meta"]["author"] == "claude"
+
+
+def test_extract_json_with_braces_inside_strings():
+    """Regression: balanced-brace scan must not be confused by braces that
+    appear inside JSON string values (e.g. an LLM quoting code)."""
+    raw = '{"cuts":[{"beat_text":"function f() { return 1; }","source_file":"a.mov","source_in":0,"source_out":2}]}'
+    out = _extract_json(raw)
+    assert out["cuts"][0]["beat_text"].startswith("function")
+
+
+def test_extract_json_picks_object_with_cuts_when_multiple():
+    """If the user pastes a config object AND the cut plan, pick the right one."""
+    raw = (
+        '{"some_other":{"x":1}}\n'
+        'and then:\n'
+        '{"cuts":[{"source_file":"a.mov","source_in":1,"source_out":3}]}'
+    )
+    out = _extract_json(raw)
+    assert "cuts" in out
+
+
+def test_resolve_basename_collision_raises():
+    """Two clips with the same filename in different folders must fail
+    loudly rather than silently picking one."""
+    ready = {
+        "/A/IMG_1694.MOV": {},
+        "/B/IMG_1694.MOV": {},
+    }
+    with pytest.raises(ExternalPlanError) as exc:
+        _resolve_source_file("IMG_1694.MOV", ready)
+    assert "ambiguous" in str(exc.value).lower()
+
+
 # ── _resolve_source_file ───────────────────────────────────────
 
 def test_resolve_exact_match():

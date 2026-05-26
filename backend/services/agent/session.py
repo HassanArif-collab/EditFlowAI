@@ -160,7 +160,14 @@ class AgentSession:
                 path = clip_info.get("path", "")
                 if path:
                     self.context["transcripts_ready"][path] = clip_info.get("fingerprint", "done")
-        elif tool in ("match_script_to_transcripts", "propose_cuts_from_transcripts"):
+        elif tool in (
+            "match_script_to_transcripts",
+            "propose_cuts_from_transcripts",
+            # apply_pasted_plan produces a Plan exactly like the matcher tools,
+            # so its plan_id should flow into current_plan_id the same way —
+            # otherwise a follow-up "Build sequence" can't find it.
+            "apply_pasted_plan",
+        ):
             plan_id = data.get("plan_id")
             if plan_id:
                 self.context["current_plan_id"] = plan_id
