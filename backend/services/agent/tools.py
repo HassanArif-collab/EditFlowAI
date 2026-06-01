@@ -953,6 +953,17 @@ async def apply_plan_tool(args: dict, ws_emit: Callable, session: Any = None) ->
     plan_id = args.get("plan_id", "")
     target_sequence_name = args.get("target_sequence_name", "")
 
+    # Fallback: recover plan_id from session context when the LLM omits it.
+    # The LLM frequently calls apply_plan right after match_script_to_transcripts
+    # but forgets to thread plan_id through — session context always has it.
+    if not plan_id and session:
+        plan_id = (getattr(session, "context", {}) or {}).get("last_plan_id", "")
+        if plan_id:
+            logger.info(
+                "apply_plan: plan_id missing from args, recovered from "
+                "session.context.last_plan_id: %s", plan_id
+            )
+
     if not plan_id:
         return _envelope(
             tool="apply_plan",
@@ -1165,9 +1176,17 @@ async def build_llm_paste_prompt_tool(args: dict, ws_emit: Callable, session: An
         data={
             "prompt_chars": len(prompt),
             "prompt_path": str(prompt_path) if prompt_path else None,
+            "prompt": prompt,
             "clips_included": list(word_lookup.keys()),
             "clips_missing": missing,
         },
+        ui={"kind": "paste_prompt_card", "payload": {
+            "prompt": prompt,
+            "prompt_path": str(prompt_path) if prompt_path else None,
+            "prompt_chars": len(prompt),
+            "clips_included": list(word_lookup.keys()),
+            "clips_missing": missing,
+        }},
     )
 
 
@@ -1236,13 +1255,27 @@ async def apply_pasted_plan_tool(args: dict, ws_emit: Callable, session: Any = N
     # plan_id is picked up by session._update_context_from_tool because we
     # registered "apply_pasted_plan" alongside the matcher tools — no manual
     # context write needed here.
+
+    # Build a beats list so the plan_card UI has something to display.
+    total_dur = plan.summary.get("total_duration", 0)
+    beats = []
+    for c in plan.cuts:
+        beats.append({
+            "text": getattr(c, "beat_text", "") or "",
+            "clipName": Path(c.take_source_file).name if getattr(c, "take_source_file", None) else "",
+            "start": round(getattr(c, "source_in", 0) or 0, 2),
+            "end": round(getattr(c, "source_out", 0) or 0, 2),
+            "duration": round(getattr(c, "duration", 0) or 0, 2),
+            "unmatched": False,
+        })
+
     return _envelope(
         tool="apply_pasted_plan",
         success=True,
         summary=(
             f"Built plan {plan.plan_id} from pasted JSON: "
             f"{len(plan.cuts)} cut(s), {len(plan.gaps)} skipped, "
-            f"{plan.summary.get('total_duration', 0):.1f}s total. "
+            f"{total_dur:.1f}s total. "
             f"Ready to Build sequence (call apply_plan with plan_id={plan.plan_id})."
         ),
         data={
@@ -1251,6 +1284,18 @@ async def apply_pasted_plan_tool(args: dict, ws_emit: Callable, session: Any = N
             "gaps": plan.gaps,
             "cuts_count": len(plan.cuts),
         },
+        ui={"kind": "plan_card", "payload": {
+            "intro": (
+                f"Ingested pasted plan: {len(plan.cuts)} cut(s), "
+                f"{round(total_dur / 60, 1)}min total."
+            ),
+            "plan_id": plan.plan_id,
+            "plan": {
+                "beats": beats,
+                "totalDuration": total_dur,
+                "unmatched": len(plan.gaps),
+            },
+        }},
     )
 
 

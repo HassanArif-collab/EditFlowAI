@@ -7,7 +7,7 @@
  * Message kinds:
  *   agent-text, user-text, error, bin-summary-card, progress,
  *   plan-card, extract-card, success, transcript-summary-card,
- *   ask-card, tool-running-card
+ *   ask-card, tool-running-card, prompt-box
  */
 
 const $ = (sel) => document.querySelector(sel);
@@ -125,6 +125,18 @@ function appendMessage(kind, payload) {
         btn.addEventListener('click', () => payload.newEditFn());
         el.appendChild(btn);
       }
+      break;
+
+    case 'prompt-box':
+      el.className = 'msg msg-agent';
+      el.innerHTML = `<div class="msg-label">EditFlow</div>` +
+        `<div class="prompt-box">` +
+        `<div class="prompt-box-header">LLM Prompt — copy this into Claude / ChatGPT / Gemini</div>` +
+        `<textarea class="prompt-box-textarea" readonly spellcheck="false"></textarea>` +
+        `<div class="prompt-box-actions"><button class="prompt-box-copy">Copy to clipboard</button></div>` +
+        (payload.prompt_path ? `<div class="prompt-box-footer">Also saved to: ${_escapeHtml(payload.prompt_path)}</div>` : '') +
+        `</div>`;
+      setTimeout(() => _bindPromptBox(el, payload), 0);
       break;
 
     default:
@@ -371,6 +383,36 @@ function _bindAskActions(el, payload) {
       }
     });
   });
+}
+
+function _bindPromptBox(el, payload) {
+  const textarea = el.querySelector('.prompt-box-textarea');
+  const copyBtn = el.querySelector('.prompt-box-copy');
+  if (textarea && payload.prompt) {
+    textarea.value = payload.prompt;
+    // Auto-size to content, capped at 400px
+    textarea.style.height = 'auto';
+    textarea.style.height = Math.min(textarea.scrollHeight, 400) + 'px';
+  }
+  if (copyBtn && payload.prompt) {
+    copyBtn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(payload.prompt);
+        copyBtn.textContent = 'Copied!';
+        copyBtn.classList.add('copied');
+        setTimeout(() => {
+          copyBtn.textContent = 'Copy to clipboard';
+          copyBtn.classList.remove('copied');
+        }, 2000);
+      } catch (_) {
+        // Fallback: select the textarea text
+        if (textarea) {
+          textarea.select();
+          textarea.setSelectionRange(0, textarea.value.length);
+        }
+      }
+    });
+  }
 }
 
 export { appendMessage, updateProgress, clearChat, scrollToBottom };

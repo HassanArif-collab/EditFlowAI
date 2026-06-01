@@ -953,21 +953,13 @@ class WhisperService:
                 logger.warning(f"Failed to load cached transcript for {file_fingerprint[:16]}...: {e}")
         return None
 
-    def _save_transcript_cache(self, file_fingerprint: str, result: TranscriptResult) -> None:
-        """Save a transcript result to both in-memory and on-disk cache."""
-        self._transcript_cache[file_fingerprint] = result
-        cache_path = self._transcript_cache_dir() / f"{file_fingerprint}.json"
-        try:
-            cache_path.write_text(
-                result.model_dump_json(indent=2),
-                encoding="utf-8",
-            )
-        except Exception as e:
-            logger.warning(f"Failed to cache transcript for {file_fingerprint[:16]}...: {e}")
+    def _write_transcript_sidecar(self, result: TranscriptResult) -> None:
+        """Write a human-readable transcript sidecar next to the source video.
 
-        # ── Transcript sidecar ──
-        # Write a human-readable copy next to the source video so the user can
-        # inspect what was transcribed without digging into data/media_cache/.
+        This is extracted so it can be called from both the cache-miss path
+        (inside _save_transcript_cache) and the cache-hit paths so the
+        sidecar is recreated if the user deleted it.
+        """
         if not self.settings.WRITE_TRANSCRIPT_SIDECAR:
             return
         src = result.source_file
@@ -984,8 +976,21 @@ class WhisperService:
             )
             logger.info(f"Wrote transcript sidecar: {sidecar}")
         except (OSError, PermissionError) as e:
-            # Read-only volume, network drive, etc. — non-fatal.
             logger.debug(f"Skipped transcript sidecar for {src}: {e}")
+
+    def _save_transcript_cache(self, file_fingerprint: str, result: TranscriptResult) -> None:
+        """Save a transcript result to both in-memory and on-disk cache."""
+        self._transcript_cache[file_fingerprint] = result
+        cache_path = self._transcript_cache_dir() / f"{file_fingerprint}.json"
+        try:
+            cache_path.write_text(
+                result.model_dump_json(indent=2),
+                encoding="utf-8",
+            )
+        except Exception as e:
+            logger.warning(f"Failed to cache transcript for {file_fingerprint[:16]}...: {e}")
+
+        self._write_transcript_sidecar(result)
 
     async def transcribe_fingerprinted(
         self,
@@ -1066,6 +1071,8 @@ class WhisperService:
                     # Stamp source_file: JSON cache may have a stale/empty
                     # value (e.g. promoted from DB which doesn't store it).
                     cached.source_file = str(Path(source_path))
+                    # Re-ensure sidecar on cache hit: user may have deleted it
+                    self._write_transcript_sidecar(cached)
                     return cached
                 else:
                     logger.info(
@@ -1090,6 +1097,8 @@ class WhisperService:
                 db_result.source_file = str(Path(source_path))
                 # Also store in the faster caches for next time
                 self._save_transcript_cache(file_fingerprint, db_result)
+                # Re-ensure sidecar on cache hit: user may have deleted it
+                self._write_transcript_sidecar(db_result)
                 return db_result
 
         # ── Step 4: Cache miss — run transcription ──

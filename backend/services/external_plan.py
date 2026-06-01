@@ -434,3 +434,93 @@ def build_paste_prompt(
         parts.append("")
 
     return "\n".join(parts)
+
+
+# ── Cut-plan prompt for the Gemini-transcription workflow ────────
+#
+# build_paste_prompt (above) bundles OUR cached Whisper word-level transcript.
+# This builder is for the other flow: the user transcribed each clip in a
+# frontier model (e.g. Gemini) and will paste THAT transcript in themselves,
+# so we embed no transcript — only the script and the valid source filenames.
+#
+# The one rule that matters: cut on SEGMENT-level timestamps, never per-word.
+# Gemini's word-level start/end values collapse to identical numbers inside
+# long segments (we've seen dozens of words all sharing one start==end), so
+# word boundaries are unreliable; segment start_seconds/end_seconds stay
+# accurate.  If the model cuts on word times the result is mis-placed cuts.
+
+_CUTPLAN_HEADER = """You are helping me cut a Premiere Pro timeline from a transcript.
+
+Below this prompt I will paste the transcript of one or more source clips as
+JSON.  Each clip's transcript has a `segments` array; each segment has
+`start_seconds`, `end_seconds`, and `text` (and a `words` array you must
+IGNORE — see the rule below).  Multiple takes of the same line are mixed
+throughout — your job is to pick which segment span corresponds to each script
+line, preferring the cleanest delivery (no fillers, no false starts, complete
+sentences), and the LAST clean take when a line was re-recorded.
+
+Output STRICT JSON in this exact schema and nothing else:
+
+```json
+{
+  "version": 1,
+  "cuts": [
+    {
+      "beat_text": "<the script line, copied verbatim>",
+      "source_file": "<one of the exact filenames listed under SOURCE FILES>",
+      "source_in":  <number, seconds = a segment's start_seconds>,
+      "source_out": <number, seconds = a segment's end_seconds>,
+      "rationale": "<short reason, optional>"
+    }
+  ]
+}
+```
+
+Rules:
+- CRITICAL: source_in / source_out MUST come from SEGMENT-level start_seconds /
+  end_seconds.  Do NOT use the per-word timestamps — they are unreliable and
+  collapse to identical values inside long segments.  When a line spans several
+  segments, use the first segment's start_seconds and the last segment's
+  end_seconds.
+- source_file MUST be copied verbatim from the SOURCE FILES list below.  If I
+  pasted more than one clip, each transcript is preceded by a line
+  `### FILE: <filename>` — use that filename for cuts taken from it.  If only
+  one file is listed, use it for every cut.
+- One cut per script line, in script order.  Skip a line by omitting it.
+- Output only the JSON.  No prose, no markdown around it.
+"""
+
+_CUTPLAN_NO_SCRIPT_NOTE = (
+    "(No script provided.  Instead, pick the cleanest, most complete takes in "
+    "the transcript and output them in the order they should appear on the "
+    "timeline — one cut per kept segment span.)"
+)
+
+
+def build_cutplan_prompt(
+    *,
+    script: str,
+    source_files: list[str],
+) -> str:
+    """Build the prompt the user pastes into the cut-planning model.
+
+    The Gemini-workflow counterpart to build_paste_prompt: embeds the script
+    and the valid source filenames but NOT any transcript (the user pastes the
+    transcript directly after this prompt).
+    """
+    parts: list[str] = [_CUTPLAN_HEADER, ""]
+
+    parts.append("=== SOURCE FILES (use these exact names for source_file) ===")
+    for name in source_files:
+        parts.append(f"  {name}")
+    parts.append("")
+
+    parts.append("=== SCRIPT ===")
+    script = (script or "").strip()
+    parts.append(script if script else _CUTPLAN_NO_SCRIPT_NOTE)
+    parts.append("")
+
+    parts.append("=== PASTE THE TRANSCRIPT JSON BELOW THIS LINE ===")
+    parts.append("")
+
+    return "\n".join(parts)

@@ -16,6 +16,7 @@ from backend.services.external_plan import (
     _extract_json,
     _resolve_source_file,
     _snap_to_frame,
+    build_cutplan_prompt,
     build_plan_from_pasted_json,
 )
 
@@ -212,3 +213,53 @@ def test_build_plan_frame_aligned():
     assert abs(round(cut.source_out / q) * q - cut.source_out) < 5e-4
     # Sanity: the input 10.05 should not be unchanged — it should move to a frame
     assert cut.source_in != 10.05
+
+
+# ── build_cutplan_prompt (Gemini-transcription workflow) ───────
+
+def test_cutplan_prompt_forbids_word_timestamps():
+    """The whole reason this prompt exists: Gemini's per-word timestamps
+    collapse to identical values inside long segments, so cuts MUST be taken
+    from segment-level start_seconds/end_seconds.  If this instruction ever
+    disappears, the model will cut on word times and place cuts wrongly."""
+    prompt = build_cutplan_prompt(script="line A", source_files=["IMG_1694.MOV"])
+    low = prompt.lower()
+    # Must steer to segment-level times and explicitly warn off per-word times.
+    assert "start_seconds" in prompt and "end_seconds" in prompt
+    assert "per-word" in low
+    assert "ignore" in low  # the words[] array must be ignored
+
+
+def test_cutplan_prompt_lists_exact_source_files():
+    """source_file must be copied verbatim, so the valid filenames have to be
+    in the prompt or the model will guess names that won't resolve."""
+    prompt = build_cutplan_prompt(
+        script="x", source_files=["IMG_1694.MOV", "IMG_1702.MOV"]
+    )
+    assert "IMG_1694.MOV" in prompt
+    assert "IMG_1702.MOV" in prompt
+
+
+def test_cutplan_prompt_embeds_script_but_not_transcript():
+    """We embed the script and leave a placeholder for the user's pasted
+    transcript — the backend never sees the Gemini transcript."""
+    prompt = build_cutplan_prompt(
+        script="my unique script line", source_files=["a.mov"]
+    )
+    assert "my unique script line" in prompt
+    assert "PASTE THE TRANSCRIPT" in prompt.upper()
+
+
+def test_cutplan_prompt_handles_no_script():
+    """No script → fall back to 'pick the cleanest takes' framing rather than
+    emitting an empty SCRIPT section that confuses the model."""
+    prompt = build_cutplan_prompt(script="", source_files=["a.mov"])
+    assert "no script" in prompt.lower()
+
+
+def test_cutplan_prompt_emits_target_schema():
+    """The output schema must match what build_plan_from_pasted_json ingests:
+    cuts[] with source_file/source_in/source_out."""
+    prompt = build_cutplan_prompt(script="x", source_files=["a.mov"])
+    for key in ('"cuts"', "source_file", "source_in", "source_out"):
+        assert key in prompt

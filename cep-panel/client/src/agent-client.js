@@ -127,6 +127,10 @@ function _renderCard(card) {
       appendMessage('agent-text', { text: (card.payload || {}).text || '' });
       break;
 
+    case 'paste_prompt_card':
+      appendMessage('prompt-box', card.payload || {});
+      break;
+
     case 'progress':
       _progressMsgId = appendMessage('progress', {
         label: (card.payload || {}).label || 'Working...',
@@ -401,8 +405,132 @@ async function onScriptFileDropped(file) {
 async function onUserMessage(text) {
   text = (text || '').trim();
   if (!text) return;
+
+  // External-LLM paste workflow slash commands (same as orchestrator.js)
+  if (/^\/(llm[-_ ]?prompt|prompt|llm)\b/i.test(text)) {
+    appendMessage('user-text', { text });
+    await _handleLlmPromptCommand();
+    return;
+  }
+  if (/^\/(paste[-_ ]?plan|plan|apply[-_ ]?plan)\b/i.test(text)) {
+    const body = text.replace(/^\/\S+\s*/, '');
+    appendMessage('user-text', { text: '/paste-plan (json hidden)' });
+    await _handlePastePlanCommand(body);
+    return;
+  }
+
   appendMessage('user-text', { text });
   await _postTurn('user_message', { text });
+}
+
+// ── External-LLM paste workflow slash commands ────────────────
+
+function _collectBinReferences() {
+  try {
+    const state = getState();
+    const sources = (state?.session?.sources) || [];
+    // Replicate _sourceToReference logic: filter non-file sources, map to refs
+    return sources
+      .filter(s => s.type !== 'file')
+      .map(s => `@${s.type}:${s.path || s.name}`);
+  } catch (_) {
+    return [];
+  }
+}
+
+async function _handleLlmPromptCommand() {
+  const binRefs = _collectBinReferences();
+  if (binRefs.length === 0) {
+    appendMessage('agent-text', {
+      text: 'No source bins/clips selected yet. Pick a bin from your project first '
+          + '(e.g. type @bin:Raw or drop one onto this panel).',
+    });
+    return;
+  }
+
+  const scriptText = (getState()?.session?.scriptText || '').trim();
+  const msgId = appendMessage('progress', {
+    label: 'Building the LLM paste prompt...',
+    pct: 30,
+    detail: 'Loading cached transcripts for all clips in the bin.',
+  });
+
+  try {
+    const resp = await apiPost(
+      '/api/external-plan/build-prompt',
+      { bin_references: binRefs, script: scriptText },
+      { timeoutMs: 120000 },
+    );
+    updateProgress(msgId, { pct: 100, detail: 'Done.' });
+    appendMessage('prompt-box', resp);
+  } catch (err) {
+    updateProgress(msgId, { pct: 100, detail: 'Failed.' });
+    appendMessage('error', {
+      text: `Couldn't build the LLM prompt: ${err.message || err}. `
+          + `Are the clips transcribed yet?`,
+    });
+  }
+}
+
+async function _handlePastePlanCommand(rawJson) {
+  if (!rawJson || rawJson.length < 10) {
+    appendMessage('agent-text', {
+      text: 'Pass the JSON after /paste-plan. Example:\n'
+          + '  /paste-plan {"cuts":[{"source_file":"...","source_in":12.3,"source_out":18.7}]}',
+    });
+    return;
+  }
+
+  const binRefs = _collectBinReferences();
+  if (binRefs.length === 0) {
+    appendMessage('agent-text', {
+      text: 'No bin selected. Pick the bin those source_file names live in first.',
+    });
+    return;
+  }
+
+  const scriptText = (getState()?.session?.scriptText || '').trim();
+  const msgId = appendMessage('progress', {
+    label: 'Applying pasted cut plan...',
+    pct: 30,
+    detail: 'Validating JSON and resolving source files.',
+  });
+
+  let resp;
+  try {
+    resp = await apiPost(
+      '/api/external-plan/ingest',
+      {
+        pasted_text: rawJson,
+        bin_references: binRefs,
+        script: scriptText,
+        user_hint: 'external_llm_paste',
+      },
+      { timeoutMs: 60000 },
+    );
+  } catch (err) {
+    updateProgress(msgId, { pct: 100, detail: 'Failed.' });
+    appendMessage('error', {
+      text: `Plan rejected: ${err.message || err}. `
+          + `Check the JSON schema (cuts: [{source_file, source_in, source_out}]).`,
+    });
+    return;
+  }
+
+  const planId = resp.plan_id;
+  const cuts = resp.cuts_count || 0;
+  const dur = (resp.summary || {}).total_duration || 0;
+  updateProgress(msgId, { pct: 100, detail: 'Plan stored.' });
+
+  appendMessage('agent-text', {
+    text: `Plan ${planId} ingested: ${cuts} cut(s), ${dur.toFixed(1)}s total. Notifying the agent...`,
+  });
+
+  // Tell the agent about the pasted plan so it can continue the conversation.
+  await _postTurn('tool_user_response', {
+    action: 'plan_pasted',
+    plan_id: planId,
+  });
 }
 
 async function onApprovePlan() {

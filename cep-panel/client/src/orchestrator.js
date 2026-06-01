@@ -283,6 +283,35 @@ async function onUserMessage(text) {
   text = text.trim();
   if (!text) return;
 
+  // External-LLM paste workflow.  These commands are recognised in ANY state
+  // (including script_needed, where the legacy path would otherwise swallow
+  // them as a script).  Three forms:
+  //   /llm-prompt              → build a Whisper-bundled paste-into-Claude file
+  //   /cutplan                 → build the Gemini-flow cut-planning prompt
+  //   /paste-plan <json>       → ingest the model's JSON reply, queue Build seq
+  // The slash-command prefix is unambiguous; the orchestrator never matches
+  // a real script against it because Urdu/English scripts don't start with
+  // "/".  We also accept "/llm prompt" with a space for forgiving typing.
+  if (/^\/(llm[-_ ]?prompt|prompt|llm)\b/i.test(text)) {
+    appendMessage('user-text', { text });
+    await _handleLlmPromptCommand();
+    return;
+  }
+  if (/^\/cut[-_ ]?plan\b/i.test(text)) {
+    // Gemini flow: build the prompt the user pastes into the cut-planning model
+    // (no Whisper transcript bundled; they paste the Gemini transcript instead).
+    appendMessage('user-text', { text });
+    await _handleCutplanPromptCommand();
+    return;
+  }
+  if (/^\/(paste[-_ ]?plan|plan|apply[-_ ]?plan)\b/i.test(text)) {
+    // Everything after the command word is the JSON body.
+    const body = text.replace(/^\/\S+\s*/, '');
+    appendMessage('user-text', { text: '/paste-plan (json hidden)' });
+    await _handlePastePlanCommand(body);
+    return;
+  }
+
   const sourceRefs = _extractSourceReferences(text);
   const canPickSource =
     state.current === 'scanned' ||
@@ -651,6 +680,178 @@ async function _extractScriptWithLLM(fullText, filename) {
       text: 'I had trouble analyzing this document. Please paste your script below:',
     });
   }
+}
+
+// ── External-LLM paste workflow handlers ──────────────────────
+// These talk to /api/external-plan/build-prompt and /api/external-plan/ingest
+// (both stateless: they accept bin_references and resolve them server-side
+// against the cached project scan).  We do NOT touch the legacy script-match
+// flow — the orchestrator's other state transitions are unaffected.
+
+function _collectBinReferences() {
+  // Reuse the existing _sourceToReference helper that the legacy script
+  // pipeline uses, so what we send matches what /api/edit/analyze accepts.
+  const sources = getState().session.sources || [];
+  return sources.filter(s => s.type !== 'file').map(_sourceToReference);
+}
+
+async function _handleLlmPromptCommand() {
+  const binRefs = _collectBinReferences();
+  if (binRefs.length === 0) {
+    appendMessage('agent-text', {
+      text: 'No source bins/clips selected yet. Pick a bin from your project first '
+          + '(e.g. type @bin:Raw or drop one onto this panel).',
+    });
+    return;
+  }
+
+  const scriptText = (getState().session.scriptText || '').trim();
+  const msgId = appendMessage('progress', {
+    label: 'Building the LLM paste prompt...',
+    pct: 30,
+    detail: 'Loading cached transcripts for all clips in the bin.',
+  });
+
+  try {
+    const resp = await apiPost(
+      '/api/external-plan/build-prompt',
+      { bin_references: binRefs, script: scriptText },
+      { timeoutMs: 120000 },
+    );
+    updateProgress(msgId, { pct: 100, detail: 'Done.' });
+    appendMessage('prompt-box', resp);
+  } catch (err) {
+    updateProgress(msgId, { pct: 100, detail: 'Failed.' });
+    appendMessage('error', {
+      text: `Couldn't build the LLM prompt: ${err.message || err}. `
+          + `Are the clips transcribed yet?`,
+    });
+  }
+}
+
+async function _handleCutplanPromptCommand() {
+  const binRefs = _collectBinReferences();
+  if (binRefs.length === 0) {
+    appendMessage('agent-text', {
+      text: 'No source bins/clips selected yet. Pick a bin from your project first '
+          + '(e.g. type @bin:Raw or drop one onto this panel).',
+    });
+    return;
+  }
+
+  const scriptText = (getState().session.scriptText || '').trim();
+  const msgId = appendMessage('progress', {
+    label: 'Building the cut-planning prompt...',
+    pct: 40,
+    detail: 'Collecting clip names from the bin.',
+  });
+
+  try {
+    const resp = await apiPost(
+      '/api/external-plan/cutplan-prompt',
+      { bin_references: binRefs, script: scriptText },
+      { timeoutMs: 60000 },
+    );
+    updateProgress(msgId, { pct: 100, detail: 'Done.' });
+    appendMessage('prompt-box', resp);
+  } catch (err) {
+    updateProgress(msgId, { pct: 100, detail: 'Failed.' });
+    appendMessage('error', {
+      text: `Couldn't build the cut-planning prompt: ${err.message || err}.`,
+    });
+  }
+}
+
+async function _handlePastePlanCommand(rawJson) {
+  if (!rawJson || rawJson.length < 10) {
+    appendMessage('agent-text', {
+      text: 'Pass the JSON after /paste-plan. Example:\n'
+          + '  /paste-plan {"cuts":[{"source_file":"...","source_in":12.3,"source_out":18.7}]}',
+    });
+    return;
+  }
+
+  const binRefs = _collectBinReferences();
+  if (binRefs.length === 0) {
+    appendMessage('agent-text', {
+      text: 'No bin selected. Pick the bin those source_file names live in first.',
+    });
+    return;
+  }
+
+  const scriptText = (getState().session.scriptText || '').trim();
+  const msgId = appendMessage('progress', {
+    label: 'Applying pasted cut plan...',
+    pct: 30,
+    detail: 'Validating JSON and resolving source files.',
+  });
+
+  let resp;
+  try {
+    resp = await apiPost(
+      '/api/external-plan/ingest',
+      {
+        pasted_text: rawJson,
+        bin_references: binRefs,
+        script: scriptText,
+        user_hint: 'external_llm_paste',
+      },
+      { timeoutMs: 60000 },
+    );
+  } catch (err) {
+    updateProgress(msgId, { pct: 100, detail: 'Failed.' });
+    appendMessage('error', {
+      text: `Plan rejected: ${err.message || err}. `
+          + `Check the JSON schema (cuts: [{source_file, source_in, source_out}]).`,
+    });
+    return;
+  }
+
+  const planId = resp.plan_id;
+  if (!planId) {
+    updateProgress(msgId, { pct: 100, detail: 'Failed.' });
+    appendMessage('error', { text: 'Ingest returned no plan_id.' });
+    return;
+  }
+  const skipped = (resp.gaps || []).length;
+  updateProgress(msgId, { pct: 100, detail: 'Plan stored.' });
+
+  // Load the full plan so we render the SAME card the matcher uses.
+  // _extractBeats handles the Cut serialisation identically for both paths.
+  let plan;
+  try {
+    plan = await apiGet(`/api/edit/plan/${planId}`, { timeoutMs: 10000 });
+  } catch (_) {
+    plan = resp;
+  }
+
+  // Land in plan_ready the way the matcher path ends up there, so the card's
+  // "Build sequence" button (onApprovePlan → transition('approve_clicked'),
+  // valid only from plan_ready) works.  No table event reaches plan_ready from
+  // an arbitrary state, so we set it via the state API rather than editing the
+  // legacy transition table.  setState first, then setSession persists it.
+  setState({ current: 'plan_ready' });
+  setSession({ planId, dryRun: plan });
+
+  const beats = _extractBeats(plan);
+  const summary = plan.summary || resp.summary || {};
+  const totalDuration =
+    summary.total_duration || beats.reduce((s, b) => s + (b.duration || 0), 0);
+  const unmatched = summary.unmatched != null ? summary.unmatched : skipped;
+
+  appendMessage('plan-card', {
+    intro: `Pasted plan: ${beats.length} cut${beats.length === 1 ? '' : 's'}, `
+         + `${_fmtDur(totalDuration)} total`
+         + (unmatched > 0 ? `, ${unmatched} skipped` : '') + '.',
+    planId,
+    plan: { beats, totalDuration, unmatched },
+    onApprove: onApprovePlan,
+    onRegenerate: () => {
+      appendMessage('agent-text', {
+        text: 'Regenerate is not available for pasted plans — paste a new /paste-plan instead.',
+      });
+    },
+  });
 }
 
 async function _ingestScript(text) {
