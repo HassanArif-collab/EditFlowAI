@@ -26,6 +26,7 @@ from ..services.external_plan import (
     build_cutplan_prompt,
     build_paste_prompt,
     build_plan_from_pasted_json,
+    build_transcription_prompt,
 )
 from ..services.whisper_service import whisper_service
 
@@ -291,3 +292,18 @@ async def cutplan_prompt(req: CutplanPromptRequest):
         "prompt_path": saved_path,
         "source_files": source_files,
     }
+
+
+# ── /transcription-prompt ──────────────────────────────────────
+
+
+@router.get("/transcription-prompt")
+async def transcription_prompt():
+    """Return the step-1 Gemini transcription prompt (static, no project state).
+
+    The user pastes this into Gemini with the video attached; Gemini's JSON
+    output is then fed into the /cutplan-prompt (step 2).  Returns the same
+    ``{prompt, prompt_chars}`` shape the panel's prompt-box renders.
+    """
+    prompt = build_transcription_prompt()
+    return {"prompt": prompt, "prompt_chars": len(prompt)}

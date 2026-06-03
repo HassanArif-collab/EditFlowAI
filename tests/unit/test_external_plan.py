@@ -18,6 +18,7 @@ from backend.services.external_plan import (
     _snap_to_frame,
     build_cutplan_prompt,
     build_plan_from_pasted_json,
+    build_transcription_prompt,
 )
 
 
@@ -263,3 +264,24 @@ def test_cutplan_prompt_emits_target_schema():
     prompt = build_cutplan_prompt(script="x", source_files=["a.mov"])
     for key in ('"cuts"', "source_file", "source_in", "source_out"):
         assert key in prompt
+
+
+# ── build_transcription_prompt (Gemini workflow, step 1) ───────
+
+def test_transcription_prompt_emits_segment_schema():
+    """Step 1's output must be exactly what build_cutplan_prompt (step 2)
+    consumes: a segments[] array of start_seconds/end_seconds/text.  If these
+    two prompts drift apart, the Gemini pipeline silently breaks at the seam."""
+    prompt = build_transcription_prompt()
+    for key in ('"segments"', "start_seconds", "end_seconds", '"text"'):
+        assert key in prompt
+
+
+def test_transcription_prompt_forbids_per_word_and_translation():
+    """The two non-negotiables: segment-level times only (no per-word array,
+    which collapses in Gemini), and verbatim/no-translate (the source is
+    Urdu/Hindi and the cut text must match the spoken words)."""
+    low = build_transcription_prompt().lower()
+    assert "per-word" in low   # explicitly told NOT to emit a per-word breakdown
+    assert "verbatim" in low
+    assert "translate" in low  # "do NOT translate"

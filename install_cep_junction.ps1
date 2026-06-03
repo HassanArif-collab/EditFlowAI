@@ -119,8 +119,14 @@ Write-Host @"
 Next steps:
 1. (Re)start Adobe Premiere Pro
 2. Go to Window > Extensions > EditFlow AI
-3. Make sure the Python backend is running: python run.py
-4. The panel should connect to http://127.0.0.1:8765
+3. The panel AUTO-STARTS the Python backend on open. The first open after a
+   Premiere launch takes a few seconds to boot, then the panel reloads itself.
+   (To start it manually instead, you can still run: python run.py)
+4. The panel connects to http://127.0.0.1:8765
+
+If auto-start cannot find Python, set it once from the panel's dev console:
+   localStorage.editflow_python_path = 'C:\\path\\to\\python.exe'
+   (and, if needed, localStorage.editflow_repo_root = 'C:\\path\\to\\EditFlowAI')
 
 To uninstall: .\install_cep_junction.ps1 -Uninstall
 "@ -ForegroundColor White

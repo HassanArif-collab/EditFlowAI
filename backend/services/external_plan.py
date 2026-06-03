@@ -524,3 +524,49 @@ def build_cutplan_prompt(
     parts.append("")
 
     return "\n".join(parts)
+
+
+# ── Step 1 of the Gemini workflow: the transcription prompt ──────
+#
+# This is what the user pastes into Gemini WITH the video attached.  Its output
+# JSON is exactly what build_cutplan_prompt (step 2) expects to consume:
+# a ``segments`` array of {start_seconds, end_seconds, text}.  We deliberately
+# ask for SEGMENT-level times only and NO per-word array — Gemini's per-word
+# timestamps collapse to identical values inside long segments, so leaving them
+# out removes the one unreliable thing from the pipeline.
+
+_TRANSCRIPTION_HEADER = """You are transcribing a video for a Premiere Pro edit.
+I have attached/uploaded the video — transcribe its spoken audio.
+
+Output STRICT JSON in EXACTLY this schema and nothing else:
+
+```json
+{
+  "segments": [
+    { "start_seconds": <number>, "end_seconds": <number>, "text": "<verbatim words>" }
+  ]
+}
+```
+
+Rules:
+- Transcribe VERBATIM in the original spoken language (e.g. Urdu / Hindi in its
+  native script).  Do NOT translate and do NOT summarise.
+- One segment per sentence or natural pause — aim for 2-12 seconds per segment.
+  Keep a complete thought together; start a new segment at a clear pause.
+- start_seconds / end_seconds are the segment's start and end time in SECONDS
+  from the very start of the video (e.g. 12.480).  Be as accurate as you can.
+- Include EVERY spoken segment in order, INCLUDING false starts and repeated
+  takes of the same line — do NOT skip or merge repeats.  The next step picks
+  the best take, so it needs to see all of them.
+- Do NOT output a per-word breakdown.  Segment-level times only.
+- Output only the JSON object.  No prose, no markdown fences around it.
+"""
+
+
+def build_transcription_prompt() -> str:
+    """Return the step-1 prompt the user pastes into Gemini with the video.
+
+    Static by design: it instructs the model to emit the ``segments`` schema
+    that build_cutplan_prompt consumes, independent of any project state.
+    """
+    return _TRANSCRIPTION_HEADER

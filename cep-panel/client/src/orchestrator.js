@@ -285,13 +285,21 @@ async function onUserMessage(text) {
 
   // External-LLM paste workflow.  These commands are recognised in ANY state
   // (including script_needed, where the legacy path would otherwise swallow
-  // them as a script).  Three forms:
+  // them as a script).  Four forms:
+  //   /transcribe              → step 1: prompt to transcribe the video in Gemini
   //   /llm-prompt              → build a Whisper-bundled paste-into-Claude file
-  //   /cutplan                 → build the Gemini-flow cut-planning prompt
+  //   /cutplan                 → step 2: build the Gemini-flow cut-planning prompt
   //   /paste-plan <json>       → ingest the model's JSON reply, queue Build seq
   // The slash-command prefix is unambiguous; the orchestrator never matches
   // a real script against it because Urdu/English scripts don't start with
   // "/".  We also accept "/llm prompt" with a space for forgiving typing.
+  if (/^\/(transcribe|transcript|gemini[-_ ]?transcribe)\b/i.test(text)) {
+    // Gemini flow step 1: show the prompt the user pastes into Gemini (with the
+    // video attached) to get a segment-level transcript JSON to feed /cutplan.
+    appendMessage('user-text', { text });
+    await _handleTranscriptionPromptCommand();
+    return;
+  }
   if (/^\/(llm[-_ ]?prompt|prompt|llm)\b/i.test(text)) {
     appendMessage('user-text', { text });
     await _handleLlmPromptCommand();
@@ -758,6 +766,30 @@ async function _handleCutplanPromptCommand() {
     updateProgress(msgId, { pct: 100, detail: 'Failed.' });
     appendMessage('error', {
       text: `Couldn't build the cut-planning prompt: ${err.message || err}.`,
+    });
+  }
+}
+
+async function _handleTranscriptionPromptCommand() {
+  // Step 1 of the Gemini flow.  Static prompt — no bin/script needed; the user
+  // pastes it into Gemini with the video attached to get a transcript JSON.
+  const msgId = appendMessage('progress', {
+    label: 'Building the transcription prompt...',
+    pct: 50,
+    detail: 'Preparing the Gemini transcription prompt.',
+  });
+
+  try {
+    const resp = await apiGet(
+      '/api/external-plan/transcription-prompt',
+      { timeoutMs: 30000 },
+    );
+    updateProgress(msgId, { pct: 100, detail: 'Done.' });
+    appendMessage('prompt-box', resp);
+  } catch (err) {
+    updateProgress(msgId, { pct: 100, detail: 'Failed.' });
+    appendMessage('error', {
+      text: `Couldn't build the transcription prompt: ${err.message || err}.`,
     });
   }
 }
