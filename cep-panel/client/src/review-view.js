@@ -1,65 +1,72 @@
 /**
- * review-view.js — Transcript-first cut editor (the "Review" panel).
+ * review-view.js — Word-level transcript editor ("Review" panel, v2).
  *
  * WHY THIS EXISTS
  * ---------------
- * The legacy flow asks the user to trust an opaque list of cut timestamps that
- * only reveals its mistakes after it's on the Premiere timeline. Review flips
- * that: the transcript IS the editing surface. The user reads lines, plays any
- * line instantly in an in-panel video player, lets the AI mark obvious junk red,
- * toggles anything by hand, previews the kept-only cut, and only THEN builds the
- * sequence — using the existing, already-tested apply path.
+ * Sentence-level keep/cut is the wrong unit: one transcript cue mixes a false
+ * start AND the clean line. So the editing unit is the WORD. You read a flowing
+ * transcript, a karaoke highlight follows playback, you click a word to jump
+ * there, you select a span and Cut/Restore it, and you preview "Play plan" (kept
+ * words only) before building. The human is in control; the AI only proposes.
  *
- * This module is fully self-contained and ADDITIVE. It never touches the
- * orchestrator/agent state machines; opening Review just hides the chat shell
- * and shows #review-view, and closing restores it. A failure here can't corrupt
- * the legacy session.
+ * Phase 1 (this file): word doc + waveform on APPROXIMATE word times (interpolated
+ * server-side from the SRT). Phase 3 swaps in ElevenLabs Scribe's exact per-word
+ * times — no UI change, the words just get accurate timestamps.
  *
- * Backend contract (see backend/routes/review.py):
- *   POST /api/review/ingest   {transcript_text, source_file, script, fmt, tighten}
- *                             → {review_id, segments[], media_url, ...}
- *   GET  /api/review/media/{id}   range-streamed mp4 proxy (so <video> can seek)
- *   POST /api/review/suggest  {review_id, use_llm} → {segments[], summary}
- *   POST /api/review/build    {review_id, kept_ids} → {plan_id}
- * Build then reuses the legacy apply: POST /api/edit/plan/{id}/apply → processEDL.
+ * Fully additive & self-contained. Opening Review hides the chat shell and shows
+ * #review-view; closing restores it. A failure here never corrupts chat state.
+ *
+ * Backend (backend/routes/review.py):
+ *   POST /api/review/ingest    → { review_id, words[], media_url, word_summary, … }
+ *   GET  /api/review/media/{id}    range-streamed mp4 proxy (seekable)
+ *   GET  /api/review/waveform/{id} → { peaks[], duration }
+ *   POST /api/review/suggest   → { words[] with keep, word_summary }
+ *   POST /api/review/build     → { plan_id }   (then existing /edit apply)
  */
 import { apiGet, apiPost, getBaseUrl } from './api.js';
 import { callExtendScript, isExtendScriptAvailable } from './extendscript.js';
 import { getState } from './state.js';
 
 const $ = (sel) => document.querySelector(sel);
+const BUST = 'rv2';  // bump with BUILD_TAG-style changes to force CSS refetch
 
 // ── Module state ─────────────────────────────────────────────
 const S = {
   reviewId: null,
-  segments: [],
+  words: [],            // [{id,text,start,end,segment_id,keep,reason}]
+  byId: new Map(),
   mediaUrl: null,
   sourceName: '',
   sourcePath: '',
   script: '',
+  duration: 0,
+  peaks: [],
+  modelName: '',        // active LLM, for the "Use AI (…)" label
   video: null,
-  playMode: 'idle',   // 'segment' | 'kept' | 'idle'
-  playingId: null,
-  focusedId: null,
-  keptQueue: [],
-  keptIndex: 0,
-  prevView: null,     // {hero, chat, footer} display state to restore on close
+  canvas: null,
+  playMode: 'idle',     // 'original' | 'plan' | 'idle'
+  planRanges: [],       // [[start,end], …] kept spans for Play-plan
+  planIdx: 0,
+  // selection (word ids, inclusive); -1 = none
+  selLo: -1,
+  selHi: -1,
+  anchor: -1,
+  dragging: false,
+  focusId: null,
+  undo: [],
+  redo: [],
   busy: false,
+  prevView: null,
 };
 
-let _keydownBound = false;
+let _keysBound = false;
+let _rafSel = 0;
 
 // ── Public API ───────────────────────────────────────────────
 
-/**
- * Open the Review panel. Hides the chat shell, shows #review-view. If a session
- * is already loaded, re-renders it; otherwise shows the load screen.
- * @param {object} [opts] - { transcript, sourceFile, script } to prefill.
- */
 function openReview(opts = {}) {
   _ensureStyles();
   const view = _ensureContainer();
-  // Remember + hide the current shell so Close can restore exactly.
   const hero = $('#hero'), chat = $('#chat-scroll'), footer = $('#app-footer');
   S.prevView = {
     hero: hero ? hero.classList.contains('hidden') : true,
@@ -71,19 +78,16 @@ function openReview(opts = {}) {
   if (footer) footer.classList.add('hidden');
   view.classList.remove('hidden');
 
-  if (S.reviewId && S.segments.length) {
-    _renderEditor();
-  } else {
-    _renderSetup(opts);
-  }
-  _bindKeyboard();
+  if (S.reviewId && S.words.length) _renderEditor();
+  else _renderSetup(opts);
+  _bindKeys();
 }
 
-/** Close Review and restore the previous chat-shell view. */
 function closeReview() {
   const view = $('#review-view');
   if (view) view.classList.add('hidden');
-  try { if (S.video) S.video.pause(); } catch (_) { /* ignore */ }
+  try { if (S.video) S.video.pause(); } catch (_) {}
+  S.playMode = 'idle';
   const hero = $('#hero'), chat = $('#chat-scroll'), footer = $('#app-footer');
   if (S.prevView) {
     if (hero) hero.classList.toggle('hidden', S.prevView.hero);
@@ -92,7 +96,16 @@ function closeReview() {
   }
 }
 
-// ── Container / screens ──────────────────────────────────────
+// ── Stylesheet (cache-proof) + container ─────────────────────
+
+function _ensureStyles() {
+  if (document.getElementById('rv-style-link')) return;
+  const link = document.createElement('link');
+  link.id = 'rv-style-link';
+  link.rel = 'stylesheet';
+  link.href = 'styles/review.css?v=' + Date.now();
+  document.head.appendChild(link);
+}
 
 function _ensureContainer() {
   let view = $('#review-view');
@@ -100,31 +113,12 @@ function _ensureContainer() {
     view = document.createElement('div');
     view.id = 'review-view';
     view.className = 'review-view hidden';
-    const main = $('#app-main') || document.body;
-    main.appendChild(view);
+    ($('#app-main') || document.body).appendChild(view);
   }
   return view;
 }
 
-/**
- * Guarantee review.css is loaded, immune to CEP's stylesheet cache.
- *
- * CEF caches assets by URL with no revalidation, so a plain
- * `<link href="styles/review.css">` can keep serving a stale *miss* (cached
- * from a load before the file existed). We inject our own <link> with a
- * cache-busting query the first time Review opens — a URL CEF has never seen,
- * so it always fetches the real file. Idempotent.
- */
-function _ensureStyles() {
-  if (document.getElementById('rv-style-link')) return;
-  const link = document.createElement('link');
-  link.id = 'rv-style-link';
-  link.rel = 'stylesheet';
-  // Date.now() → a URL CEF cannot have cached. Relative path resolves against
-  // index.html (the extension junction), same as the static <link>.
-  link.href = 'styles/review.css?v=' + Date.now();
-  document.head.appendChild(link);
-}
+// ── Setup screen ─────────────────────────────────────────────
 
 function _renderSetup(opts = {}) {
   const view = _ensureContainer();
@@ -136,12 +130,12 @@ function _renderSetup(opts = {}) {
     </div>
     <div class="rv-setup">
       <p class="rv-hint">Paste a transcript (ElevenLabs Scribe <b>SRT</b> or Gemini JSON) for one clip.
-         I'll show it, let you play any line, mark the junk, and build a tight cut.</p>
+         I'll show every word; play, select &amp; cut words, then build a tight cut.</p>
       <label class="rv-label">Source clip <span class="rv-dim">(filename if you scanned, or full path)</span></label>
       <input id="rv-source" class="rv-input" type="text" placeholder="IMG_1694.MOV" value="${_esc(src)}" spellcheck="false" />
       <label class="rv-label">Transcript</label>
       <textarea id="rv-transcript" class="rv-textarea" placeholder="1&#10;00:00:00,000 --> 00:00:02,500&#10;...paste your SRT here..." spellcheck="false"></textarea>
-      <label class="rv-label">Script <span class="rv-dim">(optional — helps flag off-script lines)</span></label>
+      <label class="rv-label">Script <span class="rv-dim">(optional — helps the AI flag off-script lines)</span></label>
       <textarea id="rv-script" class="rv-textarea rv-textarea-short" placeholder="Paste your script (any language)..." spellcheck="false"></textarea>
       <div class="rv-actions">
         <button class="rv-btn rv-primary" data-act="load">Load transcript</button>
@@ -160,40 +154,41 @@ async function _loadTranscript() {
   const transcript = ($('#rv-transcript')?.value || '').trim();
   const script = ($('#rv-script')?.value || '').trim();
   const status = $('#rv-setup-status');
-
   if (!transcript) { _setStatus(status, 'Paste a transcript first.', true); return; }
-  _setStatus(status, 'Preparing video preview & parsing transcript… (first time can take a moment)');
+  _setStatus(status, 'Preparing preview & splitting into words… (first time can take a moment)');
 
   try {
     const resp = await apiPost('/api/review/ingest', {
-      transcript_text: transcript,
-      source_file: source || null,
-      script,
-      fmt: 'auto',
-      tighten: true,
+      transcript_text: transcript, source_file: source || null, script,
+      fmt: 'auto', tighten: true,
     }, { timeoutMs: 1800000 });
 
     S.reviewId = resp.review_id;
-    S.segments = resp.segments || [];
+    _setWords(resp.words || []);
     S.mediaUrl = resp.media_url ? getBaseUrl() + resp.media_url : null;
     S.sourceName = resp.source_name || source;
     S.sourcePath = resp.source_path || '';
     S.script = script;
-    S.focusedId = S.segments.length ? S.segments[0].id : null;
-
-    if (resp.media_error) {
-      console.warn('[review] media:', resp.media_error);
-    }
+    S.duration = resp.duration || 0;
+    S.undo = []; S.redo = [];
+    S.modelName = await _fetchModelName();
     _renderEditor(resp.media_error);
+    _loadWaveform();
   } catch (err) {
     _setStatus(status, `Couldn't load: ${err.message || err}`, true);
   }
+}
+
+function _setWords(arr) {
+  S.words = arr.map(w => ({ ...w, keep: w.keep !== false }));
+  S.byId = new Map(S.words.map(w => [w.id, w]));
 }
 
 // ── Editor ───────────────────────────────────────────────────
 
 function _renderEditor(mediaError) {
   const view = _ensureContainer();
+  const modelLabel = S.modelName ? `Use AI (${_esc(S.modelName)})` : 'Use AI';
   view.innerHTML = `
     <div class="rv-bar">
       <div class="rv-title">Review &amp; Cut <span class="rv-dim">— ${_esc(S.sourceName)}</span></div>
@@ -202,297 +197,507 @@ function _renderEditor(mediaError) {
     </div>
     <div class="rv-player">
       ${S.mediaUrl
-        ? `<video id="rv-video" preload="auto" controls playsinline></video>`
-        : `<div class="rv-novideo">No video preview${mediaError ? ' — ' + _esc(mediaError) : ''}.<br>You can still review the text and build the cut.</div>`}
+        ? `<video id="rv-video" preload="auto" playsinline></video>`
+        : `<div class="rv-novideo">No video preview${mediaError ? ' — ' + _esc(mediaError) : ''}.<br>You can still edit the words and build the cut.</div>`}
     </div>
+    <canvas id="rv-wave" class="rv-wave" height="56"></canvas>
     <div class="rv-toolbar">
-      <label class="rv-check"><input type="checkbox" id="rv-usellm" checked /> Use AI (Gemma) for off-script</label>
-      <button class="rv-btn" data-act="suggest">Suggest cuts</button>
-      <button class="rv-btn" data-act="playkept">▶ Play kept only</button>
-      <span id="rv-final" class="rv-final"></span>
+      <button class="rv-btn" data-act="playorig" title="Space">▶ Original</button>
+      <button class="rv-btn rv-primary-ghost" data-act="playplan" title="Enter">▶ Play plan</button>
+      <span class="rv-sep"></span>
+      <button class="rv-btn" data-act="cut" title="Backspace">Cut</button>
+      <button class="rv-btn" data-act="restore" title="R">Restore</button>
+      <button class="rv-btn rv-ghost" data-act="undo" title="Ctrl+Z">↺</button>
+      <button class="rv-btn rv-ghost" data-act="redo" title="Ctrl+Y">↻</button>
+      <span class="rv-sep"></span>
+      <label class="rv-check"><input type="checkbox" id="rv-usellm" checked /> ${modelLabel}</label>
+      <button class="rv-btn" data-act="suggest">Suggest</button>
       <span class="rv-spacer"></span>
-      <button class="rv-btn rv-primary" data-act="build">Build sequence</button>
+      <span id="rv-readout" class="rv-final"></span>
+      <button class="rv-btn rv-primary" data-act="build">Build</button>
     </div>
     <div id="rv-status" class="rv-status"></div>
-    <div id="rv-list" class="rv-list"></div>`;
+    <div class="rv-quick">
+      <span class="rv-dim">Quick cuts:</span>
+      <button class="rv-chip" data-quick="filler">fillers</button>
+      <button class="rv-chip" data-quick="nonspeech">[non-speech]</button>
+      <button class="rv-chip" data-quick="restoreall">restore all</button>
+    </div>
+    <div id="rv-doc" class="rv-doc"></div>`;
 
-  view.querySelector('[data-act="close"]').onclick = closeReview;
-  view.querySelector('[data-act="reload"]').onclick = () => { S.reviewId = null; S.segments = []; _renderSetup({}); };
-  view.querySelector('[data-act="suggest"]').onclick = _suggest;
-  view.querySelector('[data-act="playkept"]').onclick = _playKept;
-  view.querySelector('[data-act="build"]').onclick = _build;
+  const on = (sel, fn) => { const el = view.querySelector(sel); if (el) el.onclick = fn; };
+  on('[data-act="close"]', closeReview);
+  on('[data-act="reload"]', () => { S.reviewId = null; S.words = []; _renderSetup({}); });
+  on('[data-act="playorig"]', _playOriginal);
+  on('[data-act="playplan"]', _playPlan);
+  on('[data-act="cut"]', () => _applyToSelection(false));
+  on('[data-act="restore"]', () => _applyToSelection(true));
+  on('[data-act="undo"]', _undo);
+  on('[data-act="redo"]', _redo);
+  on('[data-act="suggest"]', _suggest);
+  on('[data-act="build"]', _build);
+  view.querySelectorAll('[data-quick]').forEach(b => {
+    b.onclick = () => _quickCut(b.dataset.quick);
+  });
 
   S.video = view.querySelector('#rv-video');
   if (S.video) {
     S.video.src = S.mediaUrl;
-    S.video.ontimeupdate = _onTimeUpdate;
+    S.video.ontimeupdate = _onTime;
+    S.video.onseeked = _onTime;
   }
-  _renderList();
-  _updateFinal();
+  S.canvas = view.querySelector('#rv-wave');
+  _bindWaveform();
+  _renderWords();
+  _bindDocEvents();
+  _updateReadout();
 }
 
-function _renderList() {
-  const list = $('#rv-list');
-  if (!list) return;
-  list.innerHTML = S.segments.map(_segRowHtml).join('');
-  // Event delegation (one set of handlers for the whole list).
-  list.querySelectorAll('.rv-seg').forEach(row => {
-    const id = Number(row.dataset.id);
-    row.querySelector('.rv-play').onclick = (e) => { e.stopPropagation(); _playSegment(id); };
-    row.querySelector('.rv-toggle').onclick = (e) => { e.stopPropagation(); _toggleSegment(id); };
-    row.onclick = () => { S.focusedId = id; _markFocused(); };
-  });
-  _markFocused();
-}
-
-function _segRowHtml(seg) {
-  const cut = seg.decision === 'cut';
-  const grouped = seg.group_id != null && seg.group_id >= 0;
-  const cls = ['rv-seg', cut ? 'rv-cut' : 'rv-keep', grouped ? 'rv-grouped' : ''].join(' ');
-  const reason = cut && seg.reason ? `<span class="rv-reason">${_esc(_reasonLabel(seg.reason))}</span>` : '';
-  const tin = seg.tight_in != null ? seg.tight_in : seg.start;
-  return `<div class="${cls}" data-id="${seg.id}">
-      <button class="rv-play" title="Play this line">▶</button>
-      <span class="rv-tc">${_fmtTime(tin)}</span>
-      <span class="rv-text">${_esc(seg.text || '')}</span>
-      ${reason}
-      <button class="rv-toggle" title="Keep / cut">${cut ? 'Cut' : 'Keep'}</button>
-    </div>`;
-}
-
-// ── Playback ─────────────────────────────────────────────────
-
-function _segById(id) { return S.segments.find(s => s.id === id); }
-function _outOf(seg) { return seg.tight_out != null ? seg.tight_out : seg.end; }
-function _inOf(seg) { return seg.tight_in != null ? seg.tight_in : seg.start; }
-
-function _playSegment(id) {
-  const seg = _segById(id);
-  if (!seg || !S.video) return;
-  S.playMode = 'segment';
-  S.playingId = id;
-  S.focusedId = id;
-  try {
-    S.video.currentTime = _inOf(seg);
-    S.video.play();
-  } catch (_) { /* ignore */ }
-  _markPlaying();
-}
-
-function _playKept() {
-  if (!S.video) return;
-  S.keptQueue = S.segments.filter(s => s.decision === 'keep').map(s => s.id);
-  if (!S.keptQueue.length) { _setStatus($('#rv-status'), 'Nothing kept to play.', true); return; }
-  S.keptIndex = 0;
-  S.playMode = 'kept';
-  _playKeptCurrent();
-}
-
-function _playKeptCurrent() {
-  const id = S.keptQueue[S.keptIndex];
-  const seg = _segById(id);
-  if (!seg) { S.playMode = 'idle'; return; }
-  S.playingId = id;
-  S.focusedId = id;
-  try {
-    S.video.currentTime = _inOf(seg);
-    S.video.play();
-  } catch (_) { /* ignore */ }
-  _markPlaying();
-}
-
-function _onTimeUpdate() {
-  if (!S.video || S.playMode === 'idle') return;
-  const seg = _segById(S.playingId);
-  if (!seg) return;
-  // Stop a hair early so we never bleed into the next pause/word.
-  if (S.video.currentTime >= _outOf(seg) - 0.02) {
-    if (S.playMode === 'kept') {
-      S.keptIndex += 1;
-      if (S.keptIndex < S.keptQueue.length) { _playKeptCurrent(); return; }
+function _renderWords() {
+  const doc = $('#rv-doc');
+  if (!doc) return;
+  let html = '';
+  let curSeg = -1;
+  for (const w of S.words) {
+    if (w.segment_id !== curSeg) {
+      if (curSeg !== -1) html += '</p>';
+      html += '<p class="rv-para">';
+      curSeg = w.segment_id;
     }
-    try { S.video.pause(); } catch (_) { /* ignore */ }
-    S.playMode = 'idle';
-    S.playingId = null;
-    _markPlaying();
+    const cls = ['rv-w', w.keep ? '' : 'rv-w-cut',
+      (w.id >= S.selLo && w.id <= S.selHi && S.selLo >= 0) ? 'rv-w-sel' : ''].join(' ').trim();
+    const title = (!w.keep && w.reason) ? ` title="${_esc(_reason(w.reason))}"` : '';
+    html += `<span class="${cls}" data-id="${w.id}"${title}>${_esc(w.text)}</span> `;
+  }
+  if (curSeg !== -1) html += '</p>';
+  doc.innerHTML = html || '<p class="rv-dim" style="padding:12px">No words.</p>';
+}
+
+// ── Selection + mouse ────────────────────────────────────────
+
+function _bindDocEvents() {
+  const doc = $('#rv-doc');
+  if (!doc) return;
+  doc.onmousedown = (e) => {
+    const id = _wordIdAt(e.target);
+    if (id == null) return;
+    S.dragging = true; S.anchor = id; S.selLo = id; S.selHi = id; S.focusId = id;
+    S.movedDuringDrag = false;
+    _applySelClasses();
+  };
+  doc.onmousemove = (e) => {
+    if (!S.dragging) return;
+    const id = _wordIdAt(e.target);
+    if (id == null) return;
+    if (id !== S.anchor) S.movedDuringDrag = true;
+    S.selLo = Math.min(S.anchor, id);
+    S.selHi = Math.max(S.anchor, id);
+    if (!_rafSel) _rafSel = requestAnimationFrame(() => { _rafSel = 0; _applySelClasses(); });
+  };
+  doc.onmouseup = (e) => {
+    if (!S.dragging) return;
+    S.dragging = false;
+    const id = _wordIdAt(e.target);
+    if (!S.movedDuringDrag && id != null) {
+      // a plain click → seek + play that word; selection collapses to it
+      S.selLo = S.selHi = -1;
+      _applySelClasses();
+      _seekWord(id, true);
+    }
+  };
+  doc.ondblclick = (e) => {
+    const id = _wordIdAt(e.target);
+    if (id == null) return;
+    const w = S.byId.get(id);
+    if (!w) return;
+    _snapshot();
+    w.keep = !w.keep;
+    if (w.keep) w.reason = '';
+    _afterMutate();
+  };
+}
+
+function _wordIdAt(target) {
+  const el = target && target.closest ? target.closest('.rv-w') : null;
+  if (!el) return null;
+  const id = Number(el.dataset.id);
+  return Number.isNaN(id) ? null : id;
+}
+
+function _applySelClasses() {
+  const doc = $('#rv-doc');
+  if (!doc) return;
+  doc.querySelectorAll('.rv-w').forEach(el => {
+    const id = Number(el.dataset.id);
+    el.classList.toggle('rv-w-sel', S.selLo >= 0 && id >= S.selLo && id <= S.selHi);
+  });
+}
+
+function _applyToSelection(keep) {
+  let lo = S.selLo, hi = S.selHi;
+  if (lo < 0) {                       // no range → act on focused word
+    if (S.focusId == null) { _setStatus($('#rv-status'), 'Select some words first (drag across them).', true); return; }
+    lo = hi = S.focusId;
+  }
+  _snapshot();
+  for (const w of S.words) {
+    if (w.id >= lo && w.id <= hi) {
+      w.keep = keep;
+      if (keep) w.reason = '';
+      else if (!w.reason) w.reason = 'manual';
+    }
+  }
+  _afterMutate();
+}
+
+// ── Cut/restore mutations ────────────────────────────────────
+
+function _snapshot() {
+  S.undo.push(S.words.map(w => (w.keep ? 1 : 0)));
+  if (S.undo.length > 100) S.undo.shift();
+  S.redo = [];
+}
+
+function _applySnapshot(snap) {
+  snap.forEach((k, i) => { if (S.words[i]) S.words[i].keep = !!k; });
+}
+
+function _undo() {
+  if (!S.undo.length) return;
+  S.redo.push(S.words.map(w => (w.keep ? 1 : 0)));
+  _applySnapshot(S.undo.pop());
+  _afterMutate(true);
+}
+
+function _redo() {
+  if (!S.redo.length) return;
+  S.undo.push(S.words.map(w => (w.keep ? 1 : 0)));
+  _applySnapshot(S.redo.pop());
+  _afterMutate(true);
+}
+
+function _afterMutate(skipSnapshotReset) {
+  _renderWords();
+  _applySelClasses();
+  _markNow();
+  _updateReadout();
+  _drawWaveform();
+}
+
+function _quickCut(kind) {
+  _snapshot();
+  if (kind === 'restoreall') {
+    S.words.forEach(w => { w.keep = true; w.reason = ''; });
+  } else {
+    const fillers = new Set(['umm', 'um', 'uh', 'uhh', 'ah', 'hmm', 'haan', 'han', 'ji', 'ہاں', 'جی', 'اہ', 'ام']);
+    for (const w of S.words) {
+      const t = (w.text || '').replace(/[^\w؀-ۿ]/g, '').toLowerCase();
+      if (kind === 'filler' && fillers.has(t)) { w.keep = false; w.reason = 'filler'; }
+      if (kind === 'nonspeech' && /^[\[(\{].*[\])\}]$/.test((w.text || '').trim())) { w.keep = false; w.reason = 'non_speech'; }
+    }
+  }
+  _afterMutate();
+}
+
+// ── Playback + karaoke ───────────────────────────────────────
+
+function _seekWord(id, play) {
+  const w = S.byId.get(id);
+  if (!w || !S.video) return;
+  S.playMode = 'original';
+  S.focusId = id;
+  try { S.video.currentTime = w.start; if (play) S.video.play(); } catch (_) {}
+  _markNow(id);
+}
+
+function _playOriginal() {
+  if (!S.video) return;
+  if (S.video.paused) { S.playMode = 'original'; S.video.play(); }
+  else { S.video.pause(); S.playMode = 'idle'; }
+}
+
+function _mergedKeptRanges(maxGap = 0.35) {
+  const ranges = [];
+  let cur = null;
+  for (const w of S.words) {
+    if (!w.keep) continue;
+    if (cur && w.start - cur[1] <= maxGap) cur[1] = w.end;
+    else { if (cur) ranges.push(cur); cur = [w.start, w.end]; }
+  }
+  if (cur) ranges.push(cur);
+  return ranges;
+}
+
+function _playPlan() {
+  if (!S.video) return;
+  S.planRanges = _mergedKeptRanges();
+  if (!S.planRanges.length) { _setStatus($('#rv-status'), 'Nothing kept to play.', true); return; }
+  S.planIdx = 0;
+  S.playMode = 'plan';
+  try { S.video.currentTime = S.planRanges[0][0]; S.video.play(); } catch (_) {}
+}
+
+function _onTime() {
+  if (!S.video) return;
+  const t = S.video.currentTime;
+  // plan playback: hop across cut gaps
+  if (S.playMode === 'plan') {
+    const r = S.planRanges[S.planIdx];
+    if (r && t >= r[1] - 0.02) {
+      S.planIdx += 1;
+      if (S.planIdx < S.planRanges.length) {
+        try { S.video.currentTime = S.planRanges[S.planIdx][0]; } catch (_) {}
+      } else { try { S.video.pause(); } catch (_) {} S.playMode = 'idle'; }
+    }
+  }
+  _markNow();
+  _drawPlayhead();
+}
+
+function _currentWordId(t) {
+  // binary search words by start; return the word whose [start,end] holds t,
+  // else the latest word that has started.
+  const a = S.words;
+  if (!a.length) return null;
+  let lo = 0, hi = a.length - 1, ans = 0;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (a[mid].start <= t) { ans = mid; lo = mid + 1; }
+    else hi = mid - 1;
+  }
+  return a[ans] ? a[ans].id : null;
+}
+
+let _lastNow = null;
+function _markNow(forceId) {
+  const id = forceId != null ? forceId : (S.video ? _currentWordId(S.video.currentTime) : null);
+  if (id === _lastNow && forceId == null) return;
+  const doc = $('#rv-doc');
+  if (!doc) return;
+  if (_lastNow != null) {
+    const prev = doc.querySelector(`.rv-w[data-id="${_lastNow}"]`);
+    if (prev) prev.classList.remove('rv-w-now');
+  }
+  _lastNow = id;
+  if (id == null) return;
+  const el = doc.querySelector(`.rv-w[data-id="${id}"]`);
+  if (el) {
+    el.classList.add('rv-w-now');
+    if (S.playMode !== 'idle') el.scrollIntoView({ block: 'nearest' });
   }
 }
 
-// ── Decisions ────────────────────────────────────────────────
+// ── Waveform ─────────────────────────────────────────────────
 
-function _toggleSegment(id) {
-  const seg = _segById(id);
-  if (!seg) return;
-  seg.decision = seg.decision === 'keep' ? 'cut' : 'keep';
-  if (seg.decision === 'keep') seg.reason = '';      // user override clears the chip
-  else if (!seg.reason) seg.reason = 'manual';
-  _renderList();
-  _updateFinal();
+async function _loadWaveform() {
+  if (!S.reviewId) return;
+  try {
+    const resp = await apiGet(`/api/review/waveform/${S.reviewId}`, { timeoutMs: 120000 });
+    S.peaks = resp.peaks || [];
+    if (resp.duration) S.duration = resp.duration;
+    _drawWaveform();
+  } catch (_) { /* waveform is optional */ }
 }
+
+function _bindWaveform() {
+  const c = S.canvas;
+  if (!c) return;
+  c.onclick = (e) => {
+    if (!S.video || !S.duration) return;
+    const rect = c.getBoundingClientRect();
+    const frac = (e.clientX - rect.left) / rect.width;
+    try { S.video.currentTime = Math.max(0, Math.min(S.duration, frac * S.duration)); } catch (_) {}
+    _onTime();
+  };
+  // size canvas to its CSS width
+  requestAnimationFrame(() => { _sizeCanvas(); _drawWaveform(); });
+  window.addEventListener('resize', () => { _sizeCanvas(); _drawWaveform(); });
+}
+
+function _sizeCanvas() {
+  const c = S.canvas;
+  if (!c) return;
+  const w = c.clientWidth || 360;
+  if (c.width !== w) c.width = w;
+}
+
+function _cssVar(name, fallback) {
+  try { return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback; }
+  catch (_) { return fallback; }
+}
+
+function _drawWaveform() {
+  const c = S.canvas;
+  if (!c) return;
+  _sizeCanvas();
+  const ctx = c.getContext('2d');
+  const W = c.width, H = c.height;
+  ctx.clearRect(0, 0, W, H);
+  if (!S.peaks.length || !S.duration) return;
+
+  const keep = _cssVar('--accent', '#0078d4');
+  const cut = _cssVar('--error', '#f44747');
+  const mid = H / 2;
+  const cutRanges = _cutRanges();
+  for (let x = 0; x < W; x++) {
+    const t = (x / W) * S.duration;
+    const pi = Math.floor((x / W) * S.peaks.length);
+    const amp = (S.peaks[pi] || 0) * (mid - 2);
+    ctx.strokeStyle = _inRanges(t, cutRanges) ? cut : keep;
+    ctx.globalAlpha = _inRanges(t, cutRanges) ? 0.35 : 0.9;
+    ctx.beginPath();
+    ctx.moveTo(x + 0.5, mid - amp);
+    ctx.lineTo(x + 0.5, mid + amp);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  _drawPlayhead();
+}
+
+function _cutRanges() {
+  const ranges = [];
+  let cur = null;
+  for (const w of S.words) {
+    if (w.keep) { if (cur) { ranges.push(cur); cur = null; } continue; }
+    if (cur && w.start - cur[1] <= 0.05) cur[1] = w.end;
+    else { if (cur) ranges.push(cur); cur = [w.start, w.end]; }
+  }
+  if (cur) ranges.push(cur);
+  return ranges;
+}
+
+function _inRanges(t, ranges) {
+  for (const [a, b] of ranges) { if (t >= a && t <= b) return true; if (a > t) break; }
+  return false;
+}
+
+function _drawPlayhead() {
+  const c = S.canvas;
+  if (!c || !S.video || !S.duration) return;
+  // redraw is cheap; only the playhead line is added on top each tick via a 2nd pass
+  const ctx = c.getContext('2d');
+  const x = (S.video.currentTime / S.duration) * c.width;
+  // (full redraw happens on cut changes; here we just overlay a line by
+  //  re-stroking — acceptable because the bars beneath are static per frame)
+  ctx.save();
+  ctx.strokeStyle = _cssVar('--text-bright', '#e0e0e0');
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(x + 0.5, 0);
+  ctx.lineTo(x + 0.5, c.height);
+  ctx.stroke();
+  ctx.restore();
+}
+
+// ── Suggest (AI) + Build ─────────────────────────────────────
 
 async function _suggest() {
   if (!S.reviewId || S.busy) return;
   const useLlm = !!$('#rv-usellm')?.checked;
   const status = $('#rv-status');
   S.busy = true;
-  _setStatus(status, useLlm ? 'Marking junk + asking AI about off-script lines…' : 'Marking junk (retakes, filler, non-speech, stutters)…');
+  _snapshot();
+  _setStatus(status, useLlm ? 'Marking junk + asking the model about off-script lines…' : 'Marking junk (retakes, filler, non-speech)…');
   try {
     const resp = await apiPost('/api/review/suggest', { review_id: S.reviewId, use_llm: useLlm }, { timeoutMs: 300000 });
-    S.segments = resp.segments || S.segments;
-    _renderList();
-    _updateFinal();
-    const su = resp.summary || {};
-    _setStatus(status, `Suggested: ${su.keep ?? '?'} keep, ${su.cut ?? '?'} cut${resp.llm_used ? ' (AI refined)' : ''}. Toggle anything, then Build.`);
+    if (resp.words) _setWords(resp.words);
+    _afterMutate();
+    const su = resp.word_summary || {};
+    _setStatus(status, `Suggested: keep ${su.kept_words ?? '?'} words in ${su.cuts ?? '?'} span(s)${resp.llm_used ? ' (AI refined)' : ''}. Refine by selecting words, then Build.`);
   } catch (err) {
     _setStatus(status, `Suggest failed: ${err.message || err}`, true);
-  } finally {
-    S.busy = false;
-  }
+  } finally { S.busy = false; }
 }
 
 async function _build() {
   if (!S.reviewId || S.busy) return;
   const status = $('#rv-status');
-  const keptIds = S.segments.filter(s => s.decision === 'keep').map(s => s.id);
-  if (!keptIds.length) { _setStatus(status, 'Nothing kept — toggle some lines to keep first.', true); return; }
+  const keptWordIds = S.words.filter(w => w.keep).map(w => w.id);
+  if (!keptWordIds.length) { _setStatus(status, 'Nothing kept — keep some words first.', true); return; }
   S.busy = true;
-  _setStatus(status, `Building a tight cut from ${keptIds.length} line(s)…`);
+  _setStatus(status, `Building a tight cut from ${_mergedKeptRanges().length} span(s)…`);
   try {
-    const built = await apiPost('/api/review/build', { review_id: S.reviewId, kept_ids: keptIds }, { timeoutMs: 120000 });
+    const built = await apiPost('/api/review/build', { review_id: S.reviewId, kept_word_ids: keptWordIds }, { timeoutMs: 120000 });
     const planId = built.plan_id;
     if (!planId) throw new Error('No plan_id returned.');
-
     _setStatus(status, 'Placing clips in Premiere…');
     const applyResult = await apiPost(`/api/edit/plan/${planId}/apply`, {}, { timeoutMs: 120000 });
     const ops = applyResult.extendscript_ops || [];
     const seqName = applyResult.target_sequence_name || 'EditFlow Cut';
-
     if (isExtendScriptAvailable()) {
       await callExtendScript('processEDL', JSON.stringify({ ops }));
-      _setStatus(status, `Done — "${seqName}" is in your Premiere project. A "New Sequence" preset dialog may ask you to click OK.`);
+      _setStatus(status, `Done — "${seqName}" is in your project. A "New Sequence" preset dialog may ask you to click OK.`);
     } else {
       _setStatus(status, `Plan built (${ops.length} ops). Open the panel inside Premiere to place the clips.`);
     }
   } catch (err) {
     _setStatus(status, `Build failed: ${err.message || err}`, true);
-  } finally {
-    S.busy = false;
-  }
+  } finally { S.busy = false; }
 }
 
-// ── Small UI helpers ─────────────────────────────────────────
-
-function _updateFinal() {
-  const el = $('#rv-final');
+function _updateReadout() {
+  const el = $('#rv-readout');
   if (!el) return;
-  const kept = S.segments.filter(s => s.decision === 'keep');
-  const dur = kept.reduce((sum, s) => sum + (_outOf(s) - _inOf(s)), 0);
-  el.textContent = `Final: ${kept.length} cut${kept.length === 1 ? '' : 's'} · ${_fmtDur(dur)}`;
+  const ranges = _mergedKeptRanges();
+  const dur = ranges.reduce((s, r) => s + (r[1] - r[0]), 0);
+  const kept = S.words.filter(w => w.keep).length;
+  el.textContent = `${kept}/${S.words.length} words · ${ranges.length} cut${ranges.length === 1 ? '' : 's'} · ${_fmtDur(dur)}`;
 }
 
-function _markPlaying() {
-  document.querySelectorAll('.rv-seg.rv-playing').forEach(r => r.classList.remove('rv-playing'));
-  if (S.playingId == null) return;
-  const row = document.querySelector(`.rv-seg[data-id="${S.playingId}"]`);
-  if (row) {
-    row.classList.add('rv-playing');
-    row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-  }
-}
+// ── Keyboard ─────────────────────────────────────────────────
 
-function _markFocused() {
-  document.querySelectorAll('.rv-seg.rv-focused').forEach(r => r.classList.remove('rv-focused'));
-  if (S.focusedId == null) return;
-  const row = document.querySelector(`.rv-seg[data-id="${S.focusedId}"]`);
-  if (row) row.classList.add('rv-focused');
-}
-
-function _bindKeyboard() {
-  if (_keydownBound) return;
-  _keydownBound = true;
+function _bindKeys() {
+  if (_keysBound) return;
+  _keysBound = true;
   document.addEventListener('keydown', (e) => {
     const view = $('#review-view');
     if (!view || view.classList.contains('hidden')) return;
     const tag = (document.activeElement && document.activeElement.tagName) || '';
-    if (tag === 'INPUT' || tag === 'TEXTAREA') return;   // don't hijack typing
-    if (!S.segments.length) return;
-
-    if (e.key === ' ') {
-      e.preventDefault();
-      if (!S.video) return;
-      if (S.video.paused) { if (S.focusedId != null) _playSegment(S.focusedId); }
-      else { S.video.pause(); S.playMode = 'idle'; }
-    } else if (e.key === 'j' || e.key === 'J' || e.key === 'ArrowUp') {
-      e.preventDefault(); _moveFocus(-1);
-    } else if (e.key === 'l' || e.key === 'L' || e.key === 'ArrowDown') {
-      e.preventDefault(); _moveFocus(1);
-    } else if (e.key === 'k' || e.key === 'K') {
-      e.preventDefault(); if (S.focusedId != null) _toggleSegment(S.focusedId);
-    } else if (e.key === 'Enter') {
-      e.preventDefault(); _playKept();
-    }
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+    const k = e.key;
+    if (k === ' ') { e.preventDefault(); _playOriginal(); }
+    else if (k === 'Enter') { e.preventDefault(); _playPlan(); }
+    else if (k === 'Backspace' || k === 'Delete') { e.preventDefault(); _applyToSelection(false); }
+    else if (k === 'r' || k === 'R') { e.preventDefault(); _applyToSelection(true); }
+    else if ((e.ctrlKey || e.metaKey) && (k === 'z' || k === 'Z') && !e.shiftKey) { e.preventDefault(); _undo(); }
+    else if ((e.ctrlKey || e.metaKey) && (k === 'y' || k === 'Y' || ((k === 'z' || k === 'Z') && e.shiftKey))) { e.preventDefault(); _redo(); }
+    else if (k === 'Escape') { S.selLo = S.selHi = -1; _applySelClasses(); }
   });
 }
 
-function _moveFocus(delta) {
-  if (!S.segments.length) return;
-  let idx = S.segments.findIndex(s => s.id === S.focusedId);
-  if (idx < 0) idx = 0;
-  idx = Math.max(0, Math.min(S.segments.length - 1, idx + delta));
-  S.focusedId = S.segments[idx].id;
-  _markFocused();
-  const row = document.querySelector(`.rv-seg[data-id="${S.focusedId}"]`);
-  if (row) row.scrollIntoView({ block: 'nearest' });
+// ── Helpers ──────────────────────────────────────────────────
+
+async function _fetchModelName() {
+  try {
+    const st = await apiGet('/api/status', { timeoutMs: 4000 });
+    const m = st && st.active_chat;
+    if (typeof m === 'string') return m;
+    if (m && (m.model || m.name)) return m.model || m.name;
+  } catch (_) {}
+  return '';
 }
 
 function _guessSourceFromScan() {
-  // Best-effort prefill from the last project scan (never throws).
   try {
     const scan = getState()?.session?.scan || null;
     const items = scan && (scan.items || scan.clips);
     if (Array.isArray(items)) {
-      const audio = items.find(it => {
-        const mp = it.mediaPath || it.media_path || '';
-        return mp && /\.(mov|mp4|m4v|wav|mp3|m4a|aac)$/i.test(mp);
-      });
-      if (audio) return audio.mediaPath || audio.media_path;
+      const a = items.find(it => /\.(mov|mp4|m4v|wav|mp3|m4a|aac)$/i.test(it.mediaPath || it.media_path || ''));
+      if (a) return a.mediaPath || a.media_path;
     }
-  } catch (_) { /* ignore */ }
+  } catch (_) {}
   return '';
 }
 
-function _reasonLabel(reason) {
-  if (!reason) return '';
-  if (reason.startsWith('retake_of')) return 'retake';
-  return ({
-    non_speech: 'non-speech', filler: 'filler', too_short: 'too short',
-    not_in_script: 'off-script', empty: 'empty', manual: 'cut', llm_off_script: 'off-script',
-  })[reason] || reason;
+function _reason(r) {
+  if (!r) return '';
+  if (r.startsWith('retake')) return 'retake';
+  return ({ non_speech: 'non-speech', filler: 'filler', too_short: 'too short',
+    not_in_script: 'off-script', manual: 'cut', llm_off_script: 'off-script' })[r] || r;
 }
 
-function _setStatus(el, msg, isError) {
-  if (!el) return;
-  el.textContent = msg;
-  el.classList.toggle('rv-error', !!isError);
-}
-
-function _fmtTime(s) {
-  s = Number(s) || 0;
-  const m = Math.floor(s / 60);
-  const sec = Math.floor(s % 60);
-  return `${m}:${sec.toString().padStart(2, '0')}`;
-}
-
-function _fmtDur(s) {
-  s = Number(s) || 0;
-  const m = Math.floor(s / 60);
-  const sec = Math.round(s % 60);
-  return `${m}:${sec.toString().padStart(2, '0')}`;
-}
-
-function _esc(str) {
-  return String(str == null ? '' : str)
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
+function _setStatus(el, msg, isErr) { if (el) { el.textContent = msg; el.classList.toggle('rv-error', !!isErr); } }
+function _fmtDur(s) { s = Number(s) || 0; const m = Math.floor(s / 60); const x = Math.round(s % 60); return `${m}:${x.toString().padStart(2, '0')}`; }
+function _esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 
 export { openReview, closeReview };

@@ -9,7 +9,8 @@ import { apiGet, apiPost } from './api.js';
 import { callExtendScript, scanProjectMedia, isExtendScriptAvailable } from './extendscript.js';
 import { appendMessage, updateProgress, clearChat, scrollToBottom } from './chat-ui.js';
 import { uploadScript } from './upload.js';
-import { openReview } from './review-view.js';
+// openReview is exposed on window by main.js (loaded with the cache-buster) so we
+// don't pull a second, un-busted copy of review-view.js here.
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -297,7 +298,11 @@ async function onUserMessage(text) {
   if (/^\/review\b/i.test(text)) {
     // Open the transcript-first cut editor (additive; leaves chat state intact).
     appendMessage('user-text', { text: '/review' });
-    openReview();
+    if (typeof window !== 'undefined' && typeof window.__editflowOpenReview === 'function') {
+      window.__editflowOpenReview();
+    } else {
+      appendMessage('agent-text', { text: 'Review editor is still loading — try again in a moment.' });
+    }
     return;
   }
   if (/^\/(transcribe|transcript|gemini[-_ ]?transcribe)\b/i.test(text)) {

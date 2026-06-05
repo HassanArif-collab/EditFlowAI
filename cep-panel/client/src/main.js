@@ -4,7 +4,7 @@
  * Initializes all modules, wires up DOM events, and starts the app.
  * This file owns no business logic — it delegates to the modules.
  */
-const BUILD_TAG = 'review-1';  // bump when shipping a fix; visible in header
+const BUILD_TAG = 'review-2';  // bump when shipping a fix; visible in header
 
 // FIRST thing on parse: clear the inline boot-check banner. If the user sees
 // the banner disappear, we KNOW main.js parsed successfully and modules are
@@ -32,7 +32,10 @@ import { setupDropZone, setupSelectionChip, stopSelectionPoll } from './dnd.js';
 import { pickScriptFile } from './upload.js';
 import { initDiagnostics } from './diagnostics.js';
 import { initSettings, openSettings, onWhisperDownloadProgress } from './settings.js';
-import { openReview } from './review-view.js';
+// openReview is loaded DYNAMICALLY (with the BUILD_TAG cache-buster) inside
+// _loadOrchestrator so edits to review-view.js land on reload without a CEP
+// cache wipe. Kept in a module var + on window for the orchestrator's /review.
+let openReview = null;
 // Feature flag: agent mode vs. legacy orchestrator
 const AGENT_MODE = localStorage.getItem('editflow_agent_mode') === 'on';
 
@@ -71,6 +74,16 @@ async function _loadOrchestrator() {
   onNewEdit            = mod.onNewEdit;
   onWsProgress         = mod.onWsProgress;
   console.log(`[EditFlow] Loaded ${AGENT_MODE ? 'agent-client' : 'orchestrator'}`);
+
+  // Load the word-level Review editor with the same cache-buster, and expose it
+  // so the orchestrator's /review command (and the header button) can open it.
+  try {
+    const reviewMod = await import('./review-view.js' + bust);
+    openReview = reviewMod.openReview;
+    window.__editflowOpenReview = openReview;
+  } catch (e) {
+    console.error('[EditFlow] Failed to load review-view:', e);
+  }
 }
 
 const $ = (sel) => document.querySelector(sel);
@@ -179,7 +192,8 @@ async function init() {
   //     legacy orchestrator/agent flows are untouched whether or not it's used.
   if (btnReview) {
     btnReview.addEventListener('click', () => {
-      try { openReview(); } catch (e) { console.error('[EditFlow] openReview failed:', e); }
+      try { if (openReview) openReview(); else console.warn('[EditFlow] Review not loaded yet'); }
+      catch (e) { console.error('[EditFlow] openReview failed:', e); }
     });
   }
 
