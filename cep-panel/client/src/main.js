@@ -112,8 +112,39 @@ const appMain = $('#app-main');
 // ── Initialize on DOMContentLoaded ────────────────────────────
 document.addEventListener('DOMContentLoaded', init);
 
+/**
+ * Global error surface — a dismissible bottom banner shown on any uncaught error
+ * or unhandled promise rejection, so the panel can never silently go dead. This
+ * is the last line of the "never a dead end" principle; specific flows still show
+ * their own inline errors.
+ */
+function _showGlobalError(msg) {
+  try {
+    let b = document.getElementById('editflow-error-bar');
+    if (!b) {
+      b = document.createElement('div');
+      b.id = 'editflow-error-bar';
+      b.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:99999;background:#5a2d2d;color:#fff;font:12px/1.4 monospace;padding:6px 10px;display:flex;gap:8px;align-items:center';
+      document.body.appendChild(b);
+    }
+    b.innerHTML = '';
+    const span = document.createElement('span');
+    span.style.flex = '1';
+    span.textContent = 'EditFlow hit an error (the panel is still alive): ' + String(msg).slice(0, 300);
+    const x = document.createElement('button');
+    x.textContent = 'Dismiss';
+    x.style.cssText = 'background:#7a3d3d;color:#fff;border:0;border-radius:4px;padding:3px 8px;cursor:pointer';
+    x.onclick = () => b.remove();
+    b.appendChild(span); b.appendChild(x);
+  } catch (_) { /* never let the error handler throw */ }
+}
+
 async function init() {
   console.log('[EditFlow] Initializing single-chat frontend...');
+
+  // Global error surface — catch what the per-flow handlers miss.
+  window.addEventListener('error', (e) => _showGlobalError((e && (e.error && e.error.message || e.message)) || 'Unknown error'));
+  window.addEventListener('unhandledrejection', (e) => _showGlobalError((e && (e.reason && e.reason.message || e.reason)) || 'Unhandled promise rejection'));
 
   try {
     // 0. Load the chosen orchestrator module (was top-level — moved here so a
