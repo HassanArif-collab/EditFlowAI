@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .config import init_dirs
-from .routes import agent, chat, edit, external_plan, media, models_routes, pipeline, preflight, premiere, providers, script_extract, whisper_admin
+from .routes import agent, chat, edit, external_plan, media, models_routes, pipeline, preflight, premiere, providers, review, script_extract, whisper_admin
 
 # Configure logging
 logging.basicConfig(
@@ -108,6 +108,7 @@ app.include_router(preflight.router, prefix="/api")
 app.include_router(edit.router, prefix="/api")
 app.include_router(agent.router, prefix="/api")
 app.include_router(external_plan.router, prefix="/api")
+app.include_router(review.router, prefix="/api")
 app.include_router(script_extract.router)
 app.include_router(whisper_admin.router, prefix="/api")
 

@@ -4,7 +4,7 @@
  * Initializes all modules, wires up DOM events, and starts the app.
  * This file owns no business logic — it delegates to the modules.
  */
-const BUILD_TAG = 'paste-workflow-1';  // bump when shipping a fix; visible in header
+const BUILD_TAG = 'review-1';  // bump when shipping a fix; visible in header
 
 // FIRST thing on parse: clear the inline boot-check banner. If the user sees
 // the banner disappear, we KNOW main.js parsed successfully and modules are
@@ -32,6 +32,7 @@ import { setupDropZone, setupSelectionChip, stopSelectionPoll } from './dnd.js';
 import { pickScriptFile } from './upload.js';
 import { initDiagnostics } from './diagnostics.js';
 import { initSettings, openSettings, onWhisperDownloadProgress } from './settings.js';
+import { openReview } from './review-view.js';
 // Feature flag: agent mode vs. legacy orchestrator
 const AGENT_MODE = localStorage.getItem('editflow_agent_mode') === 'on';
 
@@ -89,6 +90,7 @@ const btnScan = $('#btn-scan');
 const btnSend = $('#btn-send');
 const btnAttach = $('#btn-attach');
 const btnSettings = $('#btn-settings');
+const btnReview = $('#btn-review');
 const btnDiagnostics = $('#btn-diagnostics');
 const settingsOverlay = $('#settings-overlay');
 const diagnosticsPopover = $('#diagnostics-popover');
@@ -172,6 +174,14 @@ async function init() {
 
   // 9. Initialize settings overlay
   _initSettingsOverlay();
+
+  // 9b. Wire the Review (transcript-first cut editor) button. Additive — the
+  //     legacy orchestrator/agent flows are untouched whether or not it's used.
+  if (btnReview) {
+    btnReview.addEventListener('click', () => {
+      try { openReview(); } catch (e) { console.error('[EditFlow] openReview failed:', e); }
+    });
+  }
 
   // 10. Connect WebSocket for real-time updates
   _initWebSocket();

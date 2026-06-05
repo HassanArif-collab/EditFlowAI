@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <link rel="stylesheet" href="styles/chat.css">
+  <link rel="stylesheet" href="styles/review.css">
   <title>EditFlow AI</title>
 </head>
 <body>
@@ -10,6 +11,7 @@
     <span class="logo">EditFlow AI</span>
     <span id="boot-tag" class="boot-tag" title="Frontend build tag — must match latest commit">build:unloaded</span>
     <span class="header-spacer"></span>
+    <button id="btn-review" class="icon-btn" title="Review &amp; Cut (transcript editor)">&#128221;</button>
     <button id="btn-diagnostics" class="icon-btn" title="Diagnostics">&#9432;</button>
     <button id="btn-settings" class="icon-btn" title="Settings">&#9881;</button>
   </header>
@@ -46,6 +48,9 @@
     <div id="drop-overlay" class="drop-overlay hidden">
       <span>Drop here: bin, clip, folder, or document</span>
     </div>
+
+    <!-- Review (transcript-first cut editor) — populated by review-view.js -->
+    <div id="review-view" class="review-view hidden"></div>
   </main>
 
   <footer id="app-footer" class="hidden">
@@ -63,6 +68,6 @@
   <script src="lib/CSInterface.js"></script>
   <!-- ?v= cache-buster: bump the value whenever main.js or its imports change
        to force CEP to fetch a fresh module graph instead of serving stale bytecode. -->
-  <script type="module" src="src/main.js?v=20260526e"></script>
+  <script type="module" src="src/main.js?v=20260605a"></script>
 </body>
 </html>

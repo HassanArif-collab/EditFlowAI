@@ -9,6 +9,7 @@ import { apiGet, apiPost } from './api.js';
 import { callExtendScript, scanProjectMedia, isExtendScriptAvailable } from './extendscript.js';
 import { appendMessage, updateProgress, clearChat, scrollToBottom } from './chat-ui.js';
 import { uploadScript } from './upload.js';
+import { openReview } from './review-view.js';
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -293,6 +294,12 @@ async function onUserMessage(text) {
   // The slash-command prefix is unambiguous; the orchestrator never matches
   // a real script against it because Urdu/English scripts don't start with
   // "/".  We also accept "/llm prompt" with a space for forgiving typing.
+  if (/^\/review\b/i.test(text)) {
+    // Open the transcript-first cut editor (additive; leaves chat state intact).
+    appendMessage('user-text', { text: '/review' });
+    openReview();
+    return;
+  }
   if (/^\/(transcribe|transcript|gemini[-_ ]?transcribe)\b/i.test(text)) {
     // Gemini flow step 1: show the prompt the user pastes into Gemini (with the
     // video attached) to get a segment-level transcript JSON to feed /cutplan.
