@@ -26,8 +26,12 @@ All ffmpeg calls reuse the project's resolved binary
 """
 from __future__ import annotations
 
+import array
+import asyncio
+import json
 import logging
 import re
+import subprocess
 from pathlib import Path
 from typing import Optional
 
@@ -194,3 +198,59 @@ async def silence_regions(src_path: str | Path) -> list[tuple[float, float]]:
     regions.sort()
     logger.info("review.silence_regions: %d span(s) in %s", len(regions), src.name)
     return regions
+
+
+def _peaks_path(src_path: str | Path) -> Path:
+    d = get_settings().DATA_DIR / "review" / "peaks"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / f"{fingerprint_short(src_path, 16)}.json"
+
+
+async def waveform_peaks(src_path: str | Path, buckets: int = 1600) -> list[float]:
+    """Return ``buckets`` normalized amplitude peaks (0..1) for the waveform strip.
+
+    Decodes audio only (8 kHz mono s16le) and reduces it to one peak per bucket.
+    Cached by content fingerprint. Returns ``[]`` on failure (the UI then just
+    omits the waveform). Audio-only (`-vn`) so HEVC video is never decoded.
+    """
+    src = Path(src_path)
+    if not src.exists():
+        raise FileNotFoundError(f"Source clip not found: {src}")
+
+    cache = _peaks_path(src)
+    if cache.exists() and cache.stat().st_size > 0:
+        try:
+            return json.loads(cache.read_text(encoding="utf-8")).get("peaks", [])
+        except Exception:  # noqa: BLE001
+            pass
+
+    ffmpeg = get_settings().FFMPEG_PATH
+    cmd = [ffmpeg, "-v", "error", "-vn", "-i", str(src),
+           "-ac", "1", "-ar", "8000", "-f", "s16le", "-"]
+    proc = await asyncio.to_thread(subprocess.run, cmd, capture_output=True)
+    raw = proc.stdout or b""
+    if not raw:
+        return []
+    samples = array.array("h")
+    samples.frombytes(raw[: len(raw) - (len(raw) % 2)])
+    n = len(samples)
+    if n == 0:
+        return []
+
+    per = max(1, n // buckets)
+    peaks: list[int] = []
+    for i in range(0, n, per):
+        hi = 0
+        for x in samples[i:i + per]:
+            ax = x if x >= 0 else -x
+            if ax > hi:
+                hi = ax
+        peaks.append(hi)
+    top = max(peaks) or 1
+    norm = [round(p / top, 3) for p in peaks]
+
+    try:
+        cache.write_text(json.dumps({"peaks": norm}), encoding="utf-8")
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("review.waveform_peaks: cache write failed: %s", exc)
+    return norm

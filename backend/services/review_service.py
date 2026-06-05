@@ -115,6 +115,92 @@ def kept_cuts(
     ]
 
 
+# ── Word-level model (approximate times now; Scribe exact times later) ──
+
+@dataclass
+class Word:
+    """One token with a timestamp.
+
+    Phase 1: ``start``/``end`` are interpolated within the parent segment by
+    character length. Phase 3 replaces them with ElevenLabs Scribe's exact
+    per-word times. ``keep`` drives the final cut.
+    """
+    id: int
+    text: str
+    start: float
+    end: float
+    segment_id: int
+    keep: bool = True
+    reason: str = ""
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+def words_from_segments(segments: list[Segment]) -> list[Word]:
+    """Split each segment into whitespace tokens with interpolated times.
+
+    Each token's span is proportional to its character length within the
+    segment's ``[tight_in, tight_out]`` (falling back to raw start/end). Tokens
+    are laid contiguously — all the karaoke highlighter needs. Approximate by
+    design; exact per-word times arrive with Scribe (phase 3).
+    """
+    words: list[Word] = []
+    wid = 0
+    for seg in segments:
+        toks = (seg.text or "").split()
+        if not toks:
+            continue
+        s = seg.tight_in if seg.tight_in else seg.start
+        e = seg.tight_out if seg.tight_out else seg.end
+        span = max(0.001, e - s)
+        total = sum(len(t) for t in toks) or 1
+        cum = 0
+        for t in toks:
+            w_start = s + span * (cum / total)
+            cum += len(t)
+            w_end = s + span * (cum / total)
+            words.append(Word(id=wid, text=t, start=round(w_start, 3),
+                              end=round(w_end, 3), segment_id=seg.id))
+            wid += 1
+    return words
+
+
+def words_to_cuts(
+    words_by_id: dict[int, Word],
+    kept_ids: list[int],
+    source_name: str,
+    max_gap: float = 0.35,
+) -> list[dict]:
+    """Merge kept words (in order) into contiguous cut spans.
+
+    Consecutive kept words within ``max_gap`` seconds merge into one cut; a
+    larger gap (a dropped span or inter-line pause) starts a new cut — so cut
+    words and dead air never reach the timeline. Pure → unit-testable.
+    """
+    cuts: list[dict] = []
+    cur: Optional[dict] = None
+    for wid in kept_ids:
+        w = words_by_id.get(wid)
+        if w is None:
+            continue
+        if cur is not None and (w.start - cur["source_out"]) <= max_gap:
+            cur["source_out"] = round(w.end, 3)
+            cur["beat_text"] = (cur["beat_text"] + " " + w.text)[:120]
+        else:
+            if cur is not None:
+                cuts.append(cur)
+            cur = {
+                "beat_text": w.text[:120],
+                "source_file": source_name,
+                "source_in": round(w.start, 3),
+                "source_out": round(w.end, 3),
+            }
+    if cur is not None:
+        cuts.append(cur)
+    return cuts
+
+
 # ── Time helpers ───────────────────────────────────────────────────
 
 _TC = re.compile(

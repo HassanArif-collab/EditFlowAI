@@ -31,10 +31,11 @@ from pydantic import BaseModel
 
 from ..services.bin_resolver import resolve as resolve_bins
 from ..services.external_plan import ExternalPlanError, build_plan_from_pasted_json
-from ..services.review_media import ensure_playable_proxy, silence_regions
+from ..services.review_media import ensure_playable_proxy, silence_regions, waveform_peaks
 from ..services.review_service import (
     ReviewError,
     Segment,
+    Word,
     build_gemma_prompt,
     classify,
     kept_cuts,
@@ -42,6 +43,8 @@ from ..services.review_service import (
     parse_transcript,
     segments_to_dicts,
     tighten,
+    words_from_segments,
+    words_to_cuts,
 )
 from ..utils.progress import ProgressReporter
 
@@ -135,14 +138,35 @@ def _summary(segments: list[Segment]) -> dict:
     }
 
 
+def _word_summary(words: list[Word], source_name: str) -> dict:
+    """Word-level readout used by the word editor: kept/cut counts, merged-cut
+    count, and the final runtime (sum of merged contiguous kept spans)."""
+    kept_ids = [w.id for w in words if w.keep]
+    by_id = {w.id: w for w in words}
+    cuts = words_to_cuts(by_id, kept_ids, source_name)
+    final = sum(c["source_out"] - c["source_in"] for c in cuts)
+    return {
+        "total_words": len(words),
+        "kept_words": len(kept_ids),
+        "cut_words": len(words) - len(kept_ids),
+        "cuts": len(cuts),
+        "final_duration": round(final, 2),
+    }
+
+
 def _persist(review_id: str, rev: dict) -> None:
-    """Best-effort snapshot to data/review/{id}.json (debugging aid; non-fatal)."""
+    """Best-effort snapshot to data/review/{id}.json (debugging aid; non-fatal).
+
+    Excludes the live dataclass lists (segments/words) and re-serializes them as
+    plain dicts so the snapshot is valid JSON.
+    """
     try:
         from ..config import get_settings
         out = get_settings().DATA_DIR / "review"
         out.mkdir(parents=True, exist_ok=True)
-        snap = {k: v for k, v in rev.items() if k != "segments"}
+        snap = {k: v for k, v in rev.items() if k not in ("segments", "words")}
         snap["segments"] = segments_to_dicts(rev["segments"])
+        snap["words"] = [w.to_dict() for w in rev.get("words", [])]
         (out / f"{review_id}.json").write_text(
             json.dumps(snap, ensure_ascii=False, indent=2), encoding="utf-8"
         )
@@ -202,11 +226,16 @@ async def ingest(req: IngestReq):
         except Exception as exc:  # noqa: BLE001
             logger.warning("review.ingest tighten failed for %s: %s", source_path, exc)
 
+    # 5. Split into words (approximate per-word times; Scribe replaces these later).
+    words = words_from_segments(segments)
+    source_name = Path(source_path).name
+
     rev = {
         "source_path": source_path,
-        "source_name": Path(source_path).name,
+        "source_name": source_name,
         "proxy_path": proxy_path,
         "segments": segments,
+        "words": words,
         "script": (req.script or "").strip(),
         "duration": duration,
         "codec": codec,
@@ -217,14 +246,16 @@ async def ingest(req: IngestReq):
 
     return {
         "review_id": review_id,
-        "source_name": rev["source_name"],
+        "source_name": source_name,
         "source_path": source_path,
         "duration": duration,
         "codec": codec,
         "media_url": f"/api/review/media/{review_id}" if proxy_path else None,
         "media_error": media_error,
         "segments": segments_to_dicts(segments),
+        "words": [w.to_dict() for w in words],
         "summary": _summary(segments),
+        "word_summary": _word_summary(words, source_name),
     }
 
 
@@ -286,6 +317,22 @@ async def media(review_id: str, request: Request):
     return StreamingResponse(_iter(), status_code=206, headers=headers, media_type="video/mp4")
 
 
+# ── GET /waveform/{review_id} ──────────────────────────────────────
+
+@router.get("/waveform/{review_id}")
+async def waveform(review_id: str):
+    """Return normalized amplitude peaks for the waveform strip (cached, []-safe)."""
+    rev = _reviews.get(review_id)
+    if not rev:
+        raise HTTPException(status_code=404, detail="Review session not found (re-ingest).")
+    try:
+        peaks = await waveform_peaks(rev["source_path"])
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("review.waveform failed for %s: %s", rev.get("source_path"), exc)
+        peaks = []
+    return {"peaks": peaks, "duration": rev.get("duration", 0)}
+
+
 # ── POST /suggest ──────────────────────────────────────────────────
 
 class SuggestReq(BaseModel):
@@ -293,9 +340,26 @@ class SuggestReq(BaseModel):
     use_llm: Optional[bool] = False
 
 
+def _propagate_to_words(rev: dict) -> None:
+    """Mirror each segment's keep/cut decision onto its child words.
+
+    Phase-1/2 bridge: the deterministic + AI passes decide at segment level; the
+    word editor then lets the user refine at word level. A word inherits its
+    parent segment's decision/reason; the user's per-word overrides win after.
+    """
+    words: list[Word] = rev.get("words") or []
+    segs = {s.id: s for s in rev["segments"]}
+    for w in words:
+        seg = segs.get(w.segment_id)
+        if seg is None:
+            continue
+        w.keep = seg.decision == "keep"
+        w.reason = "" if w.keep else (seg.reason or "")
+
+
 @router.post("/suggest")
 async def suggest(req: SuggestReq):
-    """Run the deterministic classifier (+ optional Gemma refine) on a session."""
+    """Run the deterministic classifier (+ optional active-model refine)."""
     rev = _reviews.get(req.review_id)
     if not rev:
         raise HTTPException(status_code=404, detail="Review session not found (re-ingest).")
@@ -315,7 +379,7 @@ async def suggest(req: SuggestReq):
             )
             text = (raw or {}).get("response") or ""
             decisions = parse_gemma_decisions(text, {s.id for s in segments})
-            # Gemma may only TIGHTEN (flip keep→cut); it can't resurrect a
+            # The model may only TIGHTEN (flip keep→cut); it can't resurrect a
             # reliable deterministic cut. This keeps the safe baseline intact.
             for s in segments:
                 if s.decision == "keep" and s.id in decisions:
@@ -325,14 +389,18 @@ async def suggest(req: SuggestReq):
                         s.reason = reason or "llm_off_script"
             llm_used = bool(decisions)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("review.suggest: Gemma refine skipped (%s)", exc)
+            logger.warning("review.suggest: model refine skipped (%s)", exc)
 
+    _propagate_to_words(rev)
     _persist(req.review_id, rev)
+    source_name = rev.get("source_name", "")
     return {
         "review_id": req.review_id,
         "llm_used": llm_used,
         "segments": segments_to_dicts(segments),
+        "words": [w.to_dict() for w in rev.get("words", [])],
         "summary": _summary(segments),
+        "word_summary": _word_summary(rev.get("words", []), source_name),
     }
 
 
@@ -340,23 +408,29 @@ async def suggest(req: SuggestReq):
 
 class BuildReq(BaseModel):
     review_id: str
-    kept_ids: Optional[list[int]] = None  # explicit user selection (in order)
+    kept_ids: Optional[list[int]] = None        # segment ids (legacy segment editor)
+    kept_word_ids: Optional[list[int]] = None   # word ids (word editor) — wins if set
 
 
 @router.post("/build")
 async def build(req: BuildReq):
-    """Turn the kept segments into a Plan via the existing external-plan path."""
+    """Turn the kept words (or segments) into a Plan via the external-plan path."""
     rev = _reviews.get(req.review_id)
     if not rev:
         raise HTTPException(status_code=404, detail="Review session not found (re-ingest).")
 
-    segments: list[Segment] = rev["segments"]
     source_path = rev["source_path"]
     source_name = Path(source_path).name
-    cuts = kept_cuts(segments, source_name, req.kept_ids)
+
+    if req.kept_word_ids is not None:
+        words: list[Word] = rev.get("words") or []
+        by_id = {w.id: w for w in words}
+        cuts = words_to_cuts(by_id, req.kept_word_ids, source_name)
+    else:
+        cuts = kept_cuts(rev["segments"], source_name, req.kept_ids)
 
     if not cuts:
-        raise HTTPException(status_code=400, detail="No segments are kept — nothing to build.")
+        raise HTTPException(status_code=400, detail="Nothing is kept — keep some words first.")
 
     try:
         plan = build_plan_from_pasted_json(
