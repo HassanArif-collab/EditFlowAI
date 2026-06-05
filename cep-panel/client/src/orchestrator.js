@@ -476,43 +476,24 @@ function onNewEdit() {
 // `_createEditPlan` when the script arrives.
 
 async function _startTranscription(source) {
+  // We intentionally do NOT eagerly transcribe the whole bin on pickup anymore —
+  // that was slow and surprising ("it transcribed everything"). Transcription is
+  // now lazy: it happens when a script arrives (/api/edit/analyze transcribes on
+  // demand) or via the Review editor / Scribe. The state-machine flow
+  // (source_provided → all_jobs_complete → script_needed) is preserved.
   transition('source_provided');
 
   const clips = _resolveClipsFromScan(source);
   const sourceRef = _sourceToReference(source);
 
-  if (clips.length === 0) {
-    appendMessage('agent-text', {
-      text: `Got it. I'll work with ${sourceRef}. Share your script when ready.`,
-    });
-    transition('transcription_started');
-    transition('all_jobs_complete');
-    appendMessage('agent-text', {
-      text: 'Now share your script — paste it below, or drop a .txt/.docx/.pdf onto this panel.',
-    });
-    return;
-  }
-
-  const clipCount = clips.length;
-  const totalDuration = clips.reduce((s, c) => s + (c.duration || 0), 0);
-
-  appendMessage('agent-text', {
-    text: `Got it. Transcribing ${clipCount} clip${clipCount > 1 ? 's' : ''}, ~${_fmtDur(totalDuration)} audio.`,
-  });
-
   transition('transcription_started');
-
-  _progressMsgId = appendMessage('progress', {
-    label: 'Transcribing...',
-    pct: 0,
-    detail: `0 of ${clipCount} complete`,
-  });
-
-  await _prewarmTranscripts(clips);
-
   transition('all_jobs_complete');
+
+  const n = clips.length;
   appendMessage('agent-text', {
-    text: `Transcription complete (${clipCount} clip${clipCount !== 1 ? 's' : ''}). Now share your script — paste it below, or drop a .txt/.docx/.pdf onto this panel.`,
+    text: n
+      ? `Got it — I'll use ${sourceRef} (${n} clip${n > 1 ? 's' : ''}). Share your script to auto-cut, or open Review (📝 in the header) to cut by transcript. I only transcribe when needed.`
+      : `Got it. I'll work with ${sourceRef}. Share your script when ready.`,
   });
 
   const state = getState();
@@ -524,11 +505,8 @@ async function _startTranscription(source) {
 }
 
 async function _addTranscriptionJobs(source) {
-  appendMessage('agent-text', { text: `Adding ${source.name} to the source list...` });
-  const clips = _resolveClipsFromScan(source);
-  if (clips.length > 0) {
-    await _prewarmTranscripts(clips);
-  }
+  // No eager transcription — just acknowledge the added source.
+  appendMessage('agent-text', { text: `Added ${source.name} to the source list.` });
 }
 
 /**

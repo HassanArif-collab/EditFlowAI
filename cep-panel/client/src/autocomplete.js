@@ -7,6 +7,16 @@
  */
 import { apiGet } from './api.js';
 
+// Slash-command palette. Typing "/" at the start of the input shows these so the
+// user never has to remember a command. "/review" runs immediately on pick.
+const _COMMANDS = [
+  { cmd: '/review', detail: 'Open the word-level cut editor', icon: '&#128221;' },
+  { cmd: '/transcribe', detail: 'Get the transcription prompt (paste video into Gemini)', icon: '&#127908;' },
+  { cmd: '/cutplan', detail: 'Build the cut-planning prompt', icon: '&#9986;' },
+  { cmd: '/paste-plan', detail: 'Apply a pasted cut-plan JSON', icon: '&#128203;' },
+  { cmd: '/llm-prompt', detail: 'Build the paste-into-LLM prompt (with transcript)', icon: '&#129302;' },
+];
+
 let _popupEl = null;
 let _activeIndex = -1;
 let _items = [];
@@ -30,14 +40,16 @@ function attachAutocomplete(inputEl, selectCallback) {
   inputEl.addEventListener('input', () => {
     const text = inputEl.value;
     const pos = inputEl.selectionStart;
-
-    // Find if cursor is inside an @mention
     const beforeCursor = text.substring(0, pos);
+
+    // "/" command palette — only when the whole input is a leading command token.
+    const slashMatch = text.match(/^\s*\/([a-z-]*)$/i);
     const atMatch = beforeCursor.match(/@([^\s@]*)$/);
 
-    if (atMatch) {
-      const query = atMatch[1];
-      _debounce(() => _fetchSuggestions(query), 150);
+    if (slashMatch) {
+      _showCommands(slashMatch[1].toLowerCase());
+    } else if (atMatch) {
+      _debounce(() => _fetchSuggestions(atMatch[1]), 150);
     } else {
       _hide();
     }
@@ -79,6 +91,13 @@ function _createPopup(inputEl) {
       inputRow.appendChild(_popupEl);
     }
   }
+}
+
+function _showCommands(q) {
+  _items = _COMMANDS
+    .filter(c => !q || c.cmd.slice(1).startsWith(q))
+    .map(c => ({ type: 'command', name: c.cmd, detail: c.detail, icon: c.icon }));
+  _render();
 }
 
 async function _fetchSuggestions(query) {
@@ -173,6 +192,22 @@ function _highlightActive() {
 function _pickItem(index, inputEl) {
   const item = _items[index];
   if (!item) return;
+
+  // Slash command: "/review" opens the editor immediately; others fill the input
+  // so the user can add args / hit Enter.
+  if (item.type === 'command') {
+    _hide();
+    if (item.name === '/review' && typeof window !== 'undefined' &&
+        typeof window.__editflowOpenReview === 'function') {
+      inputEl.value = '';
+      window.__editflowOpenReview();
+      return;
+    }
+    inputEl.value = item.name + ' ';
+    inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length);
+    inputEl.focus();
+    return;
+  }
 
   // Replace the @token in the input
   const text = inputEl.value;
