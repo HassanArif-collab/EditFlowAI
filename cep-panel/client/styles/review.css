@@ -238,3 +238,17 @@
 .rv-w-sel { background: rgba(0,120,212,0.35); }
 .rv-w-now { background: var(--warning); color: #1e1e1e; border-radius: 3px; }
 .rv-w-now.rv-w-cut { color: #5a1d1d; }
+
+/* setup screen — Scribe block */
+.rv-scribe {
+  margin: 10px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--bg-surface);
+}
+.rv-subhead { font-size: 13px; color: var(--text-bright); margin-bottom: 8px; }
+.rv-keyrow { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+.rv-keyrow .rv-input { flex: 1; min-width: 160px; }
+.rv-tiny { font-size: 11px; padding: 4px 8px; }
+.rv-or { text-align: center; color: var(--text-dim); font-size: 11px; margin: 14px 0 8px; }

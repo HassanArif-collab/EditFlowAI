@@ -129,24 +129,50 @@ function _renderSetup(opts = {}) {
       <button class="rv-btn rv-ghost" data-act="close">Close</button>
     </div>
     <div class="rv-setup">
-      <p class="rv-hint">Paste a transcript (ElevenLabs Scribe <b>SRT</b> or Gemini JSON) for one clip.
-         I'll show every word; play, select &amp; cut words, then build a tight cut.</p>
+      <p class="rv-hint">Pick a clip, then <b>transcribe with Scribe</b> (no pasting, exact word
+         timing) — or paste a transcript. Then edit by word: play, select, cut.</p>
       <label class="rv-label">Source clip <span class="rv-dim">(filename if you scanned, or full path)</span></label>
       <input id="rv-source" class="rv-input" type="text" placeholder="IMG_1694.MOV" value="${_esc(src)}" spellcheck="false" />
-      <label class="rv-label">Transcript</label>
-      <textarea id="rv-transcript" class="rv-textarea" placeholder="1&#10;00:00:00,000 --> 00:00:02,500&#10;...paste your SRT here..." spellcheck="false"></textarea>
+
+      <div class="rv-scribe">
+        <div class="rv-subhead">Transcribe with ElevenLabs Scribe <span class="rv-dim">— recommended</span></div>
+        <div id="rv-scribe-key" class="rv-keyrow"></div>
+        <div class="rv-actions">
+          <button class="rv-btn rv-primary" data-act="transcribe">Transcribe with Scribe</button>
+          <span id="rv-scribe-status" class="rv-status"></span>
+        </div>
+      </div>
+
+      <div class="rv-or">— or paste a transcript —</div>
+      <textarea id="rv-transcript" class="rv-textarea" placeholder="Paste a Scribe SRT or Gemini JSON…" spellcheck="false"></textarea>
       <label class="rv-label">Script <span class="rv-dim">(optional — helps the AI flag off-script lines)</span></label>
       <textarea id="rv-script" class="rv-textarea rv-textarea-short" placeholder="Paste your script (any language)..." spellcheck="false"></textarea>
       <div class="rv-actions">
-        <button class="rv-btn rv-primary" data-act="load">Load transcript</button>
+        <button class="rv-btn" data-act="load">Load pasted transcript</button>
         <span id="rv-setup-status" class="rv-status"></span>
       </div>
     </div>`;
   view.querySelector('[data-act="close"]').onclick = closeReview;
   view.querySelector('[data-act="load"]').onclick = _loadTranscript;
+  view.querySelector('[data-act="transcribe"]').onclick = _transcribeScribe;
   const ta = view.querySelector('#rv-transcript');
   if (ta && opts.transcript) ta.value = opts.transcript;
-  if (ta) ta.focus();
+  S._scribePending = false;
+  _refreshScribe();
+}
+
+async function _applyReviewResp(resp, script) {
+  S.reviewId = resp.review_id;
+  _setWords(resp.words || []);
+  S.mediaUrl = resp.media_url ? getBaseUrl() + resp.media_url : null;
+  S.sourceName = resp.source_name || '';
+  S.sourcePath = resp.source_path || '';
+  S.script = script || '';
+  S.duration = resp.duration || 0;
+  S.undo = []; S.redo = [];
+  S.modelName = await _fetchModelName();
+  _renderEditor(resp.media_error);
+  _loadWaveform();
 }
 
 async function _loadTranscript() {
@@ -154,28 +180,71 @@ async function _loadTranscript() {
   const transcript = ($('#rv-transcript')?.value || '').trim();
   const script = ($('#rv-script')?.value || '').trim();
   const status = $('#rv-setup-status');
-  if (!transcript) { _setStatus(status, 'Paste a transcript first.', true); return; }
+  if (!transcript) { _setStatus(status, 'Paste a transcript first (or use Scribe above).', true); return; }
   _setStatus(status, 'Preparing preview & splitting into words… (first time can take a moment)');
-
   try {
     const resp = await apiPost('/api/review/ingest', {
-      transcript_text: transcript, source_file: source || null, script,
-      fmt: 'auto', tighten: true,
+      transcript_text: transcript, source_file: source || null, script, fmt: 'auto', tighten: true,
     }, { timeoutMs: 1800000 });
-
-    S.reviewId = resp.review_id;
-    _setWords(resp.words || []);
-    S.mediaUrl = resp.media_url ? getBaseUrl() + resp.media_url : null;
-    S.sourceName = resp.source_name || source;
-    S.sourcePath = resp.source_path || '';
-    S.script = script;
-    S.duration = resp.duration || 0;
-    S.undo = []; S.redo = [];
-    S.modelName = await _fetchModelName();
-    _renderEditor(resp.media_error);
-    _loadWaveform();
+    await _applyReviewResp(resp, script);
   } catch (err) {
     _setStatus(status, `Couldn't load: ${err.message || err}`, true);
+  }
+}
+
+// ── Scribe (no-pasting) path ─────────────────────────────────
+
+async function _refreshScribe() {
+  const row = $('#rv-scribe-key');
+  if (!row) return;
+  let has = false;
+  try { const st = await apiGet('/api/review/scribe/status', { timeoutMs: 4000 }); has = !!st.has_key; } catch (_) {}
+  if (has) {
+    row.innerHTML = `<span class="rv-dim">✓ API key saved.</span> <button class="rv-btn rv-ghost rv-tiny" data-act="changekey">change</button>`;
+    row.querySelector('[data-act="changekey"]').onclick = () => _showKeyInput(row);
+  } else {
+    _showKeyInput(row);
+  }
+}
+
+function _showKeyInput(row) {
+  row.innerHTML = `<input id="rv-scribe-keyinput" class="rv-input" type="password" placeholder="Paste your ElevenLabs API key" spellcheck="false" />
+    <button class="rv-btn rv-tiny" data-act="savekey">Save key</button>`;
+  row.querySelector('[data-act="savekey"]').onclick = async () => {
+    const key = ($('#rv-scribe-keyinput')?.value || '').trim();
+    if (!key) return;
+    try { await apiPost('/api/review/scribe/key', { key }, { timeoutMs: 5000 }); _refreshScribe(); }
+    catch (e) { _setStatus($('#rv-scribe-status'), 'Could not save key: ' + (e.message || e), true); }
+  };
+}
+
+async function _transcribeScribe() {
+  const source = ($('#rv-source')?.value || '').trim();
+  const status = $('#rv-scribe-status');
+  const btn = document.querySelector('[data-act="transcribe"]');
+  if (!source) { _setStatus(status, 'Enter the source clip first.', true); return; }
+
+  if (!S._scribePending) {     // step 1 — estimate + ask to confirm
+    try {
+      const est = await apiPost('/api/review/scribe/estimate', { source_file: source }, { timeoutMs: 15000 });
+      if (!est.has_key) { _setStatus(status, 'Add your ElevenLabs API key above first.', true); return; }
+      S._scribePending = true;
+      if (btn) btn.textContent = `Confirm — transcribe (~$${(est.usd || 0).toFixed(2)})`;
+      _setStatus(status, `Scribe will transcribe ${est.source_name} (~${est.minutes} min ≈ $${(est.usd || 0).toFixed(2)}). Click again to confirm.`);
+    } catch (e) { _setStatus(status, 'Estimate failed: ' + (e.message || e), true); }
+    return;
+  }
+
+  S._scribePending = false;    // step 2 — run it
+  if (btn) { btn.textContent = 'Transcribing with Scribe…'; btn.disabled = true; }
+  _setStatus(status, 'Transcribing with Scribe (and preparing preview)…');
+  try {
+    const script = ($('#rv-script')?.value || '').trim();
+    const resp = await apiPost('/api/review/transcribe', { source_file: source, script, language_code: 'ur' }, { timeoutMs: 1800000 });
+    await _applyReviewResp(resp, script);
+  } catch (e) {
+    _setStatus(status, 'Scribe failed: ' + (e.message || e), true);
+    if (btn) { btn.textContent = 'Transcribe with Scribe'; btn.disabled = false; }
   }
 }
 
