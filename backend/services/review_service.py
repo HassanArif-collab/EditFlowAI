@@ -201,6 +201,31 @@ def words_to_cuts(
     return cuts
 
 
+def refine_words(words: list[Word]) -> None:
+    """Word-level deterministic cleanup layered on top of segment decisions.
+
+    Cuts individual junk WORDS even inside an otherwise-kept line — the whole
+    point of word-level editing. Only ADDS cuts (never restores), so it can't
+    undo a human keep. Language-agnostic signals only:
+      - whole-word fillers ("haan ji", "umm", "ji"…)
+      - bracketed non-speech tokens (``[بچے کی آواز]``)
+      - cutoff markers — words ending in ``--`` (Scribe marks restarts this way)
+    Mutates ``words`` in place.
+    """
+    for w in words:
+        if not w.keep:
+            continue
+        t = (w.text or "").strip()
+        if not t:
+            w.keep, w.reason = False, "empty"
+        elif _is_bracketed_nonspeech(t):
+            w.keep, w.reason = False, "non_speech"
+        elif _is_filler(_normalize(t)):
+            w.keep, w.reason = False, "filler"
+        elif t.endswith("--"):
+            w.keep, w.reason = False, "false_start"
+
+
 # ── Time helpers ───────────────────────────────────────────────────
 
 _TC = re.compile(

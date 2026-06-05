@@ -10,6 +10,7 @@ from __future__ import annotations
 from backend.services.review_service import (
     Segment,
     Word,
+    refine_words,
     words_from_segments,
     words_to_cuts,
 )
@@ -69,3 +70,22 @@ def test_words_to_cuts_drops_unkept_words_in_middle():
     assert len(cuts) == 2
     assert cuts[0]["source_out"] == 1.8
     assert cuts[1]["source_in"] == 2.2
+
+
+def test_refine_words_cuts_junk_words_inside_kept_lines():
+    # All start kept; refine should cut the cutoff, the filler, the [non-speech].
+    words = [
+        Word(0, "میں", 0.0, 0.3, 0, keep=True),       # real word → stays
+        Word(1, "ہم--", 0.3, 0.6, 0, keep=True),       # cutoff marker → false_start
+        Word(2, "ہاں", 0.6, 0.9, 0, keep=True),        # filler → cut
+        Word(3, "[بچے", 0.9, 1.2, 0, keep=True),        # not bracket-balanced → stays
+        Word(4, "[بچے]", 1.2, 1.5, 0, keep=True),       # bracketed non-speech → cut
+        Word(5, "startup", 1.5, 1.9, 0, keep=False, reason="retake"),  # already cut → unchanged
+    ]
+    refine_words(words)
+    assert words[0].keep is True
+    assert words[1].keep is False and words[1].reason == "false_start"
+    assert words[2].keep is False and words[2].reason == "filler"
+    assert words[4].keep is False and words[4].reason == "non_speech"
+    # never restores a prior cut
+    assert words[5].keep is False and words[5].reason == "retake"

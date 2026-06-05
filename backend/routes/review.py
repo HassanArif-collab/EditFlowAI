@@ -41,6 +41,7 @@ from ..services.review_service import (
     kept_cuts,
     parse_gemma_decisions,
     parse_transcript,
+    refine_words,
     segments_to_dicts,
     tighten,
     words_from_segments,
@@ -392,6 +393,7 @@ async def suggest(req: SuggestReq):
             logger.warning("review.suggest: model refine skipped (%s)", exc)
 
     _propagate_to_words(rev)
+    refine_words(rev.get("words", []))  # word-level: cut junk words inside kept lines
     _persist(req.review_id, rev)
     source_name = rev.get("source_name", "")
     return {

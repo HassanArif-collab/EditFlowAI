@@ -972,14 +972,20 @@ function _extractBeats(plan) {
 
   return rawBeats.map((beat, i) => {
     if (beat.unmatched || beat.no_match) {
-      return { unmatched: true, text: beat.text || beat.script_line || `Beat ${i + 1}` };
+      return { unmatched: true, text: beat.text || beat.beat_text || beat.script_line || `Beat ${i + 1}` };
     }
+    // External/review cuts use beat_text/source_in/source_out/take_source_file;
+    // the matcher uses text/start/end/clip_name. Accept both (?? so a real 0 isn't
+    // skipped). This is why the pasted-plan card used to show "" and 0:00.
+    const srcPath = beat.clip_name || beat.take_source_file || beat.source || beat.asset_name || '';
+    const start = beat.start ?? beat.source_in ?? beat.source_start ?? 0;
+    const end = beat.end ?? beat.source_out ?? beat.source_end ?? 0;
     return {
-      text: beat.text || beat.script_line || beat.phrase || '',
-      clipName: beat.clip_name || beat.source || beat.asset_name || '',
-      start: beat.start || beat.source_start || 0,
-      end: beat.end || beat.source_end || 0,
-      duration: beat.duration || (beat.end || 0) - (beat.start || 0),
+      text: beat.text || beat.beat_text || beat.script_line || beat.phrase || '',
+      clipName: String(srcPath).split(/[\\/]/).pop() || '',
+      start,
+      end,
+      duration: beat.duration || (end - start),
       unmatched: false,
     };
   });
