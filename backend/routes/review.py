@@ -31,6 +31,7 @@ from pydantic import BaseModel
 
 from ..services.bin_resolver import resolve as resolve_bins
 from ..services.external_plan import ExternalPlanError, build_plan_from_pasted_json
+from ..services import scribe_service
 from ..services.review_media import ensure_playable_proxy, silence_regions, waveform_peaks
 from ..services.review_service import (
     ReviewError,
@@ -450,4 +451,104 @@ async def build(req: BuildReq):
         "summary": plan.summary,
         "gaps": plan.gaps,
         "cuts_count": len(plan.cuts),
+    }
+
+
+# ── Scribe (ElevenLabs) — key, estimate, transcribe ────────────────
+
+class ScribeKeyReq(BaseModel):
+    key: str
+
+
+@router.get("/scribe/status")
+async def scribe_status():
+    return {"has_key": scribe_service.has_api_key(), "model": scribe_service.DEFAULT_MODEL}
+
+
+@router.post("/scribe/key")
+async def scribe_set_key(req: ScribeKeyReq):
+    scribe_service.set_api_key(req.key)
+    return {"ok": True, "has_key": scribe_service.has_api_key()}
+
+
+class ScribeEstimateReq(BaseModel):
+    source_file: Optional[str] = None
+    bin_references: Optional[list[str]] = None
+
+
+@router.post("/scribe/estimate")
+async def scribe_estimate(req: ScribeEstimateReq):
+    try:
+        source_path = _resolve_source(req.source_file, req.bin_references)
+    except ReviewError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    est = scribe_service.estimate_for_file(source_path)
+    est["has_key"] = scribe_service.has_api_key()
+    est["source_name"] = Path(source_path).name
+    return est
+
+
+class TranscribeReq(BaseModel):
+    source_file: Optional[str] = None
+    bin_references: Optional[list[str]] = None
+    script: Optional[str] = ""
+    language_code: Optional[str] = "ur"
+    client_id: Optional[str] = None
+
+
+@router.post("/transcribe")
+async def transcribe_clip(req: TranscribeReq):
+    """Transcribe a clip with ElevenLabs Scribe and open a review session.
+
+    The "no pasting" path: exact per-word times straight from Scribe → the word
+    editor. Requires an API key (Settings / ELEVENLABS_API_KEY).
+    """
+    try:
+        source_path = _resolve_source(req.source_file, req.bin_references)
+    except ReviewError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    try:
+        data = await scribe_service.transcribe(source_path, language_code=req.language_code or None)
+    except scribe_service.ScribeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    segments, words = scribe_service.build_segments_and_words(data)
+    if not words:
+        raise HTTPException(status_code=400, detail="Scribe returned no words for this clip.")
+
+    review_id = uuid.uuid4().hex[:12]
+    reporter = ProgressReporter(task_type="review_proxy", client_id=req.client_id)
+    media_error: Optional[str] = None
+    proxy_path: Optional[str] = None
+    duration = 0.0
+    codec = ""
+    try:
+        info = await ensure_playable_proxy(source_path, reporter=reporter)
+        proxy_path = info["proxy_path"]
+        duration = info.get("duration") or 0.0
+        codec = info.get("src_codec") or ""
+    except Exception as exc:  # noqa: BLE001
+        media_error = f"Couldn't prepare the video preview: {exc}"
+        logger.warning("review.transcribe proxy failed for %s: %s", source_path, exc)
+
+    source_name = Path(source_path).name
+    rev = {
+        "source_path": source_path, "source_name": source_name, "proxy_path": proxy_path,
+        "segments": segments, "words": words, "script": (req.script or "").strip(),
+        "duration": duration, "codec": codec, "media_error": media_error,
+        "transcript_source": "scribe",
+    }
+    _reviews[review_id] = rev
+    _persist(review_id, rev)
+    return {
+        "review_id": review_id, "source_name": source_name, "source_path": source_path,
+        "duration": duration, "codec": codec,
+        "media_url": f"/api/review/media/{review_id}" if proxy_path else None,
+        "media_error": media_error,
+        "segments": segments_to_dicts(segments),
+        "words": [w.to_dict() for w in words],
+        "summary": _summary(segments),
+        "word_summary": _word_summary(words, source_name),
+        "transcript_source": "scribe",
     }
