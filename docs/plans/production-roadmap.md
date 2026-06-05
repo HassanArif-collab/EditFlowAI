@@ -1,111 +1,195 @@
-# EditFlow AI — Production Roadmap
+# EditFlow AI — Production Roadmap & Full-System Audit
 
-> The master plan: turn a working-but-clunky prototype into an **installable,
-> effortless, big-tech-grade app**. Living document — refined continuously.
-> Companion to `word-level-editor.md` (the editor's detailed spec).
+> The master plan: take a working-but-clunky prototype to an **installable,
+> effortless, big-tech-grade app**. Living doc — refined continuously.
+> Companion: `word-level-editor.md` (editor spec). Status tags: ✅ done ·
+> 🚧 in progress · ⬜ planned.
 
 ## 0. North star
 
-> *Anyone installs it in one click. It sets up everything it needs. You point it
-> at footage + a script, and you edit by reading and clicking words. No terminal,
-> no remembering commands, no babysitting services. It feels like Google built it.*
+> *Install in one click. It sets up everything it needs. Point it at footage + a
+> script; edit by reading and clicking words. No terminal, no remembered
+> commands, no babysitting services. It feels like Google built it.*
 
-Design principles (every decision is checked against these):
-1. **Zero-config.** First run installs/repairs its own dependencies.
-2. **Discoverable, not memorized.** Buttons & menus over slash-commands. `/` and
-   `@` open menus. Nothing requires recall.
-3. **Explicit & reversible.** Nothing expensive (transcribe, cut, build) happens
-   without intent, a progress bar, a cost/time estimate, and an undo.
-4. **Never a dead end.** Errors are human, actionable, and self-heal where
-   possible. The panel never freezes or goes blank.
-5. **Fast & calm.** Instant feel; long work is backgrounded with progress+cancel.
+**Principles** (every decision is checked against these):
+1. **Zero-config** — first run installs/repairs its own dependencies.
+2. **Discoverable, not memorized** — buttons & menus over slash-commands; `/`
+   and `@` open menus.
+3. **Explicit & reversible** — nothing expensive (transcribe/cut/build) runs
+   without intent + progress + estimate + undo.
+4. **Never a dead end** — errors are human, actionable, self-healing; the panel
+   never freezes or blanks.
+5. **Fast & calm** — instant feel; long work is backgrounded with progress + cancel.
 
-## 1. Honest audit of what's clunky today
+---
 
-| Area | Problem |
-|---|---|
-| Discoverability | Must *remember* `/review`. `/` shows no command menu; `@` shows no file/bin menu (autocomplete broken/limited). |
-| Transcription | Picking a bin **auto-transcribes everything** with Whisper (slow, unasked-for). No estimate, no cancel. |
-| Whisper mgmt | Model download/select/delete is fragile (wrong cache dir, partial downloads, "model not found" spam). |
-| LLM cuts | Weak local model decided whole-sentence keep/cut (wrong granularity — fixed by the word editor). |
-| Robustness | Sparse error handling; 500s surface as dead UI; CEP asset cache silently serves stale code. |
-| Setup | Requires Python, ffmpeg, ollama, Whisper models installed by hand. Not an "app". |
-| Surface | Three overlapping frontends (orchestrator / agent / review); Review is hidden behind a command. |
+## 1. System map (so any agent ramps fast)
 
-## 2. Workstreams
+```
+Premiere ──loads──▶ CEP panel  (manifest MainPath = client/cep-loader.html, file://)
+  cep-loader.html  : boot — ping backend, AUTO-SPAWN `python run.py --prod` via Node,
+                     then load assets from  http://127.0.0.1:8765/panel/  (no-store).
+                     ⚠ index.html is DEAD (nothing loads it) — delete or repurpose.
+  src/main.js       : bootstraps; dynamic-imports orchestrator|agent (+ review-view)
+                      with ?v=BUILD_TAG cache-buster; wires header buttons + WS.
+  Frontends (3):
+    orchestrator.js : legacy chat state-machine (DEFAULT). slash cmds, scan, paste-plan.
+    agent-client.js : LLM-agent chat (when localStorage.editflow_agent_mode==='on').
+    review-view.js  : NEW word-level editor (📝 / /review). The future primary surface.
+  chat-ui.js        : message-card renderer for the chat frontends.
+  autocomplete.js   : `/` command palette + `@` bin/clip mentions.
+  extendscript.js   : Promise wrapper over CSInterface.evalScript → editflowDispatch.
+extendscript/*.jsx  : Premiere host (index.jsx router → clip/sequence/marker/… managers).
+                      processEDL builds the "EditFlow Cut" sequence.
 
-### A. Word-level editor (core) — see `word-level-editor.md`
-Descript-style word doc + waveform; karaoke; click-word-to-seek; select→cut/
-restore; play original/plan; AI cleanup with **dynamic active-model label**;
-Scribe word-times; "Takes" tab. Phases A1–A5 there.
+Backend  (FastAPI, 127.0.0.1:8765, backend/main.py)
+  routes/   review (word editor) · edit (analyze/plan/apply) · external_plan (paste) ·
+            premiere (project context) · media · whisper_admin · providers · chat · agent
+  services/ review_service (parse/tighten/classify/words) · review_media (proxy/peaks/
+            silence) · whisper_service · provider_service (ollama) · cut_planner ·
+            external_plan · script_matcher · gemini_transcript · media_fingerprint
+  data/     proxies, peaks, plans, hf-cache (Whisper), tools/ffmpeg-*, review/
 
-### B. Effortless interaction layer
-- **Command menu on `/`** — floating list (Review, Transcribe, Cut plan, New edit,
-  Settings…) with descriptions + ↑↓/Enter. Fix `autocomplete.js`.
-- **`@` mention menu** — live list of project bins/clips/files to insert.
-- **Review is a top-level mode**, not a hidden command: a header **Edit / Chat /
-  Settings** switcher; Edit (the word editor) is the default landing.
-- Inline affordances everywhere; remove the need to recall any command.
+Cut apply backbone (reused by every path):
+  kept spans → external_plan.build_plan_from_pasted_json → plan_store → /edit/plan/{id}/apply
+  → ExtendScript processEDL → sequence in Premiere.
+```
 
-### C. Transcription done right (Whisper + Scribe)
-- **No auto-transcribe.** Transcription is an explicit action with estimate +
-  progress + cancel; results cached by content fingerprint.
-- **Scribe integration** (`scribe_v2`, word timestamps, `language_code`, diarize
-  off): API key in Settings (stored outside the repo), per-minute cost estimate,
-  fingerprint cache. Recommended path.
-- **Whisper = offline fallback** with a real **model manager** (list/download w/
-  progress/select/delete/disk-usage; correct HF cache dir; resume partials).
-- A **TranscriptionProvider** abstraction (`scribe | whisper | paste`) so the
-  editor is source-agnostic and always gets `{words[], segments[]}`.
+---
 
-### D. Robustness & error handling
-- Backend: typed exceptions → clean 4xx with actionable detail; never silent 500.
-- Frontend: global error surface; inline ret/ dismiss; the panel can always recover.
-- Backend lifecycle: health endpoint, single-instance lock, graceful auto-restart,
-  hardened `cep-loader` boot.
-- **CEP cache solved once**: every asset URL carries a build-stamped `?v=`; modules
-  load via the no-store `/panel` mount; a "Hard reload" affordance.
-- Diagnostics panel surfaces live state + last errors + log tail.
+## 2. Full audit — what's clunky/broken (my findings + the user's)
 
-### E. The installable app (zero-config bootstrap)
-- **First-run Setup wizard** (in-panel) that detects & installs/repairs:
-  - **ffmpeg** — bundled; verify & self-locate. ✅ mostly done.
-  - **Python + backend** — ship a **bundled portable Python** + pinned deps so no
-    system Python is required; backend auto-starts (already via cep-loader).
-  - **Ollama** — *decision:* prefer to **drop the hard ollama dependency** (use
-    Scribe + deterministic + optional paste). If kept, detect/offer install + pull
-    a default model.
-  - **Whisper models** — download on demand with progress.
-- **Packaging**: signed **ZXP** for the CEP extension + a **one-click installer**
-  (Inno Setup / NSIS) that lays down the extension, the bundled runtime, registers
-  CEP, and launches. A "Repair" button re-checks/fixes the environment.
+**Discoverability / UX**
+- ✅ `/` showed nothing → added a command palette. `@` mentions worked.
+- ⬜ Three overlapping surfaces (orchestrator/agent/review); Review should be the
+  **default**, with a top-level **Edit / Chat / Settings** switcher. Right now the
+  default is the legacy chat and Review is a button/command.
+- ⬜ No onboarding / empty-state guidance; the hero is just "Scan Project".
+- ⬜ `index.html` is dead code that misleads (I edited it for an hour before
+  realizing `cep-loader.html` is the panel). Delete it.
 
-### F. Production polish
-- Design system (tokens/spacing/motion), onboarding, empty states, tooltips,
-  keyboard map, virtualized long transcripts, a11y, high-DPI, RTL (done).
+**Transcription**
+- ✅ Picking a bin auto-transcribed the whole bin → made lazy.
+- ⬜ **faster-whisper auto-downloads multi-GB models on first transcribe**, silently,
+  with no estimate — the real "Whisper not managed correctly". Fix: never trigger a
+  download implicitly; require an explicit "download (≈X GB)" with progress (the
+  download-progress WS plumbing already exists in `whisper_admin.py`).
+- ⬜ Install detection is heuristic (scans HF cache for `.incomplete`) and brittle;
+  needs a robust state machine: not-installed / downloading(%) / ready / failed.
+- ⬜ Whisper Urdu quality is poor (proven). Scribe is the real answer (below).
 
-## 3. Sequenced roadmap
+**Robustness / errors**
+- ⬜ Sparse error handling; backend 500s can surface as a dead panel. Need a global
+  frontend error surface + typed backend errors everywhere.
+- ⬜ Long ops (proxy transcode, transcribe) run **synchronously in the request** with
+  no cancel. Background them with progress + cancel.
+- ⬜ Backend lifecycle: no single-instance lock; port-8765 conflicts; cep-loader
+  spawns if ping fails — races possible. Add a lock + health + graceful restart.
+- ✅ CEP asset cache mostly solved: no-store `/panel` + `?v=BUILD_TAG` dynamic
+  imports + self-injecting `review.css`. Add a visible "Hard reload" affordance.
+- ⬜ `/paste-plan` plan-card shows `""`/`0:00` (`_extractBeats` reads `beat.text`/
+  `beat.start`, external cuts use `beat_text`/`source_in`) — display bug; and Build
+  needs the "New Sequence" preset dialog OK'd. Fix mapping + auto-confirm/preset.
 
-- **P1 — Word editor MVP + discoverability.** Word doc + waveform + karaoke +
-  select/cut/restore + play original/plan; **fix `/` & `@` menus**; **Review as a
-  top-level Edit tab**; **stop auto-transcribe**. *(in progress)*
-- **P2 — AI cleanup + robustness.** Word-range AI cleanup (dynamic model label);
-  backend/frontend error-handling pass; CEP cache solved.
-- **P3 — Transcription providers.** Scribe (word times, key, cost, cache) +
-  Whisper model-manager UI + provider abstraction.
-- **P4 — Build & scale.** Build-from-words + multi-clip selector/aggregate +
-  fix `/paste-plan` build.
-- **P5 — Takes tab.** Take-grouping (best-take-per-beat) + script-beat coloring.
-- **P6 — Installable app.** Setup wizard + dependency auto-install + packaging +
-  repair.
-- **P7 — Polish.** Design system, onboarding, perf, a11y.
+**Editor (word-level)** — see `word-level-editor.md`
+- ✅ P1 word doc + waveform + karaoke + select/cut/restore + play original/plan + undo.
+- 🚧 P2 word-level AI (currently segment-classify → words; make AI return word RANGES).
+- ⬜ P3 Scribe word-times · P4 build-from-words(✅ backend)/multi-clip · P5 Takes tab.
 
-## 4. Open decisions (flag for user)
-- **Drop ollama?** Scribe + deterministic + paste likely cover cuts → far simpler
-  install. (Recommended.)
-- **Bundle Python runtime?** +size, −friction. (Recommended for the "app".)
-- **Installer signing** (avoids SmartScreen warnings) — needs a cert.
+**Setup / "app"**
+- ⬜ Requires hand-installed Python, ffmpeg(bundled ✅), Ollama, Whisper models.
+  Not an app. See §5.
 
-## 5. Definition of done (per the user)
-No clunk, no subtle errors, full error handling, effortless + smooth, installs
-itself, looks built by a big tech company.
+**Secrets**
+- ⬜ Scribe API key must be stored securely (OS cred store or at least outside the
+  repo / not in plain localStorage synced anywhere).
+
+---
+
+## 3. Effortless interaction layer (P1–P2)
+- ✅ `/` command palette.
+- ⬜ **Mode switcher** in the header: **Edit** (word editor, default) · **Chat**
+  (legacy power-user) · **Settings**. Review stops being a hidden command.
+- ⬜ First-run **onboarding**: 3 steps (Scan → Transcribe → Cut) with inline hints.
+- ⬜ Consistent empty states, tooltips, a visible **keyboard map** (the editor is
+  keyboard-first).
+- ⬜ Toasts for success/'undo' affordances; a persistent **status/diagnostics**
+  drawer instead of silent failures.
+
+## 4. Transcription done right (P3)
+- **Scribe** (recommended): `client.speech_to_text.convert(model_id="scribe_v2",`
+  `file=<audio>, language_code="ur", timestamps_granularity="word", diarize=False)`
+  → exact per-word times. Key in **Settings** (secure). Per-minute **cost estimate**
+  before the call; **cache by content fingerprint**. New `scribe_service.py` +
+  routes; word editor consumes its `words[]` directly.
+- **Whisper = offline fallback**: explicit model **download manager** (never
+  implicit); robust install state; correct HF cache dir (already redirected).
+- **`TranscriptionProvider` abstraction** (`scribe | whisper | paste`) so the editor
+  is source-agnostic → always `{words[], segments[]}`.
+
+## 5. The installable app (P6) — the big one
+**Goal:** double-click installer → Premiere shows EditFlow, fully working.
+
+**Packaging**
+- **CEP extension** → signed **ZXP** (ZXPSignCmd) so it installs without dev mode;
+  or ship via an installer that drops it into the CEP extensions dir + sets
+  `PlayerDebugMode`.
+- **One-click installer** (Inno Setup / NSIS on Windows) that lays down:
+  1. the extension folder (→ `%APPDATA%/Adobe/CEP/extensions/com.editflow.ai`),
+  2. a **bundled portable Python** + a pre-built venv with pinned deps (so no system
+     Python needed) — or a PyInstaller-frozen backend exe,
+  3. **ffmpeg** (already bundled under `data/tools`),
+  4. optional models,
+  then registers CEP and launches.
+- **Auto-update**: version check + download new ZXP/installer.
+- **Signing**: code-sign the installer to avoid SmartScreen.
+
+**Dependency strategy (key decision)**
+- **Drop the hard Ollama dependency.** Use **Scribe** (transcription) + **deterministic
+  word cleanup** + **optional paste-a-model** for cuts. This removes the heaviest,
+  flakiest install (a local LLM runtime + multi-GB model) and makes the app viable
+  for non-technical users. Keep Ollama as an *optional advanced* offline mode.
+- **Whisper** likewise becomes *optional offline mode*; Scribe is the default path.
+- Net: the minimal install = extension + bundled Python backend + ffmpeg + a Scribe
+  key. Everything else is opt-in.
+
+**First-run Setup wizard (in-panel)**
+- Detects & reports: backend up?, ffmpeg?, Scribe key set?, (optional) Whisper/Ollama.
+- One **"Set up / Repair"** button that fixes what it can and links what it can't.
+- Health re-check any time from Settings.
+
+## 6. Best UI for editing (the user's question)
+- **A. Word document (Descript)** — chosen primary. Best for precision + trust.
+- **B. + Waveform strip** — chosen; adds frame-level scrubbing.
+- **C. Take-grouping tab** — chosen (P5); best for retake-heavy footage (this clip).
+- **D. Chat-driven** (legacy) — keep as optional power-user surface, not default.
+- **Recommendation (in build):** A+B as the default Edit surface, C as a second tab,
+  D demoted to "Chat". This matches Premiere's own Text-Based Editing + Descript, the
+  two products users already expect.
+
+## 7. Production polish (P7)
+Design tokens/spacing/motion; virtualized long transcripts; a11y; high-DPI; RTL
+(done in editor); localized strings; crash/error telemetry; signed builds.
+
+## 8. Sequenced roadmap (status)
+- **P1 — Word editor + discoverability.** ✅ word doc+waveform+karaoke+cut/restore+
+  play+undo · ✅ `/` palette · ✅ lazy transcribe · ⬜ Edit/Chat mode switcher · ⬜ delete dead index.html.
+- **P2 — AI cleanup + robustness.** 🚧 word-range AI (dynamic model label ✅) ·
+  ⬜ error-handling pass · ⬜ background long ops + cancel · ⬜ fix `/paste-plan` card+build.
+- **P3 — Transcription providers.** ⬜ Scribe (key/cost/cache/word-times) · ⬜ Whisper
+  download-only-on-demand manager · ⬜ provider abstraction.
+- **P4 — Build & scale.** ✅ build-from-words (backend) · ⬜ multi-clip selector/aggregate.
+- **P5 — Takes tab** + script-beat coloring.
+- **P6 — Installable app** (drop hard Ollama/Whisper deps; bundle Python; ZXP +
+  installer; setup wizard; auto-update; signing).
+- **P7 — Polish** (design system, onboarding, perf, a11y, telemetry).
+
+## 9. Open decisions (need a yes)
+- **Drop Ollama as a hard dep?** (Recommended — Scribe + deterministic + paste cover it.)
+- **Bundle a portable Python / freeze backend?** (Recommended for the app.)
+- **Pay for code-signing certs** (installer + ZXP) to avoid security warnings?
+- **Remove the agent-mode frontend** to cut surface area? (Likely yes once Review is default.)
+
+## 10. Definition of done (per the user)
+No clunk, no subtle errors, full error handling, effortless & smooth, installs
+itself + its services, looks built by a big tech company.

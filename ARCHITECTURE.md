@@ -249,3 +249,50 @@ Everything under `data/` is runtime state. The repo doesn't ship any of it. The 
 | New HF download lands on C: not G: | Something imported `huggingface_hub` before `run.py` set `HF_HUB_CACHE`. |
 
 When in doubt: the backend log is honest. The panel UI is a derived view.
+
+---
+
+## Review editor (v2) — the emerging primary surface
+
+Newer than the agent loop above. A **transcript-first, word-level cut editor**
+(`cep-panel/client/src/review-view.js`, opened by the 📝 header button or
+`/review`). You paste a transcript (ElevenLabs **Scribe SRT** or Gemini JSON),
+see every **word**, play/scrub with a karaoke highlight, **select a span and
+Cut/Restore** it (so you keep part of a sentence), preview **Play plan** (kept
+words only), then **Build**.
+
+Backend: `backend/routes/review.py` + `services/review_service.py`
+(parse/tighten/classify/**words**) + `services/review_media.py` (H.264 **proxy**
+so HEVC plays in CEF, **waveform peaks**, **silencedetect** for tightening).
+Endpoints: `POST /api/review/ingest` → `{words[], media_url, word_summary}`,
+`GET /media/{id}` (range-streamed proxy), `GET /waveform/{id}`,
+`POST /suggest`, `POST /build {kept_word_ids}`.
+
+Word times are **approximate** today (interpolated from SRT cue spans by char
+length); **Scribe** will supply exact per-word times (roadmap P3). The editor is
+source-agnostic — it only needs `{words[]}`.
+
+## The one cut-apply backbone (every path funnels here)
+
+```
+kept spans → external_plan.build_plan_from_pasted_json → plan_store (data/plans/)
+           → POST /api/edit/plan/{id}/apply → ExtendScript processEDL → "EditFlow Cut"
+```
+
+The Review editor, the legacy matcher (`/api/edit/analyze`), and the `/paste-plan`
+command all converge on this. **Don't write new timeline code — emit cuts and
+reuse this path.**
+
+## Gotchas added since the original doc
+- **`cep-panel/client/index.html` is DEAD.** The manifest's MainPath is
+  `client/cep-loader.html`, which serves the panel and loads `main.js` from the
+  no-store `/panel` mount. Edit `cep-loader.html`, not `index.html`.
+- `review.css` self-injects from `review-view.js` with a `?v=<timestamp>` so it
+  dodges CEF's stylesheet cache (a plain `<link>` got stuck on a cached miss).
+- `review-view.js` is dynamic-imported by `main.js` with the `BUILD_TAG` buster
+  and exposed as `window.__editflowOpenReview` (so `/review` in the orchestrator
+  can open it without a second un-busted import).
+
+## Plans (read for direction)
+- **`docs/plans/production-roadmap.md`** — master plan + full-system audit (start here).
+- **`docs/plans/word-level-editor.md`** — the word-editor spec & phases.
