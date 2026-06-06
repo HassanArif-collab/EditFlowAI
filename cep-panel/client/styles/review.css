@@ -257,3 +257,90 @@
 .rv-keyrow .rv-input { flex: 1; min-width: 160px; }
 .rv-tiny { font-size: 11px; padding: 4px 8px; }
 .rv-or { text-align: center; color: var(--text-dim); font-size: 11px; margin: 14px 0 8px; }
+
+/* ================================================================
+   Review v2 — tabs, layouts, panels, takes, menus
+   ================================================================ */
+.rv-tabs { display: flex; gap: 2px; margin-left: 4px; }
+.rv-tab { font-size: 12px; color: var(--text-dim); padding: 4px 9px; border-radius: 6px; cursor: pointer; }
+.rv-tab.on { background: var(--bg-elevated); color: var(--text-bright); }
+.rv-viewtoggle { display: flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; margin-right: 6px; }
+.rv-viewtoggle span { font-size: 12px; padding: 4px 8px; color: var(--text-dim); cursor: pointer; }
+.rv-viewtoggle span.on { background: var(--accent); color: #fff; }
+
+.rv-pp { width: 28px; height: 28px; border-radius: 50%; border: 0; background: var(--accent); color: #fff; cursor: pointer; font-size: 12px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.rv-pp:hover { background: var(--accent-hover); }
+.rv-time { font-size: 11px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+
+.rv-body { flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+
+/* panels */
+.rv-pane { display: flex; flex-direction: column; min-height: 0; border: 1px solid var(--border); background: var(--bg-surface); }
+.rv-ptab { height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 10px; background: var(--bg-elevated); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.rv-pname { font-size: 11px; font-weight: 600; color: var(--text-bright); }
+.rv-pmeta { font-size: 10px; color: var(--text-dim); }
+.rv-pacts { margin-left: auto; color: var(--text-dim); font-size: 12px; cursor: pointer; }
+.rv-videopane { flex-shrink: 0; }
+.rv-videopane #rv-video { width: 100%; max-height: 34vh; display: block; background: #000; }
+.rv-transcriptpane { flex: 1; min-height: 0; }
+.rv-transcriptpane .rv-doc { flex: 1; }
+
+/* compact: stack video then transcript */
+.review-view.rv-compact .rv-body { padding: 0; }
+.review-view.rv-compact .rv-transcriptpane { flex: 1; }
+
+/* workspace: controls top, then left(video+plan) | transcript */
+.rv-work { flex: 1; display: flex; min-height: 0; }
+.rv-left { width: 360px; display: flex; flex-direction: column; min-height: 0; flex-shrink: 0; }
+.rv-right { flex: 1; min-width: 0; display: flex; min-height: 0; }
+.rv-right .rv-transcriptpane { flex: 1; }
+.rv-vsplit { width: 6px; background: var(--bg); cursor: col-resize; flex-shrink: 0; }
+.rv-vsplit:hover { background: var(--accent); }
+.rv-hsplit { height: 6px; background: var(--bg); cursor: row-resize; flex-shrink: 0; }
+.rv-hsplit:hover { background: var(--accent); }
+.rv-left .rv-videopane { height: 200px; }
+.rv-planpane { flex: 1; min-height: 0; }
+
+/* plan box */
+.rv-planbody { flex: 1; overflow: auto; padding: 8px; min-height: 0; }
+.rv-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; margin-bottom: 8px; }
+.rv-seg span { font-size: 11px; padding: 4px 9px; color: var(--text-dim); cursor: pointer; }
+.rv-seg span.on { background: var(--bg-elevated); color: var(--text-bright); }
+.rv-planlist .rv-planrow { display: flex; gap: 8px; align-items: center; font-size: 11px; padding: 6px 8px; border-radius: 6px; background: var(--bg-elevated); margin-bottom: 5px; cursor: pointer; }
+.rv-planrow .rv-tc { color: var(--accent-hover); font-family: var(--font-mono); font-size: 10px; flex-shrink: 0; }
+.rv-planrow .rv-txt { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: 'Noto Nastaliq Urdu', serif; direction: rtl; text-align: right; }
+
+/* clean-up dropdown */
+.rv-cleanwrap { position: relative; }
+.rv-menu { position: absolute; top: 30px; left: 0; z-index: 30; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 8px; padding: 5px; width: 200px; box-shadow: 0 8px 24px rgba(0,0,0,.5); }
+.rv-menu.hidden { display: none; }
+.rv-menu div { font-size: 12px; color: var(--text); padding: 7px 9px; border-radius: 5px; cursor: pointer; }
+.rv-menu div:hover { background: var(--bg-hover); }
+.rv-menu .rv-danger { color: var(--warning); }
+
+/* AI running */
+.rv-airun { display: inline-flex; align-items: center; gap: 7px; font-size: 11px; color: var(--text-bright); }
+.rv-spin { width: 12px; height: 12px; border: 2px solid rgba(255,255,255,.2); border-top-color: var(--accent-hover); border-radius: 50%; animation: rv-spin .8s linear infinite; }
+@keyframes rv-spin { to { transform: rotate(360deg); } }
+.rv-cancel { color: var(--error); border-color: var(--error); }
+
+/* takes view */
+.rv-takesummary { padding: 8px 12px; font-size: 12px; color: var(--text-bright); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.rv-takes { flex: 1; overflow-y: auto; }
+.rv-beat { border-bottom: 1px solid var(--border); }
+.rv-bhead { display: flex; align-items: center; gap: 8px; padding: 8px 12px; }
+.rv-blabel { font-size: 12px; color: var(--text-bright); flex: 1; }
+.rv-bcnt { font-size: 10px; color: var(--text-dim); }
+.rv-take { display: flex; align-items: center; gap: 9px; padding: 7px 10px; margin: 3px 8px; border-radius: 7px; background: var(--bg-surface); cursor: pointer; }
+.rv-take.win { background: rgba(10,132,255,.12); outline: 1px solid rgba(10,132,255,.4); }
+.rv-radio { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--text-dim); flex-shrink: 0; }
+.rv-take.win .rv-radio { border-color: var(--accent-hover); background: radial-gradient(circle, var(--accent-hover) 0 4px, transparent 5px); }
+.rv-pl { width: 22px; height: 22px; border-radius: 50%; background: var(--bg-elevated); color: #fff; border: 0; cursor: pointer; font-size: 10px; flex-shrink: 0; }
+.rv-take .rv-tc { font-size: 10px; color: var(--text-dim); flex-shrink: 0; min-width: 30px; }
+.rv-snip { flex: 1; font-family: 'Noto Nastaliq Urdu', serif; font-size: 13px; line-height: 2.2; direction: rtl; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rv-take:not(.win) .rv-snip { color: var(--text-dim); opacity: .75; }
+.rv-qtag { font-size: 9px; font-weight: 700; text-transform: uppercase; padding: 2px 6px; border-radius: 8px; flex-shrink: 0; }
+.q-clean { background: rgba(78,201,176,.16); color: var(--success); }
+.q-falsestart, .q-repeat { background: rgba(242,91,91,.16); color: var(--error); }
+.q-stumble { background: rgba(224,179,74,.14); color: var(--warning); }
+.rv-finetrim { font-size: 10px; color: var(--accent-hover); padding: 0 0 8px 16px; cursor: pointer; }
