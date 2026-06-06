@@ -211,12 +211,17 @@
 .rv-doc {
   flex: 1;
   overflow-y: auto;
-  padding: 10px 14px 40px;
+  padding: 10px 16px 40px;
+  /* Nastaliq for Urdu (loaded in cep-loader.html); needs tall lines. */
+  font-family: 'Noto Nastaliq Urdu', 'Noto Sans Arabic', serif;
   font-size: 15px;
-  line-height: 2.0;
-  user-select: none;        /* we manage selection ourselves */
-  -webkit-user-select: none;
+  line-height: 3.0;
+  direction: rtl;
+  text-align: right;
+  user-select: text;        /* native selection IS the edit gesture */
+  -webkit-user-select: text;
 }
+.rv-doc ::selection { background: rgba(10,132,255,0.4); }
 .rv-para {
   margin: 0 0 10px;
   unicode-bidi: plaintext;  /* correct direction per line for Urdu/English mix */
@@ -234,7 +239,7 @@
 
 /* kept = bright; cut = struck + dim red; selected; now-playing (karaoke) */
 .rv-w { color: var(--text-bright); }
-.rv-w-cut { color: var(--error); text-decoration: line-through; opacity: 0.55; }
+.rv-w-cut { color: var(--error); opacity: 0.4; }  /* faded, no strikethrough (clean on Nastaliq) */
 .rv-w-sel { background: rgba(0,120,212,0.35); }
 .rv-w-now { background: var(--warning); color: #1e1e1e; border-radius: 3px; }
 .rv-w-now.rv-w-cut { color: #5a1d1d; }

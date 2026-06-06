@@ -345,44 +345,35 @@ function _renderWords() {
 // ── Selection + mouse ────────────────────────────────────────
 
 function _bindDocEvents() {
+  // NATIVE text selection drives the edit (start anywhere, even in the gaps —
+  // fixes "only works when the cursor is pixel-on a word"). On release a real
+  // selection flips every word it touched; the FIRST word sets direction
+  // (kept→cut, cut→restore). A plain click = jump & play that word. No buttons,
+  // no second step. (Verified pattern: docs/superpowers/mockups/2-editing.html.)
   const doc = $('#rv-doc');
   if (!doc) return;
-  doc.onmousedown = (e) => {
-    const id = _wordIdAt(e.target);
-    if (id == null) return;
-    S.dragging = true; S.anchor = id; S.selLo = id; S.selHi = id; S.focusId = id;
-    S.movedDuringDrag = false;
-    _applySelClasses();
-  };
-  doc.onmousemove = (e) => {
-    if (!S.dragging) return;
-    const id = _wordIdAt(e.target);
-    if (id == null) return;
-    if (id !== S.anchor) S.movedDuringDrag = true;
-    S.selLo = Math.min(S.anchor, id);
-    S.selHi = Math.max(S.anchor, id);
-    if (!_rafSel) _rafSel = requestAnimationFrame(() => { _rafSel = 0; _applySelClasses(); });
-  };
   doc.onmouseup = (e) => {
-    if (!S.dragging) return;
-    S.dragging = false;
-    const id = _wordIdAt(e.target);
-    if (!S.movedDuringDrag && id != null) {
-      // a plain click → seek + play that word; selection collapses to it
-      S.selLo = S.selHi = -1;
-      _applySelClasses();
-      _seekWord(id, true);
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount && !sel.isCollapsed) {
+      const range = sel.getRangeAt(0);
+      const covered = [...doc.querySelectorAll('.rv-w')]
+        .filter(s => range.intersectsNode(s))
+        .map(s => Number(s.dataset.id));
+      if (covered.length) {
+        _snapshot();
+        const first = S.byId.get(covered[0]);
+        const targetKeep = !(first && first.keep);   // first word flips; rest follow it
+        for (const id of covered) {
+          const w = S.byId.get(id);
+          if (w) { w.keep = targetKeep; w.reason = targetKeep ? '' : (w.reason || 'manual'); }
+        }
+        _afterMutate();
+      }
+      sel.removeAllRanges();
+    } else {
+      const el = e.target && e.target.closest ? e.target.closest('.rv-w') : null;
+      if (el) { const id = Number(el.dataset.id); S.focusId = id; _seekWord(id, true); }
     }
-  };
-  doc.ondblclick = (e) => {
-    const id = _wordIdAt(e.target);
-    if (id == null) return;
-    const w = S.byId.get(id);
-    if (!w) return;
-    _snapshot();
-    w.keep = !w.keep;
-    if (w.keep) w.reason = '';
-    _afterMutate();
   };
 }
 
@@ -669,6 +660,15 @@ async function _suggest() {
   const useLlm = !!$('#rv-usellm')?.checked;
   const status = $('#rv-status');
   S.busy = true;
+  // Refresh the live active-model name on the toggle (it may have changed in
+  // Settings since the editor opened) so the label is never stale.
+  try {
+    S.modelName = await _fetchModelName();
+    const chk = $('#rv-usellm');
+    if (chk && chk.parentNode && chk.parentNode.lastChild) {
+      chk.parentNode.lastChild.textContent = ' ' + (S.modelName ? `Use AI (${S.modelName})` : 'Use AI');
+    }
+  } catch (_) { /* ignore */ }
   _snapshot();
   _setStatus(status, useLlm ? 'Marking junk + asking the model about off-script lines…' : 'Marking junk (retakes, filler, non-speech)…');
   try {
