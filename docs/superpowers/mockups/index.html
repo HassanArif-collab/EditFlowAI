@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EditFlow Review — Layout options</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Arabic:wght@400;600&family=Noto+Nastaliq+Urdu:wght@400;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#1e1e1e; --bg-surface:#252526; --bg-elevated:#2d2d30; --bg-hover:#3e3e42;
+    --border:#3e3e42; --text:#cccccc; --text-dim:#808080; --text-bright:#e8e8e8;
+    --accent:#0a84ff; --accent-2:#1a8aff; --success:#4ec9b0; --warning:#e0b34a; --error:#f25b5b;
+    --radius:8px; --urdu:'Noto Sans Arabic';
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#141414;color:var(--text);font-family:'Inter',system-ui,sans-serif;padding:24px;line-height:1.5}
+  h1{font-size:20px;color:#fff;font-weight:700;margin-bottom:4px}
+  .sub{color:var(--text-dim);font-size:13px;margin-bottom:22px;max-width:900px}
+  .rec{color:var(--success)}
+  .board{display:flex;gap:22px;flex-wrap:wrap;align-items:flex-start}
+  .col{width:360px}
+  .cap{margin-top:10px}
+  .cap h3{font-size:14px;color:#fff;font-weight:600}
+  .cap .tag{display:inline-block;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;padding:2px 8px;border-radius:10px;margin-left:6px}
+  .tag.best{background:rgba(78,201,176,.18);color:var(--success)}
+  .cap ul{margin:6px 0 0 16px;font-size:12px;color:var(--text-dim);line-height:1.7}
+
+  /* ---- panel mock (real CEP width + theme) ---- */
+  .panel{width:360px;height:560px;background:var(--bg);border:1px solid var(--border);border-radius:10px;
+         display:flex;flex-direction:column;overflow:hidden;box-shadow:0 8px 30px rgba(0,0,0,.4)}
+  .hdr{height:38px;background:var(--bg-surface);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;padding:0 10px;flex-shrink:0}
+  .logo{font-weight:700;color:#fff;font-size:13px}
+  .tabs{display:flex;gap:2px;margin-left:6px}
+  .tab{font-size:12px;color:var(--text-dim);padding:4px 9px;border-radius:6px;cursor:default}
+  .tab.on{background:var(--bg-elevated);color:#fff}
+  .sp{flex:1}
+  .ic{color:var(--text-dim);font-size:14px}
+
+  .video{background:#000;position:relative;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:#555;font-size:11px}
+  .video.bar{height:150px}
+  .video .play{width:42px;height:42px;border-radius:50%;background:rgba(255,255,255,.12);display:flex;align-items:center;justify-content:center;color:#fff;font-size:16px}
+  .vlabel{position:absolute;left:8px;top:6px;font-size:10px;color:#888;background:rgba(0,0,0,.4);padding:1px 6px;border-radius:4px}
+
+  .wave{height:34px;background:var(--bg-surface);border-bottom:1px solid var(--border);position:relative;overflow:hidden;flex-shrink:0}
+  .wave svg{display:block}
+
+  .transport{height:40px;background:var(--bg-surface);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;padding:0 12px;flex-shrink:0}
+  .pp{width:28px;height:28px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px}
+  .time{font-size:11px;color:var(--text-dim);font-variant-numeric:tabular-nums}
+  .preview{margin-left:auto;font-size:11px;color:var(--text-dim);border:1px solid var(--border);padding:4px 9px;border-radius:6px}
+  .build{font-size:11px;color:#fff;background:var(--accent);padding:5px 12px;border-radius:6px;font-weight:600}
+
+  .doc{flex:1;overflow:hidden;padding:12px 14px;font-family:var(--urdu),system-ui;font-size:16px;line-height:2.15;direction:rtl;text-align:right}
+  .w{padding:1px 2px;border-radius:3px}
+  .cut{color:var(--error);text-decoration:line-through;opacity:.5}
+  .now{background:var(--warning);color:#1e1e1e}
+  .en{direction:ltr;unicode-bidi:isolate;display:inline-block}
+
+  /* floating PiP */
+  .pip{position:absolute;width:150px;height:86px;background:#000;border:1px solid #555;border-radius:8px;right:12px;top:46px;display:flex;align-items:center;justify-content:center;color:#666;font-size:10px;box-shadow:0 6px 18px rgba(0,0,0,.6);cursor:move}
+  .pip .grip{position:absolute;top:3px;left:6px;color:#888;font-size:11px}
+  .pip .x{position:absolute;top:2px;right:5px;color:#aaa;font-size:11px}
+  .relwrap{position:relative;flex:1;display:flex;flex-direction:column;overflow:hidden}
+
+  .split-handle{height:6px;background:var(--bg-elevated);border-top:1px solid var(--border);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:#666;font-size:9px;flex-shrink:0;cursor:ns-resize}
+  .collapse{margin-left:auto;font-size:10px;color:var(--text-dim);border:1px solid var(--border);border-radius:5px;padding:2px 7px}
+  .note{font-size:11px;color:var(--text-dim);text-align:center;margin-top:30px}
+</style>
+</head>
+<body>
+  <h1>EditFlow Review — pick a layout</h1>
+  <p class="sub">Same dark theme, real panel width (360&nbsp;px) and a proper Urdu font, so this is what it'll look like inside Premiere. The header now has <b>Edit · Takes · Chat</b> tabs (Takes = the fold-the-repeats view you wanted). Question 1 of the redesign: <b>where should the video live, and how do you keep the transcript readable?</b></p>
+
+  <div class="board">
+
+    <!-- OPTION A: collapsible video bar -->
+    <div class="col">
+      <div class="panel">
+        <div class="hdr"><span class="logo">EditFlow</span>
+          <div class="tabs"><span class="tab on">Edit</span><span class="tab">Takes</span><span class="tab">Chat</span></div>
+          <span class="sp"></span><span class="ic">⚙</span>
+        </div>
+        <div class="video bar"><span class="vlabel">IMG_1694 · source</span><div class="play">▶</div>
+          <span class="collapse" style="position:absolute;right:8px;bottom:6px">▲ hide</span></div>
+        <div class="wave">
+          <svg width="360" height="34"><g fill="#0a84ff">
+            <rect x="6" y="14" width="2" height="6"/><rect x="12" y="8" width="2" height="18"/><rect x="18" y="11" width="2" height="12"/><rect x="24" y="5" width="2" height="24"/><rect x="30" y="13" width="2" height="8"/><rect x="40" y="9" width="2" height="16"/><rect x="46" y="6" width="2" height="22"/><rect x="52" y="12" width="2" height="10"/><rect x="62" y="10" width="2" height="14"/><rect x="68" y="7" width="2" height="20"/></g>
+            <g fill="#f25b5b" opacity=".5"><rect x="80" y="11" width="2" height="12"/><rect x="86" y="9" width="2" height="16"/><rect x="92" y="13" width="2" height="8"/><rect x="98" y="10" width="2" height="14"/></g>
+            <g fill="#0a84ff"><rect x="120" y="8" width="2" height="18"/><rect x="126" y="6" width="2" height="22"/><rect x="132" y="12" width="2" height="10"/><rect x="142" y="9" width="2" height="16"/><rect x="148" y="5" width="2" height="24"/><rect x="200" y="10" width="2" height="14"/><rect x="206" y="7" width="2" height="20"/><rect x="260" y="9" width="2" height="16"/><rect x="300" y="11" width="2" height="12"/></g>
+            <rect x="150" y="0" width="1.5" height="34" fill="#e8e8e8"/></svg>
+        </div>
+        <div class="transport"><div class="pp">❚❚</div><span class="time">0:42 / 5:23</span>
+          <span class="preview">▶ Preview cut</span><span class="build">Build</span></div>
+        <div class="doc">
+          <span class="w">میں</span> <span class="w">ہوں</span> <span class="w now">جاوید۔</span>
+          <span class="w">میں</span> <span class="w">نے</span> <span class="w">چودہ</span> <span class="w">کروڑ</span>
+          <span class="w en">invest</span> <span class="w">کیے</span> <span class="w cut">ہم--</span>
+          <span class="w">ایک</span> <span class="w en">tech</span> <span class="w en">startup</span> <span class="w">کے</span> <span class="w">اندر</span>
+          <span class="w cut">[بچے کی آواز]</span> <span class="w">جو</span> <span class="w">چلا</span> <span class="w">اور</span>
+          <span class="w cut">ہاں</span> <span class="w">اب</span> <span class="w">میرے</span> <span class="w">پاس</span> <span class="w">ہیں</span>
+        </div>
+      </div>
+      <div class="cap"><h3>A · Collapsible video bar</h3>
+        <ul><li>Video docks on top, one tap to <b>hide</b> → transcript goes full height</li>
+        <li>Simple, predictable, nothing floats</li>
+        <li>Not freely movable (only hide/show)</li></ul></div>
+    </div>
+
+    <!-- OPTION B: floating draggable PiP -->
+    <div class="col">
+      <div class="panel">
+        <div class="hdr"><span class="logo">EditFlow</span>
+          <div class="tabs"><span class="tab on">Edit</span><span class="tab">Takes</span><span class="tab">Chat</span></div>
+          <span class="sp"></span><span class="ic">⚙</span>
+        </div>
+        <div class="transport"><div class="pp">❚❚</div><span class="time">0:42 / 5:23</span>
+          <span class="preview">▶ Preview cut</span><span class="build">Build</span></div>
+        <div class="wave">
+          <svg width="360" height="34"><g fill="#0a84ff"><rect x="6" y="14" width="2" height="6"/><rect x="12" y="8" width="2" height="18"/><rect x="18" y="11" width="2" height="12"/><rect x="24" y="5" width="2" height="24"/><rect x="30" y="13" width="2" height="8"/><rect x="40" y="9" width="2" height="16"/><rect x="46" y="6" width="2" height="22"/><rect x="62" y="10" width="2" height="14"/><rect x="68" y="7" width="2" height="20"/></g><g fill="#f25b5b" opacity=".5"><rect x="80" y="11" width="2" height="12"/><rect x="86" y="9" width="2" height="16"/><rect x="92" y="13" width="2" height="8"/></g><g fill="#0a84ff"><rect x="120" y="8" width="2" height="18"/><rect x="126" y="6" width="2" height="22"/><rect x="200" y="10" width="2" height="14"/><rect x="260" y="9" width="2" height="16"/></g><rect x="126" y="0" width="1.5" height="34" fill="#e8e8e8"/></svg>
+        </div>
+        <div class="relwrap">
+          <div class="pip"><span class="grip">⠿</span><span class="x">✕</span>video — drag me</div>
+          <div class="doc">
+            <span class="w">میں</span> <span class="w">ہوں</span> <span class="w now">جاوید۔</span>
+            <span class="w">میں</span> <span class="w">نے</span> <span class="w">چودہ</span> <span class="w">کروڑ</span>
+            <span class="w en">invest</span> <span class="w">کیے</span> <span class="w cut">ہم--</span>
+            <span class="w">ایک</span> <span class="w en">tech</span> <span class="w en">startup</span> <span class="w">کے</span> <span class="w">اندر</span>
+            <span class="w cut">[بچے کی آواز]</span> <span class="w">جو</span> <span class="w">چلا</span> <span class="w">اور</span>
+            <span class="w cut">ہاں</span> <span class="w">اب</span> <span class="w">میرے</span> <span class="w">پاس</span> <span class="w">ہیں</span>
+            <span class="w">دس</span> <span class="w">ہزار</span> <span class="w">کروڑ</span> <span class="w">روپے۔</span>
+          </div>
+        </div>
+      </div>
+      <div class="cap"><h3>B · Floating video (PiP) <span class="tag best">recommended</span></h3>
+        <ul><li>Transcript is <b>full height</b> — max reading space</li>
+        <li>Video <b>floats &amp; drags</b> anywhere; resize or ✕ to hide</li>
+        <li>Exactly your "movable video" ask; closest to a pro tool</li></ul></div>
+    </div>
+
+    <!-- OPTION C: resizable split -->
+    <div class="col">
+      <div class="panel">
+        <div class="hdr"><span class="logo">EditFlow</span>
+          <div class="tabs"><span class="tab on">Edit</span><span class="tab">Takes</span><span class="tab">Chat</span></div>
+          <span class="sp"></span><span class="ic">⚙</span>
+        </div>
+        <div class="video" style="height:110px"><span class="vlabel">IMG_1694 · source</span><div class="play">▶</div></div>
+        <div class="split-handle">⠿ drag to resize ⠿</div>
+        <div class="transport"><div class="pp">❚❚</div><span class="time">0:42 / 5:23</span>
+          <span class="preview">▶ Preview cut</span><span class="build">Build</span></div>
+        <div class="doc">
+          <span class="w">میں</span> <span class="w">ہوں</span> <span class="w now">جاوید۔</span>
+          <span class="w">میں</span> <span class="w">نے</span> <span class="w">چودہ</span> <span class="w">کروڑ</span>
+          <span class="w en">invest</span> <span class="w">کیے</span> <span class="w cut">ہم--</span>
+          <span class="w">ایک</span> <span class="w en">tech</span> <span class="w en">startup</span> <span class="w">کے</span> <span class="w">اندر</span>
+          <span class="w cut">[بچے کی آواز]</span> <span class="w">جو</span> <span class="w">چلا</span> <span class="w">اور</span>
+        </div>
+      </div>
+      <div class="cap"><h3>C · Resizable split</h3>
+        <ul><li>Drag the handle to grow/shrink the video vs transcript</li>
+        <li>Familiar editor pattern; balanced</li>
+        <li>Video stays docked top (not free-floating)</li></ul></div>
+    </div>
+
+  </div>
+  <p class="note">Mock data from your real clip. Cut words are struck-through red; the yellow word is the karaoke "now playing". Fonts, spacing &amp; colors here = the real panel.</p>
+</body>
+</html>

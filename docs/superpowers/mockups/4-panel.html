@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EditFlow — full redesign</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Nastaliq+Urdu:wght@400;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{--bg:#1e1e1e;--surface:#252526;--elev:#2d2d30;--hover:#34343a;--border:#3e3e42;
+    --text:#cccccc;--dim:#808080;--bright:#e8e8e8;--accent:#0a84ff;--accent2:#1a8aff;
+    --success:#4ec9b0;--warning:#e0b34a;--error:#f25b5b;--radius:8px}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#141414;color:var(--text);font-family:'Inter',system-ui;padding:24px}
+  h1{font-size:19px;color:#fff;margin-bottom:4px}
+  .sub{color:var(--dim);font-size:13px;margin-bottom:20px;max-width:820px;line-height:1.6}
+  .row{display:flex;gap:30px;flex-wrap:wrap;align-items:flex-start}
+
+  .panel{width:380px;background:var(--bg);border:1px solid var(--border);border-radius:12px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 10px 36px rgba(0,0,0,.45)}
+  .hdr{height:40px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;padding:0 10px;flex-shrink:0}
+  .logo{font-weight:700;color:#fff;font-size:13px}
+  .tabs{display:flex;gap:2px;margin-left:6px}
+  .tab{font-size:12px;color:var(--dim);padding:4px 10px;border-radius:6px}
+  .tab.on{background:var(--elev);color:#fff}
+  .sp{flex:1}.ic{color:var(--dim);font-size:14px}
+
+  .video{height:120px;background:#000;position:relative;flex-shrink:0;display:flex;align-items:center;justify-content:center}
+  .video .play{width:40px;height:40px;border-radius:50%;background:rgba(255,255,255,.14);color:#fff;display:flex;align-items:center;justify-content:center;font-size:15px}
+  .vbtns{position:absolute;top:6px;right:8px;display:flex;gap:6px}
+  .vbtn{background:rgba(0,0,0,.5);color:#cfcfcf;font-size:10px;border-radius:5px;padding:2px 7px}
+  .vlabel{position:absolute;left:8px;top:7px;font-size:10px;color:#9a9a9a;background:rgba(0,0,0,.4);padding:1px 6px;border-radius:4px}
+  .vresize{height:6px;background:var(--elev);border-top:1px solid var(--border);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:#666;font-size:9px;flex-shrink:0}
+
+  .wave{height:30px;background:var(--surface);border-bottom:1px solid var(--border);position:relative;overflow:hidden;flex-shrink:0}
+
+  .transport{height:42px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:9px;padding:0 12px;flex-shrink:0}
+  .pp{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px}
+  .time{font-size:11px;color:var(--dim);font-variant-numeric:tabular-nums}
+  .prev{font-size:11px;color:var(--dim);border:1px solid var(--border);padding:5px 10px;border-radius:6px;display:flex;align-items:center;gap:5px}
+  .prev.dis{opacity:.4}
+  .build{margin-left:auto;font-size:12px;color:#fff;background:var(--accent);padding:6px 14px;border-radius:6px;font-weight:600}
+
+  .toolbar{height:40px;display:flex;align-items:center;gap:8px;padding:0 12px;border-bottom:1px solid var(--border);flex-shrink:0}
+  .ai{font-size:11px;color:#fff;background:var(--elev);border:1px solid var(--border);padding:5px 10px;border-radius:6px;display:flex;align-items:center;gap:6px}
+  .ai .dot{width:6px;height:6px;border-radius:50%;background:var(--success)}
+  .menu{font-size:11px;color:var(--text);border:1px solid var(--border);padding:5px 10px;border-radius:6px}
+  .readout{margin-left:auto;font-size:11px;color:var(--success);font-weight:600}
+
+  /* AI running state */
+  .airun{height:40px;display:flex;align-items:center;gap:9px;padding:0 12px;border-bottom:1px solid var(--border);flex-shrink:0;background:rgba(10,132,255,.07)}
+  .spinner{width:13px;height:13px;border:2px solid rgba(255,255,255,.2);border-top-color:var(--accent2);border-radius:50%;animation:spin .8s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .airun .lab{font-size:11px;color:var(--bright)}
+  .progress{flex:1;height:4px;background:var(--elev);border-radius:2px;overflow:hidden;max-width:120px}
+  .progress i{display:block;height:100%;width:42%;background:var(--accent2)}
+  .cancel{font-size:11px;color:var(--error);border:1px solid var(--error);padding:4px 10px;border-radius:6px;margin-left:auto}
+
+  .doc{flex:1;padding:14px 16px;font-family:'Noto Nastaliq Urdu',serif;font-size:15px;line-height:3.05;direction:rtl;text-align:right;user-select:text}
+  .doc ::selection{background:rgba(10,132,255,.45)}
+  .w{cursor:pointer;border-radius:3px;padding:0 1px}
+  .w.cut{color:var(--error);opacity:.4}
+  .w.now{background:var(--warning);color:#1e1e1e}
+  .en{direction:ltr;unicode-bidi:isolate;display:inline-block;font-family:'Inter'}
+
+  /* dropdown shown open */
+  .drop{position:absolute;background:var(--elev);border:1px solid var(--border);border-radius:8px;padding:5px;width:178px;box-shadow:0 8px 24px rgba(0,0,0,.5);z-index:5}
+  .drop div{font-size:12px;color:var(--text);padding:7px 9px;border-radius:5px}
+  .drop div:hover{background:var(--hover)}
+  .drop .danger{color:var(--warning)}
+
+  .ann{width:330px}
+  .ann h3{color:#fff;font-size:14px;margin:14px 0 6px}
+  .ann ul{margin-left:16px;font-size:12.5px;color:var(--dim);line-height:1.85}
+  .ann b{color:var(--bright)}
+  .ann .fix{color:var(--success)}
+  .floatcap{font-size:11px;color:var(--dim);margin-top:8px;width:380px;text-align:center}
+</style>
+</head>
+<body>
+  <h1>The redesigned Edit panel — everything together</h1>
+  <p class="sub">Nastaliq transcript · native-selection editing · flexible video · a real pause · "Preview cut" that knows when there's no plan · decluttered toolbar · AI with progress + cancel. Left = idle. Right = AI suggesting.</p>
+
+  <div class="row">
+
+    <!-- IDLE STATE -->
+    <div>
+      <div class="panel">
+        <div class="hdr"><span class="logo">EditFlow</span>
+          <div class="tabs"><span class="tab on">Edit</span><span class="tab">Takes</span><span class="tab">Chat</span></div>
+          <span class="sp"></span><span class="ic">⚙</span>
+        </div>
+        <div class="video"><div class="vbtns"><span class="vbtn">⤢ pop out</span><span class="vbtn">✕ hide</span></div>
+          <span class="vlabel">IMG_1694 · source</span><div class="play">▶</div></div>
+        <div class="vresize">⠿ drag to resize ⠿</div>
+        <div class="wave"><svg width="380" height="30"><g fill="#0a84ff"><rect x="8" y="12" width="2" height="6"/><rect x="14" y="7" width="2" height="16"/><rect x="20" y="10" width="2" height="10"/><rect x="26" y="4" width="2" height="22"/><rect x="36" y="9" width="2" height="13"/><rect x="42" y="6" width="2" height="18"/><rect x="56" y="8" width="2" height="14"/><rect x="62" y="5" width="2" height="20"/></g><g fill="#f25b5b" opacity=".45"><rect x="74" y="10" width="2" height="10"/><rect x="80" y="8" width="2" height="14"/><rect x="86" y="11" width="2" height="8"/></g><g fill="#0a84ff"><rect x="110" y="7" width="2" height="16"/><rect x="116" y="5" width="2" height="20"/><rect x="180" y="9" width="2" height="13"/><rect x="250" y="7" width="2" height="16"/><rect x="320" y="10" width="2" height="10"/></g><rect x="116" y="0" width="1.5" height="30" fill="#e8e8e8"/></svg></div>
+        <div class="transport"><div class="pp">❚❚</div><span class="time">0:42 / 5:23</span>
+          <span class="prev dis" title="Make some cuts first">▶ Preview cut</span>
+          <span class="build">Build</span></div>
+        <div class="toolbar">
+          <span class="ai"><span class="dot"></span>Suggest · gemma3:4b</span>
+          <span class="menu">✦ Clean up ▾</span>
+          <span class="readout">31/36 · 1:58</span>
+          <div class="drop" style="left:120px;top:206px">
+            <div>Remove fillers (haan ji, umm)</div>
+            <div>Remove [non-speech]</div>
+            <div>Remove repeated takes</div>
+            <div class="danger">Restore all words</div>
+          </div>
+        </div>
+        <div class="doc">
+          <span class="w">میں</span> <span class="w">ہوں</span> <span class="w now">جاوید۔</span>
+          <span class="w">میں</span> <span class="w">نے</span> <span class="w">چودہ</span> <span class="w">کروڑ</span>
+          <span class="w en">invest</span> <span class="w">کیے</span> <span class="w cut">ہم--</span>
+          <span class="w">ایک</span> <span class="w en">tech</span> <span class="w">کے</span> <span class="w">اندر</span>
+          <span class="w cut">[بچے کی آواز]</span> <span class="w">جو</span> <span class="w">چلا</span>
+        </div>
+      </div>
+      <div class="floatcap">Video buttons: <b>⤢ pop out</b> → floating &amp; draggable · <b>✕ hide</b> → transcript full height · drag bar → resize. (Your "all three".)</div>
+    </div>
+
+    <!-- AI RUNNING STATE -->
+    <div>
+      <div class="panel">
+        <div class="hdr"><span class="logo">EditFlow</span>
+          <div class="tabs"><span class="tab on">Edit</span><span class="tab">Takes</span><span class="tab">Chat</span></div>
+          <span class="sp"></span><span class="ic">⚙</span>
+        </div>
+        <div class="video"><div class="vbtns"><span class="vbtn">⤢ pop out</span><span class="vbtn">✕ hide</span></div>
+          <span class="vlabel">IMG_1694 · source</span><div class="play">▶</div></div>
+        <div class="vresize">⠿ drag to resize ⠿</div>
+        <div class="wave"><svg width="380" height="30"><g fill="#0a84ff"><rect x="8" y="12" width="2" height="6"/><rect x="14" y="7" width="2" height="16"/><rect x="26" y="4" width="2" height="22"/><rect x="42" y="6" width="2" height="18"/><rect x="62" y="5" width="2" height="20"/><rect x="116" y="5" width="2" height="20"/><rect x="250" y="7" width="2" height="16"/></g></svg></div>
+        <div class="transport"><div class="pp" style="background:var(--elev)">▶</div><span class="time">0:00 / 5:23</span>
+          <span class="prev dis">▶ Preview cut</span><span class="build">Build</span></div>
+        <div class="airun">
+          <span class="spinner"></span><span class="lab">Suggesting with gemma3:4b…</span>
+          <span class="progress"><i></i></span>
+          <span class="cancel">Cancel</span>
+        </div>
+        <div class="doc">
+          <span class="w">میں</span> <span class="w">ہوں</span> <span class="w">جاوید۔</span>
+          <span class="w">میں</span> <span class="w">نے</span> <span class="w">چودہ</span> <span class="w">کروڑ</span>
+          <span class="w en">invest</span> <span class="w">کیے</span> <span class="w cut">ہم--</span>
+          <span class="w">ایک</span> <span class="w en">tech</span> <span class="w">کے</span> <span class="w">اندر</span>
+        </div>
+      </div>
+      <div class="floatcap">AI is just a <b>suggestion</b> — it streams progress and you can <b>Cancel</b>. The model name (<b>gemma3:4b</b>) is read live from Settings, so switching models updates it instantly.</div>
+    </div>
+
+    <!-- annotations -->
+    <div class="ann">
+      <h3>What changed (your list)</h3>
+      <ul>
+        <li class="fix">✓</span> <b>Real pause</b> — one Play/❚❚ button (the round one). No more "two play buttons".</li>
+        <li class="fix">✓ <b>"Preview cut"</b> is separate &amp; <b>greyed out until you've cut something</b> (no plan = nothing to preview).</li>
+        <li class="fix">✓ Preview cut will <b>only</b> play kept words (fixes "plays things not in the plan").</li>
+        <li class="fix">✓ <b>Toolbar decluttered</b>: the 3 loose buttons → one <b>Clean up ▾</b> menu; fillers/non-speech/restore live there and <b>actually work</b>.</li>
+        <li class="fix">✓ <b>AI shows progress + Cancel</b> while Ollama thinks.</li>
+        <li class="fix">✓ <b>Model name updates live</b> from Settings.</li>
+        <li class="fix">✓ <b>Nastaliq</b> font; cut = faded red (no messy strikethrough).</li>
+        <li class="fix">✓ <b>Movable video</b> (pop-out / hide / resize).</li>
+      </ul>
+      <h3>Flaws I also spotted</h3>
+      <ul>
+        <li><b>No "where am I"</b> when the transcript is long — add a thin scroll-progress + jump-to-playhead.</li>
+        <li><b>Cut runs aren't visible at a glance</b> — the waveform should shade cut regions (it will).</li>
+        <li><b>No undo affordance</b> on screen — add a small ↶/↷ (Ctrl+Z works, but it's invisible).</li>
+        <li><b>Build gives no preview of length</b> — the readout (31/36 · 1:58) now always shows final count + runtime.</li>
+        <li><b>"New Sequence" dialog</b> interrupts Build — auto-pick a preset from the clip so it doesn't pop up.</li>
+        <li><b>No empty/first-run guidance</b> — a one-line "Transcribe or paste to begin".</li>
+      </ul>
+    </div>
+  </div>
+</body>
+</html>
