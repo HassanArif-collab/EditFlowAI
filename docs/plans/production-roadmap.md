@@ -1,161 +1,196 @@
-# EditFlow AI — Continuation Plan (handoff for the next agent)
+# EditFlow AI — Production Roadmap & Full-System Audit
 
-> **Read me to pick up exactly where we left off.** This is a *handoff*, not the
-> old roadmap. The big new direction (Review redesign + a Premiere-style
-> **workspace** view) is fully designed and partly built; this file tells you what
-> is done, what remains, and **how to implement each remaining piece, file by
-> file.** Do **not** implement the multi-clip / installable-app items — those are
-> out of scope (see §7).
+> The master plan: take a working-but-clunky prototype to an **installable,
+> effortless, big-tech-grade app**. Living doc. Status: ✅ done · 🚧 in progress · ⬜ planned.
+> Companions: `word-level-editor.md` (editor spec) ·
+> `../superpowers/specs/2026-06-06-review-panel-redesign-design.md` (the approved
+> Review redesign) · `../superpowers/mockups/*.html` (the visual contract — serve
+> on :5599 via `.claude/launch.json`).
 
-## 0. Read these first
-- **This file.**
-- **Design spec:** `docs/superpowers/specs/2026-06-06-review-panel-redesign-design.md` (the approved redesign).
-- **Mockups (the visual contract):** `docs/superpowers/mockups/*.html`. Serve them:
-  `python -m http.server 5599 --directory docs/superpowers/mockups` (or the
-  `.claude/launch.json` "mockups" server). Files: `index`=layout, `2-editing`=the
-  selection model (**working JS to copy**), `3-font`=font, `4-panel`=full Edit
-  panel, `5-takes`=Takes tab, `6-workspace`=the big workspace view.
-- `ARCHITECTURE.md` (system map; note **`cep-loader.html` is the real panel**, not
-  the now-deleted `index.html`).
+## 0. North star
 
-## 1. Where we are (branch `v2-simple-start`, all pushed)
-**Shipped this session:**
-- Word-level Review editor (Phases 1–3): word doc + waveform + karaoke + word
-  select/cut/restore + play + undo; deterministic word-level junk refine; **Scribe**
-  integration (backend `scribe_service.py` + a "Transcribe with Scribe" UI).
-- UX: `/` command palette (`autocomplete.js`); **lazy transcribe** (no more
-  auto-transcribing the whole bin); global uncaught-error banner (`main.js`).
-- **Fixes:** cut-word-spliced-into-build merge bug (backend `words_to_cuts` +
-  frontend `_mergedKeptRanges`) `[b200362]`; `/paste-plan` card display
-  (`_extractBeats`); **deleted dead `index.html`**.
-- Docs: `ARCHITECTURE.md`, `docs/plans/word-level-editor.md`, this file, the
-  redesign spec + 6 mockups.
-- 129+ unit tests pass (`python -m pytest tests/unit -q`).
+> *Install in one click. It sets up everything it needs. Point it at footage + a
+> script; edit by reading and clicking words. No terminal, no remembered commands,
+> no babysitting services. It feels like Google built it.*
 
-## 2. The finalized redesign (what to build) — decisions are locked
-| Area | Decision |
-|---|---|
-| Video | **Show/hide only** (drop "pop out"). In the workspace it's a small panel. |
-| Single tap on a word | **Seek there + play** (not toggle). |
-| Cut/keep | **Only via selection**, using **native text selection** (start anywhere, gaps included). On `mouseup`, every word the selection touched flips; the **first word sets direction** (kept→cut, cut→restore). No buttons, no double-tap. |
-| Font | **Noto Nastaliq Urdu** (bundled), tall line-height; cut = **faded red** (no strikethrough); now-playing = soft highlight. |
-| Transport | **One Play/Pause**. Separate **"Preview cut"**, disabled until ≥1 cut, plays **only** kept words. |
-| Toolbar | **Suggest · ‹live model›** + **Clean up ▾** menu (fillers / [non-speech] / repeated takes / restore all) + live **readout**. |
-| AI | Suggest shows **progress + Cancel**; model name read **live** from Settings. |
-| Views | Header tabs **Edit / Takes / Chat** + a **Compact ⊟ / Workspace ⛶** toggle. |
-| Takes tab | Fold-the-repeats: beats = retake clusters; pick best take per beat (others auto-cut); per-take tag + ▶; coverage; "fine-trim in Edit". |
-| **Workspace (big) view** | Four panels — **Controls, Video (small, top-left), Plan box (left, below video), Transcript (right)** — **movable/dockable like Premiere**. |
-| Plan box | Dual: the **AI-generated plan shows there**, AND you can **paste an external model's plan** into it. |
+**Principles** (check every decision against these):
+1. **Zero-config** — first run installs/repairs its own dependencies.
+2. **Discoverable, not memorized** — buttons & menus over slash-commands; `/` and `@` open menus.
+3. **Explicit & reversible** — nothing expensive (transcribe/cut/build) runs without intent + progress + estimate + undo.
+4. **Never a dead end** — errors are human, actionable, self-healing; the panel never freezes or blanks.
+5. **Fast & calm** — instant feel; long work is backgrounded with progress + cancel.
 
-## 3. Remaining implementation — step by step (file-level)
+---
 
-> All frontend work is in `cep-panel/client/`. After ANY panel change, bump
-> `BUILD_TAG` in `src/main.js` **and** the `?v=` in `cep-loader.html` (CEF caches
-> by URL). `review.css` already self-injects with a timestamp.
+## 1. System map (so any agent ramps fast)
 
-**A. Native-selection editing** — `src/review-view.js`. Replace `_bindDocEvents`
-(the per-word mousedown/move drag) with the **native-selection** version: set
-`.rv-doc { user-select: text }`; on `mouseup`, if `getSelection()` is
-non-collapsed, collect `.rv-w` spans via `range.intersectsNode`, set mode from the
-first covered word (`keep→cut`, else `restore`), flip all, snapshot, clear
-selection; if collapsed, seek+play the word under the cursor. **Working reference
-code is in `docs/superpowers/mockups/2-editing.html` `<script>`** (verified). Also
-add on-screen ↶/↷ undo/redo buttons.
+```
+Premiere ──loads──▶ CEP panel  (manifest MainPath = client/cep-loader.html, file://)
+  cep-loader.html : boot — ping backend, AUTO-SPAWN `python run.py --prod` via Node,
+                    then load assets from http://127.0.0.1:8765/panel/ (no-store).
+                    (index.html is DELETED ✅ — cep-loader.html IS the panel.)
+  src/main.js     : bootstraps; dynamic-imports orchestrator|agent + review-view with
+                    ?v=BUILD_TAG cache-buster; wires header buttons + WS; global error banner.
+  Frontends (3):
+    orchestrator.js : legacy chat state-machine (DEFAULT). slash cmds, scan, paste-plan.
+    agent-client.js : LLM-agent chat (localStorage.editflow_agent_mode==='on').
+    review-view.js  : word-level editor (📝 / /review). The future PRIMARY surface.
+  autocomplete.js  : `/` command palette + `@` bin/clip mentions.
+  extendscript.js  : CSInterface.evalScript → editflowDispatch.
+extendscript/*.jsx : Premiere host; processEDL builds the "EditFlow Cut" sequence.
 
-**B. Nastaliq font** — add `cep-panel/client/fonts/NotoNastaliqUrdu-*.woff2`
-(download once; the mockups use the Google CDN, but **the panel must bundle it** —
-CEF may be offline), `@font-face` + apply to `.rv-doc` in `styles/review.css`,
-`line-height:~3.0`, `font-size:~15px`, `direction:rtl`. Change `.rv-w-cut` to
-`color:var(--error);opacity:.4` (no `line-through`). English tokens stay Inter,
-`unicode-bidi:isolate`.
+Backend (FastAPI, 127.0.0.1:8765, backend/main.py)
+  routes/   review · edit · external_plan · premiere · media · whisper_admin · providers · chat · agent
+  services/ review_service (parse/tighten/classify/words/refine/words_to_cuts) ·
+            review_media (proxy/peaks/silence) · scribe_service · whisper_service ·
+            provider_service (ollama) · cut_planner · external_plan · gemini_transcript · media_fingerprint
+  data/     review/{proxies,peaks,scribe} · plans · hf-cache (Whisper) · tools/ffmpeg-* · scribe_config.json
 
-**C. Transport rework** — `_renderEditor`: replace "▶ Original / ▶ Play kept only"
-with **one round Play/Pause** (toggles `S.video`) + **"Preview cut"** that is
-`disabled` when `_mergedKeptRanges()` is empty (tooltip "make some cuts first")
-and otherwise plays the kept ranges hopping cut spans (the `_onTime` plan logic,
-now correct after the merge fix).
+Cut apply backbone (reused by EVERY path — don't reinvent):
+  kept spans → external_plan.build_plan_from_pasted_json → plan_store → /edit/plan/{id}/apply
+  → ExtendScript processEDL → sequence in Premiere.
+```
 
-**D. Clean-up menu (fix the broken buttons)** — the quick-cut chips don't work.
-Replace with a **"Clean up ▾"** dropdown: remove fillers / remove [non-speech] /
-remove repeated takes / restore all. Each mutates `S.words[].keep` then
-`_afterMutate()`. Reuse the backend `refine_words` rules client-side, or add a
-`/api/review/cleanup` endpoint. Unit-test each action.
+---
 
-**E. Live model name** — `_fetchModelName` runs once today. Re-fetch on `_suggest`
-start and on a light interval / window-focus, and update the "Suggest · ‹model›"
-label. Source: `GET /api/status` → `active_chat`.
+## 2. Full audit — what's clunky/broken (status updated)
 
-**F. Tabs + view toggle** — header **Edit / Takes / Chat** and **⊟ Compact / ⛶
-Workspace**. Compact = today's single column (video show/hide only). Workspace =
-§3-H. Put these in `cep-loader.html`'s header + wire in `review-view.js`.
+**Discoverability / UX**
+- ✅ `/` command palette + `@` mentions.
+- ✅ `index.html` dead code DELETED.
+- ⬜ Three overlapping surfaces (orchestrator/agent/review); Review should be the
+  **default**, with a top-level **Edit / Takes / Chat / Settings** switcher (tabs designed in mockups, not yet wired).
+- ⬜ No onboarding / empty-state guidance; hero is just "Scan Project".
 
-**G. Takes tab** — derive beats **client-side** from segments' `group_id`
-(`classify` sets it; it's in the `/suggest` response — no new endpoint). Beat =
-segments sharing a `group_id`; take = a segment; its words = words with that
-`segment_id`. Row: winner radio · ▶ A/B · timecode · Nastaliq snippet · quality
-tag (`clean`/`false start` [ends `--`]/`stumble`/`repeat`). Pick winner → its words
-keep, the beat's other takes' words cut (same `S.words` state). Coverage badges;
-"fine-trim in Edit". Mockup: `5-takes.html`.
+**Transcription**
+- ✅ No more auto-transcribing the whole bin on pickup (lazy now).
+- ✅ **Scribe** integrated (exact per-word Urdu times) — the real fix for Whisper-Urdu quality.
+- ⬜ **faster-whisper still auto-downloads multi-GB models on first transcribe**, silently —
+  the real "Whisper not managed correctly". Require an explicit "download (≈X GB)" with progress
+  (the WS plumbing exists in `whisper_admin.py`); robust install state machine.
 
-**H. Workspace (big) view — the headline new feature.** Mockup: `6-workspace.html`.
-Four panels: **Controls** (play/pause, time, Preview cut, Suggest, Clean up,
-readout, Build), **Video** (small, top-left, show/hide), **Plan** (left, below
-video), **Transcript** (right). **Dockability — the one open question the user
-didn't finalize:** they said "movable/dockable like Premiere." Three options were
-offered:
-- **(A)** true drag-to-dock/tab/snap (most powerful, biggest build — consider a lib
-  like `dockview`/`golden-layout`),
-- **(B, recommended for v1)** a fixed arrangement with **draggable splitters to
-  resize** + **show/hide** each panel + swap left/right (90% of the value, robust),
-- **(C)** free-floating draggable panels.
-Build **(B)** first (CSS grid + splitter drag handles + per-panel hide), and leave
-a clean seam to upgrade to (A). **Plan box** = two tabs: *AI plan* (a list of the
-kept spans: `tc · snippet`, click to seek) and *Paste a plan* (a textarea →
-`/api/external-plan/ingest` or `/api/review/build`; the cuts highlight live in the
-transcript). CEP can't truly fullscreen — trigger Workspace **responsively when
-the panel is wide** plus the ⛶ toggle.
+**Robustness / errors**
+- ✅ Global uncaught-error banner (panel never silently dies).
+- ✅ CEP asset cache solved (no-store `/panel` + `?v=BUILD_TAG` + self-injecting `review.css`).
+- ✅ `/paste-plan` card display (`_extractBeats`) fixed.
+- ✅ **Cut words no longer spliced into the BUILT sequence** (`words_to_cuts` /
+  `_mergedKeptRanges` merge-by-consecutive-id) — was a real output-corrupting bug.
+- ⬜ Typed backend errors everywhere; no silent 500s.
+- ⬜ Long ops (proxy transcode, Scribe, suggest) run synchronously with no Cancel — background + cancel.
+- ⬜ Backend lifecycle: single-instance lock; port-8765 conflict handling; graceful restart.
+- ⬜ Add a visible "Hard reload" affordance.
 
-**I. "New Sequence" preset dialog** — `extendscript/clip_manager.jsx`
-`createSequenceFromOps`: create the sequence from the source clip's settings/preset
-(use the `preset_from_clip_path` already passed in the op) so Build doesn't pop a
-modal. Test in Premiere.
+**Editor (word-level)** — see `word-level-editor.md`
+- ✅ P1 word doc + waveform + karaoke + select/cut/restore + play + undo.
+- ✅ P2 deterministic word refine (filler/[non-speech]/`--` cutoffs); AI suggest (segment→words).
+- ✅ P3 Scribe word-times (backend + UI). · ✅ build-from-words (backend).
+- 🚧 The **Review-panel REDESIGN** (selection + font done; the rest below in §3b).
 
-**J. Split the file** — `review-view.js` is ~600 lines. Break into
-`src/review/{shell,video,transcript,waveform,takes,workspace,api}.js` with small,
-testable pure helpers (selection→ids, merge-by-index, beats-from-group_id).
+**Setup / "app"** — ⬜ requires hand-installed Python, ffmpeg(bundled ✅), Ollama, Whisper. See §5.
 
-## 4. Bug root-causes (status)
-- Cut word spliced into build/preview → **FIXED** `[b200362]` (merge by consecutive
-  id, not time gap; cut word ends the run).
-- `/paste-plan` card empty/0:00 → **FIXED** (`_extractBeats`).
-- Clean-up buttons do nothing → **TODO (D)**.
-- Model name stale until restart → **TODO (E)**.
-- "New Sequence" modal interrupts Build → **TODO (I)**.
+**Secrets** — 🚧 Scribe key stored in `data/scribe_config.json` / env; move to OS cred store ideally.
 
-## 5. Code map (where things live)
-- **Panel entry:** `cep-panel/CSXS/manifest.xml` → `client/cep-loader.html` (loads
-  `src/main.js` via the no-store `/panel` mount; `main.js` dynamic-imports
-  `review-view.js` with the `BUILD_TAG` buster and exposes
-  `window.__editflowOpenReview`).
-- **Editor:** `src/review-view.js` + `styles/review.css`. Opened by the 📝 header
-  button or `/review` (`orchestrator.js`).
-- **Backend review:** `routes/review.py` (ingest/media/waveform/suggest/build +
-  scribe/{status,key,estimate} + transcribe); `services/review_service.py`
-  (parse/tighten/classify/words/refine/`words_to_cuts`); `review_media.py`
-  (proxy/peaks/silence); `scribe_service.py`.
-- **The one apply backbone (reuse, don't reinvent):**
-  `external_plan.build_plan_from_pasted_json` → `plan_store` →
-  `POST /api/edit/plan/{id}/apply` → ExtendScript `processEDL` → sequence.
+---
 
-## 6. Run & test
-- Backend: `python run.py --prod` (panel auto-spawns it too). Tests:
-  `python -m pytest tests/unit -q`. Smoke scripts: `data/proof/_smoke_*.py`.
-- Panel: reload in Premiere → 📝 / `/review`. Test clip:
-  `G:\YT Videos\…\TestingEditFlow\IMG_1694.MOV`; the real Scribe SRT is at
-  `data/proof/VoiceOverFor_Testing_1_urd.srt`; the script at
-  `data/proof/javed_script.txt`.
+## 3. Effortless interaction layer (P1–P2)
+- ✅ `/` command palette.
+- ⬜ **Mode/tabs switcher** in the header: **Edit · Takes · Chat** (+ a **Compact ⊟ / Workspace ⛶** toggle). Review stops being a hidden command.
+- ⬜ First-run **onboarding** (Scan → Transcribe → Cut) + empty states + visible keyboard map.
+- ⬜ Toasts + a persistent **diagnostics drawer**.
 
-## 7. Out of scope (do NOT build now)
-Multi-clip sessions, the installable-app/zero-config bootstrap, dropping Ollama,
-packaging/signing. These were in an earlier audit and the user explicitly deferred
-them. Focus only on §3 (the Review redesign + workspace) and §4 fixes.
+## 3b. Review-panel REDESIGN — finalized in mockups (the immediate next work)
+> Approved design: `../superpowers/specs/2026-06-06-review-panel-redesign-design.md`.
+> Mockups: `index`(layout) `2-editing`(selection — **working JS to copy**) `3-font`
+> `4-panel`(full Edit) `5-takes`(Takes) `6-workspace`(big view).
+
+| Piece | Status | Where / how |
+|---|---|---|
+| Native-selection cut/restore (tap=play, sweep flips, first word sets direction) | ✅ | `review-view.js` `_bindDocEvents` |
+| Nastaliq font + faded-red cut (no strikethrough) | ✅ (CDN) | `review.css .rv-doc`; ⬜ **bundle** `NotoNastaliqUrdu.woff2` for offline |
+| Live AI model-name label | ✅ | `_suggest` refetch |
+| One Play + Preview-cut disabled-until-cuts | ✅ | `_renderEditor` + `_updateReadout` |
+| **Video show/hide** (drop pop-out) | ⬜ | a single eye toggle on the player |
+| **Clean-up ▾ menu** (fix the broken filler/[non-speech]/restore buttons) | ⬜ | replace quick-cut chips; mutate `S.words[].keep` + `_afterMutate` |
+| **AI progress + Cancel** | ⬜ | `AbortController` on `/suggest`; spinner + Cancel |
+| **Edit/Takes/Chat tabs + Compact/Workspace toggle** | ⬜ | `cep-loader.html` header + `review-view.js` |
+| **Takes tab** (fold-the-repeats; pick best take/beat) | ⬜ | derive beats client-side from segments' `group_id`; `5-takes.html` |
+| **Workspace big view + 4 dockable panels + dual Plan box** | ⬜ | `6-workspace.html`; option **(B)** resizable+show/hide first, path to **(A)** true drag-dock |
+| On-screen ↶/↷ undo-redo; "New Sequence" preset auto-pick (`clip_manager.jsx`) | ⬜ | small UX + ExtendScript |
+| Split `review-view.js` → `review/{shell,video,transcript,waveform,takes,workspace,api}.js` | ⬜ | file is ~650 lines |
+
+## 4. Transcription done right (P3)
+- ✅ **Scribe** (`scribe_service.py`): `client.speech_to_text.convert(model_id="scribe_v2",`
+  `file=<audio>, language_code="ur", timestamps_granularity="word", diarize=False)` → exact
+  per-word times. Key in Settings/env; per-minute **cost estimate**; **cache by fingerprint**.
+- ⬜ **Whisper = offline fallback** with an explicit **download manager** (never implicit
+  multi-GB download); robust install state; correct HF cache dir (already redirected ✅).
+- ⬜ **`TranscriptionProvider` abstraction** (`scribe | whisper | paste`) so the editor is
+  source-agnostic → always `{words[], segments[]}`.
+
+## 5. The installable app (P6) — the big one
+**Goal:** double-click installer → Premiere shows EditFlow, fully working.
+
+**Packaging**
+- **CEP extension** → signed **ZXP** (ZXPSignCmd) so it installs without dev mode; or an
+  installer that drops it into the CEP extensions dir + sets `PlayerDebugMode`.
+- **One-click installer** (Inno Setup / NSIS) that lays down: (1) the extension folder →
+  `%APPDATA%/Adobe/CEP/extensions/com.editflow.ai`; (2) a **bundled portable Python** + a
+  pre-built venv with pinned deps (or a PyInstaller-frozen backend exe); (3) **ffmpeg**
+  (already bundled under `data/tools`); (4) optional models — then registers CEP and launches.
+- **Auto-update**: version check + download new ZXP/installer. **Signing** to avoid SmartScreen.
+
+**Dependency strategy (key decision)**
+- **Drop the hard Ollama dependency.** Use **Scribe** + **deterministic word cleanup** +
+  **optional paste-a-model** for cuts → removes the heaviest, flakiest install. Keep Ollama as
+  an *optional advanced* offline mode.
+- **Whisper** likewise becomes *optional offline mode*; Scribe is the default.
+- Net minimal install = extension + bundled Python backend + ffmpeg + a Scribe key.
+
+**First-run Setup wizard (in-panel)**
+- Detects & reports: backend up? · ffmpeg? · Scribe key set? · (optional) Whisper/Ollama.
+- One **"Set up / Repair"** button; health re-check any time from Settings.
+
+## 6. Best UI for editing (resolved with the user)
+- **A. Word document (Descript-style)** — primary. **B. + Waveform** — yes. **C. Takes tab**
+  (retake-heavy footage) — yes. **D. Chat** (legacy) — keep as optional power-user, not default.
+- **Workspace view** (the user's addition): all of A/B/C/Plan-box as **movable/dockable
+  Premiere-style panels** when the panel is wide. Compact view when narrow.
+
+## 7. Production polish (P7)
+Design tokens/spacing/motion; virtualized long transcripts; a11y; high-DPI; RTL (done in
+editor); localized strings; crash/error telemetry; signed builds.
+
+## 8. Sequenced roadmap (status)
+- **P1 — Word editor + discoverability.** ✅ editor (doc/waveform/karaoke/cut/play/undo) · ✅ `/`
+  palette · ✅ lazy transcribe · ✅ delete index.html · ✅ native selection · ✅ Nastaliq · ✅
+  one-Play/Preview-cut · ⬜ Edit/Takes/Chat tabs · ⬜ Clean-up menu · ⬜ video show/hide.
+- **P2 — AI cleanup + robustness.** ✅ word refine + live model label · ✅ global error banner ·
+  ✅ paste-plan card · ✅ cut-word merge bug · ⬜ AI progress+cancel · ⬜ typed errors · ⬜
+  background long ops · ⬜ New-Sequence preset.
+- **P3 — Transcription providers.** ✅ Scribe (key/cost/cache/word-times) · ⬜ Whisper
+  download-only-on-demand manager · ⬜ provider abstraction.
+- **P4 — Build & scale.** ✅ build-from-words · ⬜ multi-clip selector/aggregate.
+- **P5 — Takes tab** + **Workspace/dockable panels** + script-beat coloring.
+- **P6 — Installable app** (drop hard Ollama/Whisper deps; bundle Python; ZXP + installer;
+  setup wizard; auto-update; signing).
+- **P7 — Polish** (design system, onboarding, perf, a11y, telemetry).
+
+## 9. Open decisions (need a yes)
+- **Workspace docking depth:** (A) true Premiere drag-dock vs **(B) resizable+show/hide (recommended v1)** vs (C) floating.
+- **Drop Ollama as a hard dep?** (Recommended — Scribe + deterministic + paste cover it.)
+- **Bundle a portable Python / freeze backend?** (Recommended for the app.)
+- **Pay for code-signing certs** (installer + ZXP)?
+- **Remove the agent-mode frontend** once Review is default? (Likely yes.)
+
+## 10. Definition of done (per the user)
+No clunk, no subtle errors, full error handling, effortless & smooth, installs itself + its
+services, looks built by a big tech company.
+
+## 11. Key code map + run/test (for the next agent)
+- Panel entry `cep-panel/CSXS/manifest.xml` → `client/cep-loader.html` → `src/main.js`
+  (dynamic-imports `review-view.js` via `BUILD_TAG`; exposes `window.__editflowOpenReview`).
+- Editor: `src/review-view.js` + `styles/review.css`. **Bump `BUILD_TAG` (main.js) + `?v=`
+  (cep-loader.html) on every panel change.**
+- Backend review: `routes/review.py`, `services/review_service.py`, `review_media.py`, `scribe_service.py`.
+- Run: `python run.py --prod`. Tests: `python -m pytest tests/unit -q` (130+). Smoke:
+  `data/proof/_smoke_*.py`. Test clip + the real Scribe SRT + script live under `data/proof/`.
