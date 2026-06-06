@@ -271,8 +271,8 @@ function _renderEditor(mediaError) {
     </div>
     <canvas id="rv-wave" class="rv-wave" height="56"></canvas>
     <div class="rv-toolbar">
-      <button class="rv-btn" data-act="playorig" title="Space">▶ Original</button>
-      <button class="rv-btn rv-primary-ghost" data-act="playplan" title="Enter">▶ Play plan</button>
+      <button class="rv-btn" data-act="playorig" title="Play / pause (Space)">▶ Play</button>
+      <button class="rv-btn rv-primary-ghost" data-act="playplan" title="Preview the cut (Enter)">▶ Preview cut</button>
       <span class="rv-sep"></span>
       <button class="rv-btn" data-act="cut" title="Backspace">Cut</button>
       <button class="rv-btn" data-act="restore" title="R">Restore</button>
@@ -715,6 +715,14 @@ function _updateReadout() {
   const dur = ranges.reduce((s, r) => s + (r[1] - r[0]), 0);
   const kept = S.words.filter(w => w.keep).length;
   el.textContent = `${kept}/${S.words.length} words · ${ranges.length} cut${ranges.length === 1 ? '' : 's'} · ${_fmtDur(dur)}`;
+  // "Preview cut" only makes sense once something is actually cut.
+  const preview = document.querySelector('[data-act="playplan"]');
+  if (preview) {
+    const hasCuts = S.words.some(w => !w.keep);
+    preview.disabled = !hasCuts;
+    preview.style.opacity = hasCuts ? '' : '0.4';
+    preview.title = hasCuts ? 'Preview the cut (Enter)' : 'Make some cuts first';
+  }
 }
 
 // ── Keyboard ─────────────────────────────────────────────────
