@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EditFlow — workspace (big view)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Nastaliq+Urdu:wght@400;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{--bg:#161617;--bg2:#1e1e1f;--surface:#252526;--elev:#2d2d30;--hover:#34343a;--border:#3a3a3e;
+    --text:#cccccc;--dim:#808080;--bright:#e8e8e8;--accent:#0a84ff;--accent2:#1a8aff;
+    --success:#4ec9b0;--warning:#e0b34a;--error:#f25b5b}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#0e0e0e;color:var(--text);font-family:'Inter',system-ui;padding:18px}
+  h1{font-size:18px;color:#fff;margin-bottom:3px}
+  .sub{color:var(--dim);font-size:12.5px;margin-bottom:14px;max-width:1000px;line-height:1.55}
+
+  .app{width:1080px;height:660px;background:var(--bg);border:1px solid var(--border);border-radius:12px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 14px 50px rgba(0,0,0,.5)}
+  .appbar{height:42px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;padding:0 12px;flex-shrink:0}
+  .logo{font-weight:700;color:#fff;font-size:14px}
+  .tabs{display:flex;gap:2px;margin-left:6px}
+  .tab{font-size:12px;color:var(--dim);padding:5px 11px;border-radius:6px}
+  .tab.on{background:var(--elev);color:#fff}
+  .sp{flex:1}
+  .viewtoggle{display:flex;border:1px solid var(--border);border-radius:7px;overflow:hidden}
+  .viewtoggle span{font-size:11px;padding:5px 10px;color:var(--dim)}
+  .viewtoggle span.on{background:var(--accent);color:#fff}
+  .ic{color:var(--dim);font-size:15px}
+
+  /* the controls / buttons panel (dockable bar) */
+  .controls{height:46px;background:var(--bg2);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;padding:0 12px;flex-shrink:0}
+  .grip{color:#5a5a5e;font-size:12px;cursor:move;letter-spacing:-2px}
+  .pp{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px}
+  .time{font-size:11px;color:var(--dim);font-variant-numeric:tabular-nums}
+  .btn{font-size:11px;color:var(--text);border:1px solid var(--border);padding:6px 11px;border-radius:6px;background:var(--elev);display:flex;gap:6px;align-items:center}
+  .btn.dis{opacity:.4}
+  .btn .dot{width:6px;height:6px;border-radius:50%;background:var(--success)}
+  .readout{font-size:11px;color:var(--success);font-weight:600}
+  .build{margin-left:auto;font-size:12px;color:#fff;background:var(--accent);padding:7px 16px;border-radius:7px;font-weight:600}
+
+  .work{flex:1;display:flex;min-height:0}
+  .left{width:360px;display:flex;flex-direction:column;flex-shrink:0}
+  .vsplit{width:6px;background:var(--bg);cursor:col-resize;display:flex;align-items:center;justify-content:center;color:#444;flex-shrink:0}
+  .right{flex:1;display:flex;flex-direction:column;min-width:0}
+
+  /* dockable panel */
+  .pane{background:var(--bg2);display:flex;flex-direction:column;min-height:0;border:1px solid var(--border)}
+  .pane + .hsplit{height:6px}
+  .hsplit{background:var(--bg);cursor:row-resize;display:flex;align-items:center;justify-content:center;color:#444;flex-shrink:0;font-size:9px}
+  .ptab{height:30px;background:var(--surface);display:flex;align-items:center;gap:8px;padding:0 10px;border-bottom:1px solid var(--border);flex-shrink:0}
+  .ptab .name{font-size:11.5px;color:var(--bright);font-weight:600}
+  .ptab .meta{font-size:10.5px;color:var(--dim)}
+  .ptab .acts{margin-left:auto;display:flex;gap:8px;color:var(--dim);font-size:12px}
+  .pbody{flex:1;overflow:auto;min-height:0}
+
+  .video{flex:1;background:#000;display:flex;align-items:center;justify-content:center;position:relative}
+  .video .play{width:38px;height:38px;border-radius:50%;background:rgba(255,255,255,.14);color:#fff;display:flex;align-items:center;justify-content:center;font-size:14px}
+  .wave{height:26px;background:var(--surface);position:relative;flex-shrink:0;border-top:1px solid var(--border)}
+
+  /* plan box */
+  .plan .pbody{padding:8px}
+  .planrow{display:flex;gap:8px;align-items:center;font-size:11px;padding:6px 8px;border-radius:6px;background:var(--surface);margin-bottom:5px}
+  .planrow .tc{color:var(--accent2);font-family:'JetBrains Mono',monospace;font-size:10px;flex-shrink:0}
+  .planrow .txt{flex:1;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:'Noto Nastaliq Urdu';font-size:11.5px;direction:rtl;text-align:right}
+  .pastehint{margin-top:8px;border:1px dashed var(--border);border-radius:7px;padding:10px;font-size:11px;color:var(--dim);text-align:center;line-height:1.5}
+  .pastehint b{color:var(--text)}
+  .seg{display:inline-flex;border:1px solid var(--border);border-radius:6px;overflow:hidden;margin-bottom:8px}
+  .seg span{font-size:10.5px;padding:4px 9px;color:var(--dim)}
+  .seg span.on{background:var(--elev);color:#fff}
+
+  /* transcript */
+  .doc{padding:14px 18px;font-family:'Noto Nastaliq Urdu',serif;font-size:15px;line-height:3.05;direction:rtl;text-align:right;user-select:text}
+  .doc ::selection{background:rgba(10,132,255,.45)}
+  .w{cursor:pointer;border-radius:3px;padding:0 1px}
+  .w.cut{color:var(--error);opacity:.4}
+  .w.now{background:var(--warning);color:#1e1e1e}
+  .en{direction:ltr;unicode-bidi:isolate;display:inline-block;font-family:'Inter'}
+
+  .floatcap{font-size:11.5px;color:var(--dim);margin-top:10px;max-width:1080px;line-height:1.6}
+  .floatcap b{color:var(--bright)}
+  .pill{display:inline-block;background:var(--elev);border:1px solid var(--border);border-radius:5px;padding:0 6px;font-size:10.5px}
+</style>
+</head>
+<body>
+  <h1>Big "workspace" view — dockable panels (Premiere-style)</h1>
+  <p class="sub">Make the EditFlow panel wide (or hit <span class="pill">⛶ Workspace</span>) and it becomes this. Four panels — <b>Controls</b>, <b>Video</b>, <b>Plan</b>, <b>Transcript</b> — each with a drag-grip (⠿) to move/dock and a resize splitter between them. Default: video small top-left, plan below it, transcript filling the right.</p>
+
+  <div class="app">
+    <div class="appbar"><span class="logo">EditFlow</span>
+      <div class="tabs"><span class="tab on">Edit</span><span class="tab">Takes</span><span class="tab">Chat</span></div>
+      <span class="sp"></span>
+      <div class="viewtoggle"><span>⊟ Compact</span><span class="on">⛶ Workspace</span></div>
+      <span class="ic">⚙</span>
+    </div>
+
+    <!-- Controls panel (dockable bar) -->
+    <div class="controls">
+      <span class="grip">⠿</span>
+      <div class="pp">❚❚</div><span class="time">0:42 / 5:23</span>
+      <span class="btn dis" title="Make some cuts first">▶ Preview cut</span>
+      <span class="btn"><span class="dot"></span>Suggest · gemma3:4b</span>
+      <span class="btn">✦ Clean up ▾</span>
+      <span class="readout">31/36 · 1:58</span>
+      <span class="build">Build</span>
+    </div>
+
+    <div class="work">
+      <!-- LEFT: video + plan -->
+      <div class="left">
+        <div class="pane" style="height:230px">
+          <div class="ptab"><span class="grip">⠿</span><span class="name">Video</span><span class="meta">IMG_1694 · source</span><span class="acts"><span title="hide">👁</span></span></div>
+          <div class="video"><div class="play">▶</div></div>
+          <div class="wave"><svg width="360" height="26"><g fill="#0a84ff"><rect x="8" y="10" width="2" height="6"/><rect x="14" y="6" width="2" height="14"/><rect x="20" y="9" width="2" height="9"/><rect x="26" y="4" width="2" height="18"/><rect x="40" y="7" width="2" height="13"/><rect x="60" y="5" width="2" height="16"/></g><g fill="#f25b5b" opacity=".45"><rect x="74" y="9" width="2" height="9"/><rect x="80" y="7" width="2" height="12"/></g><g fill="#0a84ff"><rect x="120" y="5" width="2" height="16"/><rect x="200" y="8" width="2" height="11"/><rect x="300" y="6" width="2" height="14"/></g><rect x="120" y="0" width="1.5" height="26" fill="#e8e8e8"/></svg></div>
+        </div>
+        <div class="hsplit">⠿⠿⠿</div>
+        <div class="pane plan" style="flex:1">
+          <div class="ptab"><span class="grip">⠿</span><span class="name">Plan</span><span class="meta">6 spans · 1:58</span><span class="acts"><span>⤓</span><span>▾</span></span></div>
+          <div class="pbody">
+            <div class="seg"><span class="on">AI plan</span><span>Paste a plan</span></div>
+            <div class="planrow"><span class="tc">0:44–0:51</span><span class="txt">میں ہوں جاوید۔ میں نے چودہ کروڑ…</span></div>
+            <div class="planrow"><span class="tc">1:31–1:42</span><span class="txt">جو بہت زیادہ چلا اور اب میرے پاس…</span></div>
+            <div class="planrow"><span class="tc">2:55–2:59</span><span class="txt">دو سو کروڑ روپے بنا ٹیکس کے۔</span></div>
+            <div class="planrow"><span class="tc">3:24–3:28</span><span class="txt">دس percent کی growth سے بڑھتے…</span></div>
+            <div class="pastehint">Switch to <b>Paste a plan</b> to drop an external model's JSON here →<br>the cuts highlight live in the transcript.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="vsplit">⠿</div>
+
+      <!-- RIGHT: transcript -->
+      <div class="right">
+        <div class="pane" style="flex:1">
+          <div class="ptab"><span class="grip">⠿</span><span class="name">Transcript</span><span class="meta">Nastaliq · 36 words</span><span class="acts"><span>🔍</span></span></div>
+          <div class="pbody"><div class="doc">
+            <span class="w">میں</span> <span class="w">ہوں</span> <span class="w now">جاوید۔</span>
+            <span class="w">میں</span> <span class="w">نے</span> <span class="w">چودہ</span> <span class="w">کروڑ</span>
+            <span class="w en">invest</span> <span class="w">کیے</span> <span class="w cut">ہم--</span>
+            <span class="w">ایک</span> <span class="w en">tech</span> <span class="w en">startup</span> <span class="w">کے</span> <span class="w">اندر</span>
+            <span class="w cut">[بچے کی آواز]</span> <span class="w">جو</span> <span class="w">چلا</span> <span class="w">اور</span>
+            <span class="w cut">ہاں</span> <span class="w">اب</span> <span class="w">میرے</span> <span class="w">پاس</span> <span class="w">ہیں</span>
+            <span class="w">دس</span> <span class="w">ہزار</span> <span class="w">کروڑ</span> <span class="w">روپے۔</span>
+            <span class="w">وہی</span> <span class="w en">same</span> <span class="w en">trick</span> <span class="w">کھیلوں</span> <span class="w">گا</span>
+          </div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <p class="floatcap">
+    <b>Compact view</b> (the narrow dock) = single column, video show/hide only — for when the panel is docked thin in Premiere.
+    <b>Workspace view</b> = this. The big question for the plan: <b>how "dockable"?</b>
+    <b>(A)</b> true Premiere-style drag-to-dock/tab/snap (most powerful, biggest build),
+    <b>(B)</b> this fixed-but-resizable arrangement with grips to <i>show/hide &amp; resize</i> each panel + swap left/right (90% of the value, robust), or
+    <b>(C)</b> free-floating draggable panels.
+  </p>
+</body>
+</html>
