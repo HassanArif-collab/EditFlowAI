@@ -485,13 +485,17 @@ function _playOriginal() {
   else { S.video.pause(); S.playMode = 'idle'; }
 }
 
-function _mergedKeptRanges(maxGap = 0.35) {
+function _mergedKeptRanges() {
+  // A CUT word ENDS the current run — never merge two kept words across a cut
+  // word (that would play the cut audio). Matches the backend words_to_cuts fix.
   const ranges = [];
   let cur = null;
   for (const w of S.words) {
-    if (!w.keep) continue;
-    if (cur && w.start - cur[1] <= maxGap) cur[1] = w.end;
-    else { if (cur) ranges.push(cur); cur = [w.start, w.end]; }
+    if (w.keep) {
+      if (cur) cur[1] = w.end; else cur = [w.start, w.end];
+    } else if (cur) {
+      ranges.push(cur); cur = null;
+    }
   }
   if (cur) ranges.push(cur);
   return ranges;

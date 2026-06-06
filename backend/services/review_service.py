@@ -180,11 +180,18 @@ def words_to_cuts(
     """
     cuts: list[dict] = []
     cur: Optional[dict] = None
+    prev_id: Optional[int] = None
     for wid in kept_ids:
         w = words_by_id.get(wid)
         if w is None:
             continue
-        if cur is not None and (w.start - cur["source_out"]) <= max_gap:
+        # CRITICAL: only merge with the IMMEDIATELY preceding word (consecutive
+        # id). A gap in ids means a CUT word sits between them — merging across it
+        # by time would splice that cut word's audio back into the timeline. So a
+        # non-consecutive id starts a new cut. (This bug put cut words into the
+        # actual built sequence, not just the preview.)
+        if (cur is not None and prev_id is not None and w.id == prev_id + 1
+                and (w.start - cur["source_out"]) <= max_gap):
             cur["source_out"] = round(w.end, 3)
             cur["beat_text"] = (cur["beat_text"] + " " + w.text)[:120]
         else:
@@ -196,6 +203,7 @@ def words_to_cuts(
                 "source_in": round(w.start, 3),
                 "source_out": round(w.end, 3),
             }
+        prev_id = w.id
     if cur is not None:
         cuts.append(cur)
     return cuts

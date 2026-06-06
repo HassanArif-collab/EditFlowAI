@@ -72,6 +72,21 @@ def test_words_to_cuts_drops_unkept_words_in_middle():
     assert cuts[1]["source_in"] == 2.2
 
 
+def test_words_to_cuts_excludes_cut_word_between_kept():
+    # Regression: keeping 0 and 2 (word 1 cut, omitted) must NOT splice word 1's
+    # audio in. Their ids aren't consecutive → two separate cuts, gap excluded.
+    words = [
+        Word(0, "keep", 1.0, 1.4, 0, keep=True),
+        Word(1, "JUNK", 1.4, 1.6, 0, keep=False),   # cut → omitted from kept_ids
+        Word(2, "keep", 1.6, 2.0, 0, keep=True),
+    ]
+    by_id = {w.id: w for w in words}
+    cuts = words_to_cuts(by_id, [0, 2], "C.MOV")    # word 1 NOT in kept_ids
+    assert len(cuts) == 2
+    assert cuts[0]["source_out"] == 1.4    # ends before the cut word
+    assert cuts[1]["source_in"] == 1.6     # starts after it
+
+
 def test_refine_words_cuts_junk_words_inside_kept_lines():
     # All start kept; refine should cut the cutoff, the filler, the [non-speech].
     words = [
