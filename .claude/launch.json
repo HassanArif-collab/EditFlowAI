@@ -6,6 +6,12 @@
       "runtimeExecutable": "python",
       "runtimeArgs": ["-m", "http.server", "5599", "--directory", "docs/superpowers/mockups"],
       "port": 5599
+    },
+    {
+      "name": "panel",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "5601", "--directory", "cep-panel/client"],
+      "port": 5601
     }
   ]
 }

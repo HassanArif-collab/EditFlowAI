@@ -99,6 +99,18 @@ Cut apply backbone (reused by EVERY path — don't reinvent):
 - ⬜ Toasts + a persistent **diagnostics drawer**.
 
 ## 3b. Review-panel REDESIGN — finalized in mockups (the immediate next work)
+
+> **UPDATE — IMPLEMENTED & verified live (browser harness against the real backend):**
+> Edit/Takes/Chat **tabs** + **Compact/Workspace** toggle · **Workspace** 4-panel
+> layout with draggable splitters (widths verified: left 360 / right 814) + **Plan
+> box** (AI-plan list + paste-a-plan) · **Takes tab** (beats from `group_id`, pick
+> winner, coverage) · **video show/hide** · **Clean-up ▾ menu** (now actually cuts
+> fillers/[non-speech]/`--`) · **Suggest progress + Cancel** + **live model label**
+> (showed `minimax-m2.5:cloud`) · native-selection editing · Nastaliq · one-Play +
+> Preview-cut-disabled. **Still ⬜:** "New Sequence" preset-dialog suppression
+> (ExtendScript — needs Premiere to test), Nastaliq **offline bundling** (loads via
+> web font today), and the optional `review-view.js` **module split**.
+
 > Approved design: `../superpowers/specs/2026-06-06-review-panel-redesign-design.md`.
 > Mockups: `index`(layout) `2-editing`(selection — **working JS to copy**) `3-font`
 > `4-panel`(full Edit) `5-takes`(Takes) `6-workspace`(big view).
