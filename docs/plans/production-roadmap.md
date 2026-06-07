@@ -122,6 +122,12 @@ Cut apply backbone (reused by EVERY path — don't reinvent):
 > clip-matched create with safe fallback — **needs a 30-sec confirm inside
 > Premiere**, can't be exercised outside it).
 >
+> **Debug drawer (build review-9):** Suggest now emits a stage-by-stage `trace`
+> (junk · clustering with pairwise scores + length-guard skips · script-match ·
+> LLM prompt/raw/truncation · final provenance), shown in a 🐞 drawer. Use it to
+> confirm root causes before changing the clustering/LLM logic. Plan:
+> `../superpowers/plans/2026-06-07-suggest-trace-debug-drawer.md`.
+>
 > **Still ⬜ (deliberately):** optional `review-view.js` **module split** (§10) —
 > pure refactor, zero user-visible change, higher risk than value; deferred.
 
