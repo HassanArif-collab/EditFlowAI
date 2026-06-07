@@ -59,7 +59,22 @@ segment ONLY if it's a fragment or has a semantically-similar kept neighbour;
 unique content is vetoed). Result: **8/8 beats kept every run** (no content loss,
 the baseline's worst flaw), **0 duplicate pairs**, fragments trimmed.
 Ranking (+LLM composite): a8_safe 66.7 ≫ a1_embed 51 ≈ a2_focused 50 > a7/a1a2 42 > baseline 38.
-**NEXT:** integrate A8 into real code on branch `experiment/approach-embed-dedup`.
+
+### 2026-06-07 — A8 INTEGRATED ✅
+Ported A8 into real backend code on branch **`experiment/approach-embed-dedup`**
+(pushed, commit 668a336): `review_service.embedding_dedup()` +
+`redundant_kept_ids()` + `is_fragmentish()`, wired into `/suggest` (dedup after
+classify; LLM refine is focused + coverage-preserving with the unique-content
+veto). **146 unit tests pass**; embedding_dedup verified on the fixture (21→18,
+3 semantic dups cut). Graceful no-op if sentence-transformers is missing.
+
+**BEFORE MERGING `experiment/approach-embed-dedup` → `v2-simple-start`:**
+1. Add 2-3 more video fixtures to `experiments/fixtures/` and re-run the eval —
+   one clip is not enough to trust the thresholds (0.5 cosine / 0.45 token).
+2. Eyeball 2-3 real outputs in the panel (the beat metric is a proxy, not taste).
+3. Confirm `sentence-transformers` is a declared dependency for production.
+4. Re-run the prior-art research (RESEARCH.md never got written — agent hit limit).
+DONE for this session.
 
 **THE core problem is the LLM**, not the deterministic layer: given all 66 segments
 it is so aggressive/inconsistent it CUTS WHOLE BEATS (loses real content). baseline
