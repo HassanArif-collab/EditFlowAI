@@ -546,12 +546,20 @@ def _ratio(a: str, b: str) -> float:
     return difflib.SequenceMatcher(None, a, b).ratio()
 
 
-def _cluster_retakes(segments: list[Segment], threshold: float) -> list[list[int]]:
+def _cluster_retakes(
+    segments: list[Segment],
+    threshold: float,
+    pairs: Optional[list[dict]] = None,
+) -> list[list[int]]:
     """Union-find clustering of near-duplicate segment texts (retakes).
 
     Compares *normalized* text with a char-level ratio, which is language-
     agnostic (works on Urdu code points just as well as Latin). Returns clusters
     as lists of segment indices, each sorted ascending; singletons included.
+
+    When ``pairs`` is given, appends notable comparisons (length-guard skips of a
+    contained fragment, and any scored pair >= 0.4) so the debug drawer can show
+    why retakes did or didn't group.
     """
     n = len(segments)
     parent = list(range(n))
@@ -567,6 +575,14 @@ def _cluster_retakes(segments: list[Segment], threshold: float) -> list[list[int
         if ra != rb:
             parent[max(ra, rb)] = min(ra, rb)
 
+    def record(i: int, j: int, score: Optional[float], clustered: bool, skipped: Optional[str]) -> None:
+        pairs.append({
+            "a_id": segments[i].id, "a_text": segments[i].text[:50],
+            "b_id": segments[j].id, "b_text": segments[j].text[:50],
+            "score": (round(score, 3) if score is not None else None),
+            "clustered": clustered, "skipped": skipped,
+        })
+
     norms = [_normalize(s.text) for s in segments]
     for i in range(n):
         if len(norms[i]) < 3:
@@ -577,8 +593,15 @@ def _cluster_retakes(segments: list[Segment], threshold: float) -> list[list[int
             # Cheap length guard before the O(k) ratio.
             shorter, longer = sorted((len(norms[i]), len(norms[j])))
             if longer and shorter / longer < 0.5:
+                if pairs is not None:
+                    si, li = (i, j) if len(norms[i]) <= len(norms[j]) else (j, i)
+                    if norms[si] and norms[si] in norms[li]:
+                        record(i, j, None, False, "length_guard")
                 continue
-            if _ratio(norms[i], norms[j]) >= threshold:
+            score = _ratio(norms[i], norms[j])
+            if pairs is not None and score >= 0.4:
+                record(i, j, score, score >= threshold, None)
+            if score >= threshold:
                 union(i, j)
 
     clusters: dict[int, list[int]] = {}

@@ -73,3 +73,32 @@ def test_llm_stage_not_truncated_when_json_closed():
     )
     assert st["truncated"] is False
     assert st["used"] is True and st["flips"][0]["id"] == 1
+
+
+from backend.services.review_service import _cluster_retakes  # noqa: E402
+
+
+def test_cluster_records_grouped_pair():
+    line = "میں نے چودہ ہزار کروڑ لگائے ایک ٹیک سٹارٹ اپ میں"
+    segs = [_seg(0, line), _seg(1, line), _seg(2, "بالکل الگ جملہ یہاں")]
+    pairs: list[dict] = []
+    _cluster_retakes(segs, 0.72, pairs)
+    hit = [p for p in pairs if p["clustered"]]
+    assert any(p["a_id"] == 0 and p["b_id"] == 1 for p in hit)
+    assert hit[0]["score"] is not None and hit[0]["skipped"] is None
+
+
+def test_cluster_records_length_guard_skip_for_contained_fragment():
+    full = "تو اب ہم اپنی income کو دس گنا کر دیتے ہیں"
+    segs = [_seg(0, full), _seg(1, "income")]   # fragment fully inside the full line
+    pairs: list[dict] = []
+    _cluster_retakes(segs, 0.72, pairs)
+    skipped = [p for p in pairs if p["skipped"] == "length_guard"]
+    assert any({p["a_id"], p["b_id"]} == {0, 1} for p in skipped)
+
+
+def test_cluster_pairs_default_off_is_backward_compatible():
+    segs = [_seg(0, "hello world this is a line"), _seg(1, "hello world this is a line")]
+    # Called the old way (no pairs arg) — must still cluster, must not raise.
+    clusters = _cluster_retakes(segs, 0.72)
+    assert any(len(c) == 2 for c in clusters)
