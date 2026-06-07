@@ -126,3 +126,49 @@ def test_classify_without_trace_unchanged():
     segs = [_seg(0, line), _seg(1, line)]
     classify(segs, "")           # no trace kwarg — old call site
     assert segs[0].decision == "cut" and segs[1].decision == "keep"
+
+
+import asyncio  # noqa: E402
+
+from backend.routes.review import SuggestReq, _reviews, suggest  # noqa: E402
+
+
+def test_suggest_route_returns_trace_when_debug(tmp_path, monkeypatch):
+    # Avoid touching the real DATA_DIR on snapshot write.
+    import backend.config as cfg
+    monkeypatch.setattr(cfg.get_settings(), "DATA_DIR", tmp_path, raising=False)
+
+    line = "میں نے چودہ ہزار کروڑ لگائے ایک ٹیک سٹارٹ اپ میں"
+    _reviews["trace-test"] = {
+        "segments": [
+            Segment(id=0, start=0, end=4, text=line, tight_in=0, tight_out=4),
+            Segment(id=1, start=10, end=14, text=line, tight_in=10, tight_out=14),
+            Segment(id=2, start=20, end=20.2, text="umm", tight_in=20, tight_out=20.2),
+        ],
+        "words": [],
+        "script": "",
+        "source_name": "X.MOV",
+    }
+    try:
+        resp = asyncio.run(suggest(SuggestReq(review_id="trace-test", use_llm=False, debug=True)))
+    finally:
+        _reviews.pop("trace-test", None)
+
+    assert resp["trace"] is not None
+    names = [s["stage"] for s in resp["trace"]["stages"]]
+    assert names == ["junk", "cluster", "script", "final"]   # no llm stage when use_llm=False
+    final = resp["trace"]["stages"][-1]
+    by = {s["id"]: s["decided_by"] for s in final["segments"]}
+    assert by[2] == "junk" and by[1] == "kept" and by[0] == "cluster"
+
+
+def test_suggest_route_no_trace_when_debug_off():
+    _reviews["trace-test2"] = {
+        "segments": [Segment(id=0, start=0, end=2, text="a normal spoken line", tight_in=0, tight_out=2)],
+        "words": [], "script": "", "source_name": "X.MOV",
+    }
+    try:
+        resp = asyncio.run(suggest(SuggestReq(review_id="trace-test2", use_llm=False)))
+    finally:
+        _reviews.pop("trace-test2", None)
+    assert resp["trace"] is None

@@ -48,10 +48,13 @@ from ..services.review_service import (
     words_from_segments,
     words_to_cuts,
 )
+from ..services.review_trace import ReviewTrace, final_stage, llm_stage
 from ..utils.progress import ProgressReporter
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/review", tags=["review"])
+
+_SUGGEST_MAX_TOKENS = 1500  # decisions reply budget; the trace reports this so a truncated reply is visible
 
 # In-memory review sessions for this backend process. Each entry:
 #   { source_path, source_name, proxy_path, segments: list[Segment],
@@ -340,6 +343,7 @@ async def waveform(review_id: str):
 class SuggestReq(BaseModel):
     review_id: str
     use_llm: Optional[bool] = False
+    debug: Optional[bool] = False
 
 
 def _propagate_to_words(rev: dict) -> None:
@@ -361,23 +365,32 @@ def _propagate_to_words(rev: dict) -> None:
 
 @router.post("/suggest")
 async def suggest(req: SuggestReq):
-    """Run the deterministic classifier (+ optional active-model refine)."""
+    """Run the deterministic classifier (+ optional active-model refine).
+
+    When ``debug`` is set, also returns a structured ``trace`` of every stage's
+    keep/cut decisions for the panel's debug drawer.
+    """
     rev = _reviews.get(req.review_id)
     if not rev:
         raise HTTPException(status_code=404, detail="Review session not found (re-ingest).")
 
     segments: list[Segment] = rev["segments"]
-    classify(segments, rev.get("script", ""))
+    trace = ReviewTrace() if req.debug else None
+    classify(segments, rev.get("script", ""), trace=trace)
 
     llm_used = False
     if req.use_llm:
+        prompt = build_gemma_prompt(segments, rev.get("script", ""))
+        text = ""
+        decisions: dict = {}
+        flips: list[dict] = []
+        err: Optional[str] = None
         try:
             from ..services.provider_service import provider_service
-            prompt = build_gemma_prompt(segments, rev.get("script", ""))
             raw = await provider_service.chat(
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.0,
-                max_tokens=1500,
+                max_tokens=_SUGGEST_MAX_TOKENS,
             )
             text = (raw or {}).get("response") or ""
             decisions = parse_gemma_decisions(text, {s.id for s in segments})
@@ -389,12 +402,19 @@ async def suggest(req: SuggestReq):
                     if not keep:
                         s.decision = "cut"
                         s.reason = reason or "llm_off_script"
+                        flips.append({"id": s.id, "reason": s.reason})
             llm_used = bool(decisions)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("review.suggest: model refine skipped (%s)", exc)
+            err = str(exc) or exc.__class__.__name__
+            logger.warning("review.suggest: model refine skipped (%s)", err)
+        if trace is not None:
+            trace.add(llm_stage(prompt, text, _SUGGEST_MAX_TOKENS,
+                                len(decisions), len(segments), flips, err))
 
     _propagate_to_words(rev)
     refine_words(rev.get("words", []))  # word-level: cut junk words inside kept lines
+    if trace is not None:
+        trace.add(final_stage(segments))
     _persist(req.review_id, rev)
     source_name = rev.get("source_name", "")
     return {
@@ -404,6 +424,7 @@ async def suggest(req: SuggestReq):
         "words": [w.to_dict() for w in rev.get("words", [])],
         "summary": _summary(segments),
         "word_summary": _word_summary(rev.get("words", []), source_name),
+        "trace": trace.to_dict() if trace is not None else None,
     }
 
 
