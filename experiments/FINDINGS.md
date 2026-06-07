@@ -34,6 +34,26 @@ video against the English script (8 beats). Composite = `cov*10 − dup*12 − f
    is never cut → **8/8 coverage on every run**, dups 0, fragments trimmed.
    Composite 66.7 — nearly double the shipped baseline, and *consistent*.
 
+## ❌ WHAT DID NOT WORK — and why (evidence kept on purpose)
+1. **A8 "winner" was a false positive — the metric was too coarse (Goodhart).**
+   The eval used 8 broad "beats". A8 scored composite 66.7 / "8/8 coverage", but
+   when we RENDERED the actual cut video and checked it against the real script,
+   A8 had **dropped the opening hook** — "Now let's 10x this" and "now I'm worth
+   10,000 crore" — while baseline dropped "I'm Javed / invested 14 crore". A coarse
+   "house beat ✓" hid that whole script lines were missing. **Lesson: validate
+   against the actual script sentences and the rendered output, not an averaged
+   proxy score.** (Evidence: `preview/a8_safe_plan.txt` vs `preview/baseline_plan.txt`.)
+2. **A8's coverage veto had a hole.** Its redundancy check used embedding cosine
+   alone (≥0.5); "10x income" is vocabulary-similar to "growth" (0.677), so the
+   veto wrongly deemed it redundant and let the LLM cut it. Same vocab-conflation
+   bug as plain-embedding dedup.
+3. **The whole dedup/LLM-trim framing solved the wrong problem.** The user HAS a
+   script. The job isn't "guess what's redundant" — it's "deliver every script
+   line with its best take." → pivot to **script-driven alignment** (below).
+4. **The LLM stage is unreliable for this** (drops whole beats, 11→28 variance).
+   The script-aligned approach is **deterministic** (embeddings only) — no LLM in
+   the keep/cut decision — which also removes the variance.
+
 ## Recommendation
 Ship **A8** = embedding+token dedup (A1) + coverage-preserving refine. Integration
 branch: `experiment/approach-embed-dedup`. Caveats to validate before merging to
