@@ -8,7 +8,7 @@
     "fragments": 4.0,
     "dup_pairs": 2.0,
     "runtime_s": 82.6,
-    "elapsed_ms": 207.9,
+    "elapsed_ms": 168.0,
     "composite": 24.0,
     "missing_beats": [],
     "_runs": 1,
@@ -24,11 +24,27 @@
     "fragments": 4.0,
     "dup_pairs": 2.0,
     "runtime_s": 77.7,
-    "elapsed_ms": 181.3,
+    "elapsed_ms": 151.7,
     "composite": 24.0,
     "missing_beats": [],
     "_runs": 1,
     "proposer": "a7_trim",
+    "fixture": "jawaid_66seg.json"
+  },
+  {
+    "kept": 18.0,
+    "covered_beats": 8.0,
+    "total_beats": 8.0,
+    "redundancy": 3.0,
+    "orphans": 4.0,
+    "fragments": 4.0,
+    "dup_pairs": 0.0,
+    "runtime_s": 72.1,
+    "elapsed_ms": 56380.4,
+    "composite": 48.0,
+    "missing_beats": [],
+    "_runs": 1,
+    "proposer": "a1_embed",
     "fixture": "jawaid_66seg.json"
   }
 ]
