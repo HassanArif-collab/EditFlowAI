@@ -548,6 +548,16 @@ def _ratio(a: str, b: str) -> float:
     return difflib.SequenceMatcher(None, a, b).ratio()
 
 
+_BRACKET_RE = re.compile(r"[\[\(\{][^\]\)\}]*[\]\)\}]")
+
+
+def _strip_brackets(text: str) -> str:
+    """Drop bracketed cues like ``[بچے کی آواز]`` (and their words). Used before
+    clustering so a non-speech marker embedded in a content line can't chain that
+    line into the non-speech cluster via the shared bracket words."""
+    return _BRACKET_RE.sub(" ", text or "")
+
+
 def _tokens(text: str) -> list[str]:
     """Normalized whitespace tokens of a segment (language-agnostic)."""
     return _normalize(text).split()
@@ -569,10 +579,13 @@ def _token_containment(a: list[str], b: list[str]) -> float:
 
 
 def _is_clean_take(text: str) -> bool:
-    """A take is 'clean' if it isn't a cut-off false start and isn't a 1-word
-    fragment. Used to pick the best (clean, latest) member of a retake cluster."""
+    """A take is 'clean' if it isn't a cut-off false start, a bracketed non-speech
+    cue, or a 1-word fragment. Used to pick the best member of a retake cluster —
+    a non-speech segment must never be chosen as the take to keep."""
     t = (text or "").strip()
     if "--" in t:                      # Scribe marks self-interrupts with --
+        return False
+    if _is_bracketed_nonspeech(t):     # e.g. "[بچے کی آواز]"
         return False
     return len(_tokens(t)) >= 2
 
@@ -622,7 +635,7 @@ def _cluster_retakes(
             "clustered": clustered, "skipped": skipped,
         })
 
-    norms = [_normalize(s.text) for s in segments]
+    norms = [_normalize(_strip_brackets(s.text)) for s in segments]
     toks = [n.split() for n in norms]
     for i in range(n):
         if len(norms[i]) < 3:
@@ -720,39 +733,44 @@ def classify(
     for gid, members in enumerate(_cluster_retakes(segments, retake_threshold, _pairs)):
         if len(members) < 2:
             continue
-        # Default to the last take (usually the keeper), but skip a final take
-        # that's a false start / fragment in favour of the last clean one.
-        clean = [m for m in members if _is_clean_take(segments[m].text)]
-        kept = clean[-1] if clean else members[-1]
         for m in members:
             segments[m].group_id = gid
-        for m in members:
-            if m != kept and segments[m].decision == "keep":
+        # The winner can only be a still-KEPT member (never a non-speech/filler one
+        # already cut in steps 1-3); prefer the last CLEAN take, else the last kept.
+        eligible = [m for m in members if segments[m].decision == "keep"]
+        if not eligible:
+            continue
+        clean = [m for m in eligible if _is_clean_take(segments[m].text)]
+        kept = clean[-1] if clean else eligible[-1]
+        for m in eligible:
+            if m != kept:
                 segments[m].decision = "cut"
                 segments[m].reason = f"retake_of:#{kept}"
 
     if trace is not None:
         trace.add(cluster_stage(_pairs or [], segments))
 
-    # 4b: orphan fragments — a very short kept line whose words are a subset of a
-    # neighbouring kept line is a split-off tail (e.g. "مجھے۔" split from the line
-    # before it). Cut it as ``fragment``. Tight bounds so real short lines survive.
-    _toks_all = [_tokens(s.text) for s in segments]
+    # 4b: orphan fragments — a short kept line that's just a piece of a longer kept
+    # line (e.g. "دس ہزار،" / "مجھے۔") is a split-off tail. Cut it as ``fragment``.
+    _toks_all = [set(_tokens(s.text)) for s in segments]
     for idx, seg in enumerate(segments):
         if seg.decision != "keep":
             continue
-        st = set(_toks_all[idx])
+        st = _toks_all[idx]
         if not st or len(st) > 3:
             continue
         # A lone short word ("مجھے۔", "گے۔") is a split-off grammatical tail.
         if len(st) == 1 and len(next(iter(st))) <= 4:
             seg.decision, seg.reason = "cut", "fragment"
             continue
-        for nb in (idx - 1, idx + 1):
-            if 0 <= nb < len(segments) and segments[nb].decision == "keep":
-                if len(st & set(_toks_all[nb])) / len(st) >= 0.8:
-                    seg.decision, seg.reason = "cut", "fragment"
-                    break
+        # Its words are a subset of a substantially longer kept line → it's a piece
+        # of that line, not its own take.
+        for j, other in enumerate(_toks_all):
+            if j == idx or segments[j].decision != "keep":
+                continue
+            if len(other) >= 2 * len(st) and len(st & other) / len(st) >= 0.8:
+                seg.decision, seg.reason = "cut", "fragment"
+                break
 
     # 5: script match — same-language only.
     lines = _script_lines(script)
