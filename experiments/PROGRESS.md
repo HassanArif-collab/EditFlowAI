@@ -47,7 +47,10 @@ Scoreboard WITH the LLM (avg of 3 runs, fixture jawaid_66seg):
 |---|---|---|---|---|---|
 | baseline+LLM | 38 | 8.3 | **5.0/8** | 0.3 | one run dropped ALL 8 beats — huge variance |
 | a7+LLM | 42 | 14.7 | 7.7/8 | 1.3 | |
-| a1_embed+LLM | 51 | 12.7 | 7.0/8 | 0.0 | best composite, but still drops ~1 beat |
+| a1_embed+LLM | **51** | 12.7 | 7.0/8 | 0.0 | best composite, but still drops ~1 beat |
+| a2_focused+LLM | 50 | 13.3 | 7.0/8 | 0.3 | focusing LLM lifted cov 5.0→7.0 |
+| a1a2+LLM | 42 | 9.0 | 5.0/8 | 0.0 | dedup+focused LLM OVER-cuts (compounds) |
+| a8_safe+LLM | _running_ | | | | coverage-preserving veto — target 8/8 |
 
 **THE core problem is the LLM**, not the deterministic layer: given all 66 segments
 it is so aggressive/inconsistent it CUTS WHOLE BEATS (loses real content). baseline
