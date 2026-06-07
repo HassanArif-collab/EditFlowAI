@@ -50,7 +50,16 @@ Scoreboard WITH the LLM (avg of 3 runs, fixture jawaid_66seg):
 | a1_embed+LLM | **51** | 12.7 | 7.0/8 | 0.0 | best composite, but still drops ~1 beat |
 | a2_focused+LLM | 50 | 13.3 | 7.0/8 | 0.3 | focusing LLM lifted cov 5.0→7.0 |
 | a1a2+LLM | 42 | 9.0 | 5.0/8 | 0.0 | dedup+focused LLM OVER-cuts (compounds) |
-| a8_safe+LLM | _running_ | | | | coverage-preserving veto — target 8/8 |
+| **a8_safe+LLM** | **66.7** | 14.0 | **8.0/8** | **0.0** | **OVERALL WINNER** — full coverage every run, no dups, low frag |
+
+## 🏆 VERDICT
+**A8 (`a8_safe`) wins decisively: composite 66.7 vs shipped baseline 38.**
+= A1 embedding+token dedup  →  coverage-preserving LLM refine (the LLM may cut a
+segment ONLY if it's a fragment or has a semantically-similar kept neighbour;
+unique content is vetoed). Result: **8/8 beats kept every run** (no content loss,
+the baseline's worst flaw), **0 duplicate pairs**, fragments trimmed.
+Ranking (+LLM composite): a8_safe 66.7 ≫ a1_embed 51 ≈ a2_focused 50 > a7/a1a2 42 > baseline 38.
+**NEXT:** integrate A8 into real code on branch `experiment/approach-embed-dedup`.
 
 **THE core problem is the LLM**, not the deterministic layer: given all 66 segments
 it is so aggressive/inconsistent it CUTS WHOLE BEATS (loses real content). baseline

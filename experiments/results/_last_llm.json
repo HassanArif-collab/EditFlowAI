@@ -1,0 +1,18 @@
+[
+  {
+    "kept": 14.0,
+    "covered_beats": 8.0,
+    "total_beats": 8.0,
+    "redundancy": 3.0,
+    "orphans": 1.33,
+    "fragments": 1.67,
+    "dup_pairs": 0.0,
+    "runtime_s": 60.6,
+    "elapsed_ms": 62038.2,
+    "composite": 66.67,
+    "missing_beats": [],
+    "_runs": 3,
+    "proposer": "a8_safe",
+    "fixture": "jawaid_66seg.json"
+  }
+]
