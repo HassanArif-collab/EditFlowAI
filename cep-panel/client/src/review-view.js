@@ -37,6 +37,7 @@ const S = {
   undo: [], redo: [],
   busy: false, aiAbort: null,
   prevView: null, _scribePending: false, _menuOpen: false, _modelPoll: null,
+  debug: false, lastTrace: null,
 };
 let _keysBound = false, _lastNow = null;
 
@@ -191,18 +192,22 @@ function _render(mediaError) {
         <span class="${S.layout === 'compact' ? 'on' : ''}" data-layout="compact" title="Compact">⊟</span>
         <span class="${S.layout === 'workspace' ? 'on' : ''}" data-layout="workspace" title="Workspace (wide)">⛶</span>
       </div>
+      <button class="rv-btn rv-ghost rv-tiny ${S.debug ? 'rv-on' : ''}" data-act="debugtoggle" title="Pipeline debug trace">🐞</button>
       <button class="rv-btn rv-ghost rv-tiny" data-act="reload">New</button>
       <button class="rv-btn rv-ghost rv-tiny" data-act="close">Close</button>
     </div>
     ${_controlsHtml(modelLabel)}
     <div id="rv-status" class="rv-status"></div>
-    <div id="rv-body" class="rv-body">${S.view === 'takes' ? _takesHtml() : _editHtml(mediaError)}</div>`;
+    <div id="rv-body" class="rv-body">${S.view === 'takes' ? _takesHtml() : _editHtml(mediaError)}</div>
+    ${S.debug ? _debugDrawerHtml() : ''}`;
 
   // header wiring
   v.querySelectorAll('[data-tab]').forEach(t => t.onclick = () => _switchTab(t.dataset.tab));
   v.querySelectorAll('[data-layout]').forEach(t => t.onclick = () => { S.layout = t.dataset.layout; _render(); });
   v.querySelector('[data-act="close"]').onclick = closeReview;
   v.querySelector('[data-act="reload"]').onclick = () => { S.reviewId = null; S.words = []; _renderSetup({}); };
+  v.querySelector('[data-act="debugtoggle"]').onclick = () => { S.debug = !S.debug; _render(); };
+  const dbgClose = v.querySelector('[data-act="debugclose"]'); if (dbgClose) dbgClose.onclick = () => { S.debug = false; _render(); };
   _wireControls();
   if (S.view === 'edit') _wireEdit(); else _wireTakes();
 }
@@ -621,9 +626,11 @@ async function _suggest() {
   _setStatus(status, useLlm ? `Marking junk + asking ${S.modelName || 'the model'} about off-script lines…` : 'Marking junk (retakes, filler, non-speech)…');
   try {
     S.aiAbort = new AbortController();
-    const resp = await _fetchJSON('/api/review/suggest', { review_id: S.reviewId, use_llm: useLlm }, S.aiAbort.signal, 300000);
+    const resp = await _fetchJSON('/api/review/suggest', { review_id: S.reviewId, use_llm: useLlm, debug: S.debug }, S.aiAbort.signal, 300000);
     if (resp.words) _setData(resp);
+    S.lastTrace = resp.trace || null;
     _afterMutate();
+    if (S.debug) _render();   // surface/refresh the trace drawer
     const su = resp.word_summary || {};
     _setStatus(status, `Suggested: keep ${su.kept_words ?? '?'} words in ${su.cuts ?? '?'} span(s)${resp.llm_used ? ' (AI refined)' : ''}.`);
   } catch (err) {
