@@ -102,3 +102,27 @@ def test_cluster_pairs_default_off_is_backward_compatible():
     # Called the old way (no pairs arg) — must still cluster, must not raise.
     clusters = _cluster_retakes(segs, 0.72)
     assert any(len(c) == 2 for c in clusters)
+
+
+from backend.services.review_service import classify  # noqa: E402
+
+
+def test_classify_with_trace_emits_all_stages_and_keeps_behaviour():
+    line = "میں نے چودہ ہزار کروڑ لگائے ایک ٹیک سٹارٹ اپ میں"
+    segs = [_seg(0, line), _seg(1, line), _seg(2, "umm")]
+    t = ReviewTrace()
+    classify(segs, "", trace=t)
+    names = [s["stage"] for s in t.to_dict()["stages"]]
+    assert names == ["junk", "cluster", "script"]
+    # behaviour identical to the no-trace path: filler cut, first retake cut, last kept
+    assert segs[2].decision == "cut" and segs[2].reason == "filler"
+    assert segs[0].decision == "cut" and segs[1].decision == "keep"
+    cluster = next(s for s in t.to_dict()["stages"] if s["stage"] == "cluster")
+    assert cluster["clusters"] and cluster["clusters"][0]["winner_id"] == 1
+
+
+def test_classify_without_trace_unchanged():
+    line = "میں نے چودہ ہزار کروڑ لگائے ایک ٹیک سٹارٹ اپ میں"
+    segs = [_seg(0, line), _seg(1, line)]
+    classify(segs, "")           # no trace kwarg — old call site
+    assert segs[0].decision == "cut" and segs[1].decision == "keep"

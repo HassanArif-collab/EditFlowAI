@@ -43,6 +43,8 @@ import unicodedata
 from dataclasses import asdict, dataclass, field
 from typing import Iterable, Optional
 
+from .review_trace import ReviewTrace, cluster_stage, junk_stage, script_stage
+
 logger = logging.getLogger(__name__)
 
 
@@ -624,6 +626,7 @@ def classify(
     retake_threshold: float = 0.72,
     script_threshold: float = 0.5,
     min_duration: float = 0.4,
+    trace: ReviewTrace | None = None,
 ) -> list[Segment]:
     """Deterministic keep/cut proposal. Mutates and returns ``segments``.
 
@@ -657,8 +660,12 @@ def classify(
         elif dur < min_duration:
             seg.decision, seg.reason = "cut", "too_short"
 
+    if trace is not None:
+        trace.add(junk_stage(segments))
+
     # 4: retakes — keep the last clean member of each cluster.
-    for gid, members in enumerate(_cluster_retakes(segments, retake_threshold)):
+    _pairs: list[dict] | None = [] if trace is not None else None
+    for gid, members in enumerate(_cluster_retakes(segments, retake_threshold, _pairs)):
         if len(members) < 2:
             continue
         kept = members[-1]
@@ -669,12 +676,17 @@ def classify(
                 segments[m].decision = "cut"
                 segments[m].reason = f"retake_of:#{kept}"
 
+    if trace is not None:
+        trace.add(cluster_stage(_pairs or [], segments))
+
     # 5: script match — same-language only.
     lines = _script_lines(script)
+    _matches: list[dict] = []
+    _same_language: bool | None = None
     if lines:
         transcript_blob = " ".join(s.text for s in segments)
-        same_language = _dominant_script(transcript_blob) == _dominant_script(script)
-        if same_language:
+        _same_language = _dominant_script(transcript_blob) == _dominant_script(script)
+        if _same_language:
             norm_lines = [_normalize(ln) for ln in lines]
             for seg in segments:
                 if seg.decision != "keep":
@@ -685,10 +697,18 @@ def classify(
                     sc = _ratio(ns, nl)
                     if sc > best_score:
                         best_i, best_score = i, sc
-                if best_score >= script_threshold:
+                cut = best_score < script_threshold
+                if not cut:
                     seg.script_line = lines[best_i]
                 else:
                     seg.decision, seg.reason = "cut", "not_in_script"
+                if trace is not None:
+                    _matches.append({
+                        "id": seg.id,
+                        "best_line": (lines[best_i] if best_i >= 0 else ""),
+                        "score": round(best_score, 3),
+                        "cut": cut,
+                    })
         else:
             logger.info(
                 "review.classify: transcript/script differ in writing system "
@@ -696,6 +716,8 @@ def classify(
                 "Gemma/human.",
                 _dominant_script(transcript_blob), _dominant_script(script),
             )
+    if trace is not None:
+        trace.add(script_stage(bool(lines), _same_language, _matches))
     return segments
 
 
