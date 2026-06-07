@@ -652,13 +652,40 @@ clipManager = (function() {
 
     function createSequenceFromOps(options) {
         var name = editflowUtils.getParam(options, 'name') || "EditFlow Cut";
-        try {
-            var seqID = name + '-' + new Date().getTime();
-            var newSeq = app.project.createNewSequence(name, seqID);
-            return { success: true, name: name, id: newSeq.sequenceID };
-        } catch (e) {
-            return { success: false, error: e.toString() };
+        // The source clip path lets us build a sequence whose settings MATCH the
+        // footage, so the "New Sequence" preset dialog never has to pop (spec §8.4).
+        var clipPath = editflowUtils.getParam(options, 'preset_from_clip_path', 'presetFromClipPath');
+        var presetPath = editflowUtils.getParam(options, 'presetPath', 'preset');
+        var seqID = name + '-' + new Date().getTime();
+        var newSeq = null;
+
+        // Pre-import the source clip so Premiere can match its format (and so the
+        // clip is already in the project before we add cuts).
+        var clipItem = null;
+        if (clipPath) { try { clipItem = ensureProjectItemForPath(clipPath); } catch (e) {} }
+
+        // 1) Explicit .sqpreset path → 3-arg createNewSequence, no dialog.
+        if (presetPath) {
+            try { newSeq = app.project.createNewSequence(name, seqID, presetPath); } catch (e) { newSeq = null; }
         }
+        // 2) Build a sequence directly from the source clip — matches its settings
+        //    and skips the dialog. API name varies by build, so feature-detect.
+        if (!newSeq && clipItem) {
+            try {
+                if (typeof app.project.createNewSequenceFromClips === 'function') {
+                    newSeq = app.project.createNewSequenceFromClips(name, [clipItem]);
+                }
+            } catch (e) { newSeq = null; }
+        }
+        // 3) Fallback: default 2-arg create (may show the preset dialog on builds
+        //    without the APIs above).
+        if (!newSeq) {
+            try { newSeq = app.project.createNewSequence(name, seqID); }
+            catch (e) { return { success: false, error: e.toString() }; }
+        }
+
+        try { return { success: true, name: name, id: newSeq.sequenceID }; }
+        catch (e) { return { success: true, name: name }; }
     }
 
     function addMarkerToSequence(seq, options) {

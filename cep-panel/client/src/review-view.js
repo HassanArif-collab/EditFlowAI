@@ -27,12 +27,16 @@ const S = {
   video: null, canvas: null,
   view: 'edit',            // 'edit' | 'takes'
   layout: 'compact',       // 'compact' | 'workspace'
-  videoVisible: true,
+  videoVisible: true,      // docked video pane shown
+  videoFloating: false,    // video popped out to a floating PiP
+  floatRect: null,         // {left,top,width,height} — persists for the session
+  leftWidth: null,         // workspace left-column width (px) — persists
+  videoHeight: null,       // docked video pane height (px) — persists
   playMode: 'idle', planRanges: [], planIdx: 0,
   focusId: null,
   undo: [], redo: [],
   busy: false, aiAbort: null,
-  prevView: null, _scribePending: false, _menuOpen: false,
+  prevView: null, _scribePending: false, _menuOpen: false, _modelPoll: null,
 };
 let _keysBound = false, _lastNow = null;
 
@@ -48,10 +52,16 @@ function openReview(opts = {}) {
   view.classList.remove('hidden');
   if (S.reviewId && S.words.length) _render(); else _renderSetup(opts);
   _bindKeys();
+  // Lightweight poll so a model switched in Settings updates the label live.
+  if (!S._modelPoll) S._modelPoll = setInterval(() => {
+    const el = $('#review-view'); if (!el || el.classList.contains('hidden') || document.hidden) return;
+    _refreshModelLabel();
+  }, 15000);
 }
 function closeReview() {
   $('#review-view')?.classList.add('hidden');
   try { S.video?.pause(); } catch (_) {}
+  if (S._modelPoll) { clearInterval(S._modelPoll); S._modelPoll = null; }
   S.playMode = 'idle';
   const hero = $('#hero'), chat = $('#chat-scroll'), footer = $('#app-footer');
   if (S.prevView) {
@@ -234,6 +244,14 @@ function _wireControls() {
   on('[data-act="cleanup"]', _toggleCleanMenu);
   document.querySelectorAll('#rv-cleanmenu [data-clean]').forEach(d => d.onclick = () => { _quickCut(d.dataset.clean); _toggleCleanMenu(false); });
   _updateReadout();
+  _refreshModelLabel();   // live model name on every toolbar mount
+}
+// Re-fetch the active model and update the label in place (no full re-render).
+function _refreshModelLabel() {
+  _fetchModelName().then(m => {
+    if (m) S.modelName = m;
+    const ml = $('#rv-modellabel'); if (ml) ml.textContent = S.modelName ? `Use AI (${S.modelName})` : 'Use AI';
+  }).catch(() => {});
 }
 function _toggleCleanMenu(force) {
   const m = $('#rv-cleanmenu'); if (!m) return;
@@ -243,39 +261,85 @@ function _toggleCleanMenu(force) {
 
 // ── EDIT view ────────────────────────────────────────────────
 function _editHtml(mediaError) {
-  const videoPanel = `<div class="rv-pane rv-videopane" id="rv-videopane">
+  // ONE <video id="rv-video"> element: it lives in the docked pane normally, or
+  // in the floating PiP when popped out. The waveform stays docked either way so
+  // the playhead is always reachable (spec §3).
+  // The video + its centred play/pause button. Used docked or floating.
+  const videoBlock = `<div class="rv-vidwrap" id="rv-vidwrap"><video id="rv-video" preload="auto" playsinline></video><button class="rv-vidplay" data-act="vidplay" title="Play / pause (Space)">▶</button></div>`;
+  const dockedBody = !S.mediaUrl
+    ? `<div class="rv-novideo">No preview${mediaError ? ' — ' + _esc(mediaError) : ''}.</div>`
+    : (S.videoFloating ? `<div class="rv-novideo rv-poppednote">Video popped out.</div>` : videoBlock);
+  const vh = S.videoHeight ? ` style="height:${S.videoHeight}px;flex:none"` : '';
+  const videoPanel = `<div class="rv-pane rv-videopane" id="rv-videopane"${vh}>
       <div class="rv-ptab"><span class="rv-pname">Video</span><span class="rv-pmeta">${_esc(S.sourceName)}</span>
-        <span class="rv-pacts"><span data-act="hidevideo" title="Hide video">👁</span></span></div>
-      ${S.mediaUrl ? `<video id="rv-video" preload="auto" playsinline></video>` : `<div class="rv-novideo">No preview${mediaError ? ' — ' + _esc(mediaError) : ''}.</div>`}
+        <span class="rv-pacts">${S.mediaUrl ? `<span data-act="popvideo" title="Pop out to floating window">⤢</span>` : ''}<span data-act="hidevideo" title="Hide video">✕</span></span></div>
+      ${dockedBody}
       <canvas id="rv-wave" class="rv-wave" height="40"></canvas>
     </div>`;
+  const floatPane = (S.videoFloating && S.mediaUrl) ? `<div class="rv-float" id="rv-float">
+      <div class="rv-floathead" id="rv-floathead"><span class="rv-pname">Video</span><span class="rv-pmeta">${_esc(S.sourceName)}</span>
+        <span class="rv-pacts"><span data-act="dockvideo" title="Dock back">⤡</span><span data-act="hidevideo" title="Hide video">✕</span></span></div>
+      ${videoBlock}
+      <div class="rv-floatgrip" data-act="floatresize" title="Resize"></div>
+    </div>` : '';
   const transcriptPanel = `<div class="rv-pane rv-transcriptpane"><div class="rv-ptab"><span class="rv-pname">Transcript</span><span class="rv-pmeta">${S.words.length} words</span></div>
       <div id="rv-doc" class="rv-doc"></div></div>`;
   const showVideoChip = !S.videoVisible ? `<button class="rv-chip" data-act="showvideo">▸ Show video</button>` : '';
   if (S.layout === 'workspace') {
+    const lw = S.leftWidth ? ` style="width:${S.leftWidth}px"` : '';
     return `<div class="rv-work">
-      <div class="rv-left" id="rv-left">
+      <div class="rv-left" id="rv-left"${lw}>
         ${S.videoVisible ? videoPanel : ''}
-        <div class="rv-hsplit" data-split="row"></div>
+        ${S.videoVisible ? '<div class="rv-hsplit" data-split="row"></div>' : ''}
         ${_planHtml()}
       </div>
       <div class="rv-vsplit" data-split="col"></div>
       <div class="rv-right">${transcriptPanel}</div>
-    </div>${showVideoChip}`;
+    </div>${showVideoChip}${floatPane}`;
   }
-  // compact
-  return `${S.videoVisible ? videoPanel : showVideoChip}${transcriptPanel}`;
+  // compact — video, a drag handle to resize it, then the transcript
+  return `${S.videoVisible ? videoPanel + '<div class="rv-hsplit" data-split="row"></div>' : showVideoChip}${transcriptPanel}${floatPane}`;
 }
 function _wireEdit() {
   S.video = $('#rv-video');
-  if (S.video) { S.video.src = S.mediaUrl; S.video.ontimeupdate = _onTime; S.video.onseeked = _onTime; }
+  if (S.video) { S.video.src = S.mediaUrl; S.video.ontimeupdate = _onTime; S.video.onseeked = _onTime; S.video.onplay = _syncPlayUI; S.video.onpause = _syncPlayUI; S.video.onclick = _playPause; }
+  document.querySelectorAll('[data-act="vidplay"]').forEach(b => b.onclick = (e) => { e.stopPropagation(); _playPause(); });
+  _syncPlayUI();
   S.canvas = $('#rv-wave'); _bindWaveform();
-  const hv = document.querySelector('[data-act="hidevideo"]'); if (hv) hv.onclick = () => { S.videoVisible = false; _render(); };
+  document.querySelectorAll('[data-act="hidevideo"]').forEach(el => el.onclick = () => { S.videoVisible = false; S.videoFloating = false; _render(); });
   const sv = document.querySelector('[data-act="showvideo"]'); if (sv) sv.onclick = () => { S.videoVisible = true; _render(); };
+  const pop = document.querySelector('[data-act="popvideo"]'); if (pop) pop.onclick = () => { S.videoFloating = true; _render(); };
+  const dock = document.querySelector('[data-act="dockvideo"]'); if (dock) dock.onclick = () => { S.videoFloating = false; _render(); };
+  _bindFloat();
   _renderWords(); _bindDocEvents();
   _bindSplitters();
   _bindPlanBox();
   _updateReadout();
+}
+// Floating PiP: drag by the header, resize by the corner grip. Geometry persists
+// for the session in S.floatRect.
+function _bindFloat() {
+  const fl = $('#rv-float'); if (!fl) return;
+  const r = S.floatRect;
+  if (r) { fl.style.left = r.left + 'px'; fl.style.top = r.top + 'px'; fl.style.width = r.width + 'px'; fl.style.height = r.height + 'px'; }
+  const save = () => { S.floatRect = { left: parseInt(fl.style.left) || 0, top: parseInt(fl.style.top) || 0, width: fl.offsetWidth, height: fl.offsetHeight }; };
+  const head = $('#rv-floathead');
+  if (head) head.onmousedown = (e) => {
+    if (e.target.closest('[data-act]')) return;   // let the dock/hide buttons work
+    e.preventDefault();
+    const sx = e.clientX, sy = e.clientY, ox = fl.offsetLeft, oy = fl.offsetTop;
+    const move = (ev) => { fl.style.left = Math.max(0, ox + ev.clientX - sx) + 'px'; fl.style.top = Math.max(0, oy + ev.clientY - sy) + 'px'; };
+    const up = () => { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); save(); };
+    document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
+  };
+  const grip = fl.querySelector('[data-act="floatresize"]');
+  if (grip) grip.onmousedown = (e) => {
+    e.preventDefault(); e.stopPropagation();
+    const sx = e.clientX, sy = e.clientY, sw = fl.offsetWidth, sh = fl.offsetHeight;
+    const move = (ev) => { fl.style.width = Math.max(160, sw + ev.clientX - sx) + 'px'; fl.style.height = Math.max(120, sh + ev.clientY - sy) + 'px'; };
+    const up = () => { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); save(); };
+    document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
+  };
 }
 
 // ── Plan box (workspace) ─────────────────────────────────────
@@ -308,7 +372,7 @@ function _renderPlanList() {
     const txt = S.words.filter(w => w.keep && w.start >= r[0] - 0.01 && w.end <= r[1] + 0.01).map(w => w.text).join(' ').slice(0, 60);
     return `<div class="rv-planrow" data-seek="${r[0]}"><span class="rv-tc">${_fmtDur(r[0])}</span><span class="rv-txt">${_esc(txt)}</span></div>`;
   }).join('') || '<div class="rv-dim" style="padding:8px">No cuts yet — select words to cut.</div>';
-  el.querySelectorAll('[data-seek]').forEach(d => d.onclick = () => { if (S.video) { try { S.video.currentTime = parseFloat(d.dataset.seek); S.video.play(); } catch (_) {} } });
+  el.querySelectorAll('[data-seek]').forEach(d => d.onclick = () => { if (S.video) { try { S.video.currentTime = parseFloat(d.dataset.seek); } catch (_) {} _play(); } });
 }
 async function _applyPastedPlan() {
   const txt = ($('#rv-plan-text')?.value || '').trim(); const status = $('#rv-status');
@@ -334,10 +398,13 @@ function _beats() {
 }
 function _segWords(segId) { return S.words.filter(w => w.segment_id === segId); }
 function _quality(seg) {
+  // Intrinsic quality of THIS take so takes in a multi-take beat are comparable.
+  // (Do NOT tag every group member 'repeat' just for sharing a group_id — that
+  // hid the clean take, the one you need to pick.)
   const t = (seg.text || '').trim();
   if (t.endsWith('--')) return 'false start';
-  if ((seg.reason || '').startsWith('retake') || seg.group_id >= 0) return 'repeat';
   if (t.length < 6) return 'stumble';
+  if ((seg.reason || '').startsWith('retake')) return 'repeat';
   return 'clean';
 }
 function _winnerSegId(beat) {
@@ -373,7 +440,7 @@ function _wireTakes() {
     if (e.target.closest('[data-playseg]')) return;
     _pickTake(Number(row.dataset.seg));
   });
-  document.querySelectorAll('[data-playseg]').forEach(b => b.onclick = (e) => { e.stopPropagation(); const seg = S.segments.find(s => s.id === Number(b.dataset.playseg)); if (seg && S.video) { try { S.video.currentTime = seg.start; S.video.play(); } catch (_) {} } });
+  document.querySelectorAll('[data-playseg]').forEach(b => b.onclick = (e) => { e.stopPropagation(); const seg = S.segments.find(s => s.id === Number(b.dataset.playseg)); if (seg && S.video) { try { S.video.currentTime = seg.start; } catch (_) {} _play(); } });
   document.querySelectorAll('[data-fine]').forEach(d => d.onclick = () => { const segId = Number(d.dataset.fine); S.view = 'edit'; _render(); const w = S.words.find(x => x.segment_id === segId); if (w) { _markNow(w.id); document.querySelector(`.rv-w[data-id="${w.id}"]`)?.scrollIntoView({ block: 'center' }); } });
 }
 function _pickTake(segId) {
@@ -396,9 +463,13 @@ function _renderWords() {
   let html = '', cur = -1;
   for (const w of S.words) {
     if (w.segment_id !== cur) { if (cur !== -1) html += '</p>'; html += '<p class="rv-para">'; cur = w.segment_id; }
-    const cls = ['rv-w', w.keep ? '' : 'rv-w-cut'].join(' ').trim();
+    // Latin tokens (English words, F6, tech…) are isolated LTR islands so they
+    // don't reorder the surrounding RTL Urdu (spec §5). The paragraph base stays
+    // RTL even when the first token is English — that was the line-flip bug.
+    const isEn = /[A-Za-z]/.test(w.text || '');
+    const cls = ['rv-w', w.keep ? '' : 'rv-w-cut', isEn ? 'rv-en' : ''].join(' ').replace(/\s+/g, ' ').trim();
     const title = (!w.keep && w.reason) ? ` title="${_esc(_reason(w.reason))}"` : '';
-    html += `<span class="${cls}" data-id="${w.id}"${title}>${_esc(w.text)}</span> `;
+    html += `<span class="${cls}" data-id="${w.id}"${isEn ? ' dir="ltr"' : ''}${title}>${_esc(w.text)}</span> `;
   }
   if (cur !== -1) html += '</p>';
   doc.innerHTML = html || '<p class="rv-dim" style="padding:12px">No words.</p>';
@@ -426,14 +497,29 @@ function _bindDocEvents() {
 }
 
 // ── Playback + karaoke ───────────────────────────────────────
-function _seekWord(id, play) { const w = S.byId.get(id); if (!w || !S.video) return; S.playMode = 'original'; S.focusId = id; try { S.video.currentTime = w.start; if (play) S.video.play(); } catch (_) {} _markNow(id); }
-function _playPause() { if (!S.video) return; if (S.video.paused) { S.playMode = 'original'; S.video.play(); } else { S.video.pause(); S.playMode = 'idle'; } }
-function _mergedKeptRanges() { const r = []; let c = null; for (const w of S.words) { if (w.keep) { if (c) c[1] = w.end; else c = [w.start, w.end]; } else if (c) { r.push(c); c = null; } } if (c) r.push(c); return r; }
-function _playPlan() { if (!S.video) return; S.planRanges = _mergedKeptRanges(); if (!S.planRanges.length) { _setStatus($('#rv-status'), 'Nothing kept to preview.', true); return; } S.planIdx = 0; S.playMode = 'plan'; try { S.video.currentTime = S.planRanges[0][0]; S.video.play(); } catch (_) {} }
+// play() returns a promise that rejects ("interrupted by a call to pause()")
+// when we seek/pause/reload before it resolves — benign, so swallow it here and
+// stop it reaching the global error banner.
+function _play() { const v = S.video; if (!v) return; try { const p = v.play(); if (p && p.catch) p.catch(() => {}); } catch (_) {} }
+function _seekWord(id, play) { const w = S.byId.get(id); if (!w || !S.video) return; S.playMode = 'original'; S.focusId = id; try { S.video.currentTime = w.start; } catch (_) {} if (play) _play(); _markNow(id); }
+function _playPause() { if (!S.video) return; if (S.video.paused) { S.playMode = 'original'; _play(); } else { try { S.video.pause(); } catch (_) {} S.playMode = 'idle'; } _syncPlayUI(); }
+function _syncPlayUI() {
+  const playing = S.video && !S.video.paused;
+  const pp = document.querySelector('[data-act="playpause"]'); if (pp) pp.textContent = playing ? '❚❚' : '▶';
+  document.querySelectorAll('[data-act="vidplay"]').forEach(b => b.textContent = playing ? '❚❚' : '▶');
+  const wrap = $('#rv-vidwrap'); if (wrap) wrap.classList.toggle('playing', !!playing);
+}
+// Merge kept words into ranges the SAME way the backend `words_to_cuts` does, so
+// the preview/readout match the actual build: index-consecutive (a cut word
+// closes the range) AND within RV_MAX_GAP seconds — a longer pause between two
+// kept words is dead air the build drops, so it starts a new range here too.
+const RV_MAX_GAP = 0.35; // keep in sync with words_to_cuts(max_gap) in review_service.py
+function _mergedKeptRanges() { const r = []; let c = null; for (const w of S.words) { if (w.keep) { if (c && (w.start - c[1]) <= RV_MAX_GAP) c[1] = w.end; else { if (c) r.push(c); c = [w.start, w.end]; } } else if (c) { r.push(c); c = null; } } if (c) r.push(c); return r; }
+function _playPlan() { if (!S.video) return; S.planRanges = _mergedKeptRanges(); if (!S.planRanges.length) { _setStatus($('#rv-status'), 'Nothing kept to preview.', true); return; } S.planIdx = 0; S.playMode = 'plan'; try { S.video.currentTime = S.planRanges[0][0]; } catch (_) {} _play(); }
 function _onTime() {
   if (!S.video) return; const t = S.video.currentTime;
   const tEl = $('#rv-time'); if (tEl) tEl.textContent = _fmtDur(t);
-  const pp = document.querySelector('[data-act="playpause"]'); if (pp) pp.textContent = S.video.paused ? '▶' : '❚❚';
+  _syncPlayUI();
   if (S.playMode === 'plan') { const r = S.planRanges[S.planIdx]; if (r && t >= r[1] - 0.02) { S.planIdx++; if (S.planIdx < S.planRanges.length) { try { S.video.currentTime = S.planRanges[S.planIdx][0]; } catch (_) {} } else { try { S.video.pause(); } catch (_) {} S.playMode = 'idle'; } } }
   _markNow(); _drawPlayhead();
 }
@@ -473,8 +559,8 @@ function _startDrag(e, kind) {
   e.preventDefault();
   const left = $('#rv-left'); const vp = $('#rv-videopane');
   const move = (ev) => {
-    if (kind === 'col' && left) { const w = Math.max(220, Math.min(640, ev.clientX - left.getBoundingClientRect().left)); left.style.width = w + 'px'; }
-    if (kind === 'row' && vp) { const h = Math.max(120, Math.min(420, ev.clientY - vp.getBoundingClientRect().top)); vp.style.height = h + 'px'; vp.style.flex = 'none'; _sizeCanvas(); _drawWaveform(); }
+    if (kind === 'col' && left) { const w = Math.max(220, Math.min(720, ev.clientX - left.getBoundingClientRect().left)); left.style.width = w + 'px'; S.leftWidth = w; }
+    if (kind === 'row' && vp) { const h = Math.max(120, Math.min(520, ev.clientY - vp.getBoundingClientRect().top)); vp.style.height = h + 'px'; vp.style.flex = 'none'; S.videoHeight = h; _sizeCanvas(); _drawWaveform(); }
   };
   const up = () => { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); };
   document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
@@ -543,7 +629,7 @@ async function _applyPlanId(planId, status) {
   _setStatus(status, 'Placing clips in Premiere…');
   const applyResult = await apiPost(`/api/edit/plan/${planId}/apply`, {}, { timeoutMs: 120000 });
   const ops = applyResult.extendscript_ops || []; const seqName = applyResult.target_sequence_name || 'EditFlow Cut';
-  if (isExtendScriptAvailable()) { await callExtendScript('processEDL', JSON.stringify({ ops })); _setStatus(status, `Done — "${seqName}" is in your project (click OK if a New Sequence dialog appears).`); }
+  if (isExtendScriptAvailable()) { await callExtendScript('processEDL', JSON.stringify({ ops })); _setStatus(status, `Done — "${seqName}" is in your project.`); }
   else _setStatus(status, `Plan built (${ops.length} ops). Open the panel inside Premiere to place clips.`);
 }
 
@@ -566,6 +652,11 @@ function _bindKeys() {
     else if ((e.ctrlKey || e.metaKey) && (k === 'z' || k === 'Z') && !e.shiftKey) { e.preventDefault(); _undo(); }
     else if ((e.ctrlKey || e.metaKey) && (k === 'y' || k === 'Y' || ((k === 'z' || k === 'Z') && e.shiftKey))) { e.preventDefault(); _redo(); }
     else if (k === 'Escape') { window.getSelection()?.removeAllRanges(); }
+  });
+  // Returning to the panel (tab/app refocus) should freshen the model label.
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) return;
+    const v = $('#review-view'); if (v && !v.classList.contains('hidden')) _refreshModelLabel();
   });
 }
 async function _fetchJSON(path, body, signal, timeoutMs) {

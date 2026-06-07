@@ -107,9 +107,23 @@ Cut apply backbone (reused by EVERY path — don't reinvent):
 > winner, coverage) · **video show/hide** · **Clean-up ▾ menu** (now actually cuts
 > fillers/[non-speech]/`--`) · **Suggest progress + Cancel** + **live model label**
 > (showed `minimax-m2.5:cloud`) · native-selection editing · Nastaliq · one-Play +
-> Preview-cut-disabled. **Still ⬜:** "New Sequence" preset-dialog suppression
-> (ExtendScript — needs Premiere to test), Nastaliq **offline bundling** (loads via
-> web font today), and the optional `review-view.js` **module split**.
+> Preview-cut-disabled.
+>
+> **UPDATE 2 — gap-closing pass (2026-06-07):** added the **floating pop-out PiP**
+> (drag + resize, geometry persists — completes the "all three" video modes) ·
+> **live model label** now also **polls (15s) + refreshes on tab focus**, not just
+> on load/Suggest · client `_mergedKeptRanges` now uses the **same `max_gap=0.35`
+> as the backend** so the **preview + runtime readout match the build** (no more
+> counting dead air) · **Takes quality tag** no longer marks every group member
+> `repeat` (shows real clean/false-start/stumble so you can pick) · **Nastaliq
+> bundled offline** (`styles/fonts.css` → `fonts/*.woff2`, CDN `<link>` removed
+> from `cep-loader.html`) · **"New Sequence" dialog** suppression wired in
+> ExtendScript (`createSequenceFromOps` pre-imports the clip + 3-arg preset /
+> clip-matched create with safe fallback — **needs a 30-sec confirm inside
+> Premiere**, can't be exercised outside it).
+>
+> **Still ⬜ (deliberately):** optional `review-view.js` **module split** (§10) —
+> pure refactor, zero user-visible change, higher risk than value; deferred.
 
 > Approved design: `../superpowers/specs/2026-06-06-review-panel-redesign-design.md`.
 > Mockups: `index`(layout) `2-editing`(selection — **working JS to copy**) `3-font`

@@ -17,9 +17,9 @@
     fetched through CORS-friendly origins rather than file://.
   -->
   <base href="http://127.0.0.1:8765/panel/">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Noto+Nastaliq+Urdu:wght@400;700&family=Noto+Sans+Arabic:wght@400;600&display=swap" rel="stylesheet">
+  <!-- Noto Nastaliq Urdu is bundled locally (styles/fonts.css → fonts/*.woff2)
+       so Urdu renders even when CEP is offline. No Google Fonts CDN at runtime. -->
+  <link rel="stylesheet" href="styles/fonts.css?v=20260607">
   <link rel="stylesheet" href="styles/chat.css?v=20260606c">
   <title>EditFlow AI</title>
 </head>
