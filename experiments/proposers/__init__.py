@@ -4,8 +4,12 @@ from .a7_trim import a7_trim
 from .a1_embed import a1_embed
 from .a2_focused import a2_focused, a1a2
 from .a8_safe import a8_safe
+from .a5_script import a5_script
+from .a5_llm_script import a5_llm_script
 
 REGISTRY = {
+    "a5_script": a5_script,
+    "a5_llm_script": a5_llm_script,
     "baseline": baseline,
     "a7_trim": a7_trim,
     "a1_embed": a1_embed,
