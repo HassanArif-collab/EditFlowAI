@@ -54,7 +54,11 @@ from ..utils.progress import ProgressReporter
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/review", tags=["review"])
 
-_SUGGEST_MAX_TOKENS = 1500  # decisions reply budget; the trace reports this so a truncated reply is visible
+def _suggest_max_tokens(n_segments: int) -> int:
+    """Reply budget for the decisions JSON — scales with the transcript so the
+    model's reply never truncates (≈90 tokens per segment covers id+keep+reason),
+    with a sane floor and a ceiling so it can't run away."""
+    return min(16000, max(2000, n_segments * 90))
 
 # In-memory review sessions for this backend process. Each entry:
 #   { source_path, source_name, proxy_path, segments: list[Segment],
@@ -385,12 +389,13 @@ async def suggest(req: SuggestReq):
         decisions: dict = {}
         flips: list[dict] = []
         err: Optional[str] = None
+        max_tokens = _suggest_max_tokens(len(segments))
         try:
             from ..services.provider_service import provider_service
             raw = await provider_service.chat(
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.0,
-                max_tokens=_SUGGEST_MAX_TOKENS,
+                max_tokens=max_tokens,
             )
             text = (raw or {}).get("response") or ""
             decisions = parse_gemma_decisions(text, {s.id for s in segments})
@@ -408,7 +413,7 @@ async def suggest(req: SuggestReq):
             err = str(exc) or exc.__class__.__name__
             logger.warning("review.suggest: model refine skipped (%s)", err)
         if trace is not None:
-            trace.add(llm_stage(prompt, text, _SUGGEST_MAX_TOKENS,
+            trace.add(llm_stage(prompt, text, max_tokens,
                                 len(decisions), len(segments), flips, err))
 
     _propagate_to_words(rev)
