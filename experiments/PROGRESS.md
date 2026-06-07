@@ -10,10 +10,16 @@
 4. Backend for live testing: `python run.py --prod` (loads current code).
 
 ## Scoreboard (deterministic, fixture jawaid_66seg)
-| proposer | composite | kept | cov | redun | orphan | frag | dup |
-|---|---|---|---|---|---|---|---|
-| baseline | -44 | 21 | 8/8 | 5 | 4 | 4 | 2 |
+Composite = `covered_beats*10 - dup_pairs*12 - fragments*8` (higher = better).
+| proposer | composite | kept | cov | frag | dup | notes |
+|---|---|---|---|---|---|---|
+| baseline | 24 | 21 | 8/8 | 4 | 2 | current shipped pipeline |
+| a7_trim  | 24 | 20 | 8/8 | 4 | 2 | trims redundant `--` lines; safe but marginal |
 
+Deterministic headroom is small (baseline already covers all beats). The 4
+fragments that remain are *unique* false-starts (e.g. the "So…ہم--" intro) that
+can't be cut deterministically without risking content — those need the LLM.
+The 2 dup-pairs are SEMANTIC near-dups → target with embeddings (A1/A5).
 (LLM-on numbers live in `experiments/results/_last_llm.json`.)
 
 ## Log

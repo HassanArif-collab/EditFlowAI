@@ -85,8 +85,11 @@ def score(segments: list[Segment], elapsed_ms: float) -> dict:
         if min(len(set(ta)), len(set(tb))) >= 3 and _token_containment(ta, tb) >= 0.6:
             dup_pairs += 1
     runtime = sum((s.tight_out or s.end) - (s.tight_in or s.start) for s in kept)
-    # Composite (higher is better). Weights documented; consistent across approaches.
-    composite = (covered * 10) - (redundancy * 12) - (orphans * 6) - (fragments * 6) - (dup_pairs * 8)
+    # Composite (higher is better). Focused on the ROBUST signals: cover every beat
+    # (good), and minimise true near-duplicate kept pairs + fragments (bad). The
+    # beat-based `redundancy`/`orphans` are reported for insight but NOT weighted —
+    # a beat can legitimately span several consecutive segments, so they're noisy.
+    composite = (covered * 10) - (dup_pairs * 12) - (fragments * 8)
     return {
         "kept": len(kept), "covered_beats": covered, "total_beats": len(BEATS),
         "redundancy": redundancy, "orphans": orphans, "fragments": fragments,
