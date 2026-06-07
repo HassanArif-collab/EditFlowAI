@@ -548,20 +548,57 @@ def _ratio(a: str, b: str) -> float:
     return difflib.SequenceMatcher(None, a, b).ratio()
 
 
+def _tokens(text: str) -> list[str]:
+    """Normalized whitespace tokens of a segment (language-agnostic)."""
+    return _normalize(text).split()
+
+
+def _token_containment(a: list[str], b: list[str]) -> float:
+    """Fraction of the SMALLER token-set that also appears in the larger one.
+
+    This is what makes a short fragment ("income", "میں رہتا ہوں") match the full
+    line it was split from, and a rephrased retake match its sibling even when the
+    lead-in differs — cases a whole-string char ratio misses. Set-based, so word
+    order and repeats don't matter. Pure → unit-testable.
+    """
+    sa, sb = set(a), set(b)
+    if not sa or not sb:
+        return 0.0
+    smaller, larger = (sa, sb) if len(sa) <= len(sb) else (sb, sa)
+    return len(smaller & larger) / len(smaller)
+
+
+def _is_clean_take(text: str) -> bool:
+    """A take is 'clean' if it isn't a cut-off false start and isn't a 1-word
+    fragment. Used to pick the best (clean, latest) member of a retake cluster."""
+    t = (text or "").strip()
+    if "--" in t:                      # Scribe marks self-interrupts with --
+        return False
+    return len(_tokens(t)) >= 2
+
+
 def _cluster_retakes(
     segments: list[Segment],
     threshold: float,
     pairs: Optional[list[dict]] = None,
+    *,
+    containment: float = 0.8,
+    min_contain_tokens: int = 3,
 ) -> list[list[int]]:
     """Union-find clustering of near-duplicate segment texts (retakes).
 
-    Compares *normalized* text with a char-level ratio, which is language-
-    agnostic (works on Urdu code points just as well as Latin). Returns clusters
-    as lists of segment indices, each sorted ascending; singletons included.
+    Two signals, either one groups a pair:
+      1. whole-string char ratio >= ``threshold`` (length-guarded) — catches
+         near-identical takes.
+      2. token containment >= ``containment`` (NOT length-guarded) — catches a
+         shorter fragment or a rephrased retake whose words are mostly a subset
+         of the other, which the char ratio misses (e.g. "income کو دس گنا…"
+         said three different ways, or the bare fragment "میں رہتا ہوں").
+    Requires the smaller side to have >= ``min_contain_tokens`` tokens so tiny
+    fragments don't over-group (those are handled by the fragment rule instead).
 
-    When ``pairs`` is given, appends notable comparisons (length-guard skips of a
-    contained fragment, and any scored pair >= 0.4) so the debug drawer can show
-    why retakes did or didn't group.
+    Returns clusters as lists of segment indices (ascending; singletons included).
+    When ``pairs`` is given, appends notable comparisons for the debug drawer.
     """
     n = len(segments)
     parent = list(range(n))
@@ -586,25 +623,40 @@ def _cluster_retakes(
         })
 
     norms = [_normalize(s.text) for s in segments]
+    toks = [n.split() for n in norms]
     for i in range(n):
         if len(norms[i]) < 3:
             continue
         for j in range(i + 1, n):
             if len(norms[j]) < 3:
                 continue
-            # Cheap length guard before the O(k) ratio.
+            # Signal 2: token containment (not length-guarded — this is the one
+            # that catches fragments and rephrasings of different lengths).
+            smaller_n = min(len(set(toks[i])), len(set(toks[j])))
+            cont = _token_containment(toks[i], toks[j]) if smaller_n >= min_contain_tokens else 0.0
+            cont_ok = cont >= containment
+
+            # Signal 1: whole-string char ratio (length-guarded for cost).
             shorter, longer = sorted((len(norms[i]), len(norms[j])))
-            if longer and shorter / longer < 0.5:
-                if pairs is not None:
-                    si, li = (i, j) if len(norms[i]) <= len(norms[j]) else (j, i)
-                    if norms[si] and norms[si] in norms[li]:
-                        record(i, j, None, False, "length_guard")
-                continue
-            score = _ratio(norms[i], norms[j])
-            if pairs is not None and score >= 0.4:
-                record(i, j, score, score >= threshold, None)
-            if score >= threshold:
+            char_score: Optional[float] = None
+            if not (longer and shorter / longer < 0.5):
+                char_score = _ratio(norms[i], norms[j])
+            char_ok = char_score is not None and char_score >= threshold
+
+            grouped = char_ok or cont_ok
+            if grouped:
                 union(i, j)
+            if pairs is not None:
+                si, li = (i, j) if len(norms[i]) <= len(norms[j]) else (j, i)
+                contained = bool(norms[si]) and norms[si] in norms[li]
+                if grouped:
+                    shown = char_score if char_score is not None else round(cont, 3)
+                    record(i, j, shown, True, None)
+                elif char_score is None and contained:
+                    # length-guard skipped a contained fragment — show why it didn't group
+                    record(i, j, None, False, "length_guard")
+                elif (char_score is not None and char_score >= 0.4) or cont >= 0.5:
+                    record(i, j, char_score if char_score is not None else round(cont, 3), False, None)
 
     clusters: dict[int, list[int]] = {}
     for i in range(n):
@@ -663,21 +715,44 @@ def classify(
     if trace is not None:
         trace.add(junk_stage(segments))
 
-    # 4: retakes — keep the last clean member of each cluster.
+    # 4: retakes — keep the last CLEAN member of each cluster, cut the rest.
     _pairs: list[dict] | None = [] if trace is not None else None
     for gid, members in enumerate(_cluster_retakes(segments, retake_threshold, _pairs)):
         if len(members) < 2:
             continue
-        kept = members[-1]
+        # Default to the last take (usually the keeper), but skip a final take
+        # that's a false start / fragment in favour of the last clean one.
+        clean = [m for m in members if _is_clean_take(segments[m].text)]
+        kept = clean[-1] if clean else members[-1]
         for m in members:
             segments[m].group_id = gid
-        for m in members[:-1]:
-            if segments[m].decision == "keep":
+        for m in members:
+            if m != kept and segments[m].decision == "keep":
                 segments[m].decision = "cut"
                 segments[m].reason = f"retake_of:#{kept}"
 
     if trace is not None:
         trace.add(cluster_stage(_pairs or [], segments))
+
+    # 4b: orphan fragments — a very short kept line whose words are a subset of a
+    # neighbouring kept line is a split-off tail (e.g. "مجھے۔" split from the line
+    # before it). Cut it as ``fragment``. Tight bounds so real short lines survive.
+    _toks_all = [_tokens(s.text) for s in segments]
+    for idx, seg in enumerate(segments):
+        if seg.decision != "keep":
+            continue
+        st = set(_toks_all[idx])
+        if not st or len(st) > 3:
+            continue
+        # A lone short word ("مجھے۔", "گے۔") is a split-off grammatical tail.
+        if len(st) == 1 and len(next(iter(st))) <= 4:
+            seg.decision, seg.reason = "cut", "fragment"
+            continue
+        for nb in (idx - 1, idx + 1):
+            if 0 <= nb < len(segments) and segments[nb].decision == "keep":
+                if len(st & set(_toks_all[nb])) / len(st) >= 0.8:
+                    seg.decision, seg.reason = "cut", "fragment"
+                    break
 
     # 5: script match — same-language only.
     lines = _script_lines(script)

@@ -57,6 +57,43 @@ def test_retake_cluster_keeps_last_cuts_earlier():
     assert segs[0].group_id == segs[1].group_id != -1
 
 
+def test_containment_groups_rephrased_retake_and_keeps_clean_take():
+    # WHY: the user's real footage repeats a line three ways with different lead-ins;
+    # the whole-string char ratio misses it, so the same sentence survived twice.
+    # Token containment must group them, and keep-last-CLEAN must keep the clean
+    # earlier take over a later one that opens with a false start ('--').
+    clean = "تو اب ہم اپنی income کو دس گنا کر دیتے ہیں"
+    messy_later = "income کو-- اب ہم ہزار کروڑ کی income کو دس گنا کر دیتے ہیں"
+    segs = [_seg(0, clean, 0, 4), _seg(1, messy_later, 8, 12)]
+    classify(segs)
+    assert segs[0].group_id == segs[1].group_id != -1   # grouped despite char-ratio miss
+    assert segs[0].decision == "keep"                   # clean take kept
+    assert segs[1].decision == "cut"                    # later false-start take cut
+
+
+def test_lone_short_word_is_cut_as_fragment():
+    # WHY: Scribe splits trailing words ('مجھے۔', 'گے۔') into their own cue; a lone
+    # short word is a split-off grammatical tail, not a real line — it must be cut.
+    segs = [
+        _seg(0, "یعنی اپنی total income پہ میں دو فیصد ٹیکس دوں گا", 0, 3),
+        _seg(1, "مجھے", 3, 4),
+    ]
+    classify(segs)
+    assert segs[0].decision == "keep"
+    assert segs[1].decision == "cut" and segs[1].reason == "fragment"
+
+
+def test_real_short_distinct_line_is_not_cut_as_fragment():
+    # WHY: the fragment rule must not eat genuinely short, distinct lines. A short
+    # line that is NOT a subset of a neighbour and not a lone tiny word survives.
+    segs = [
+        _seg(0, "میں نے بہت محنت کی اس کام کے لیے", 0, 3),
+        _seg(1, "دو فیصد loan", 3, 5),     # 3 tokens, not a subset of neighbour
+    ]
+    classify(segs)
+    assert segs[1].decision == "keep"
+
+
 def test_cross_lingual_script_is_not_auto_cut():
     # Urdu transcript + English script → deterministic script-match is skipped,
     # so a clean Urdu line must remain KEEP (not 'not_in_script').
