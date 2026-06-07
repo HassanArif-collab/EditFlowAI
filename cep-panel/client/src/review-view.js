@@ -379,6 +379,57 @@ function _renderPlanList() {
   }).join('') || '<div class="rv-dim" style="padding:8px">No cuts yet — select words to cut.</div>';
   el.querySelectorAll('[data-seek]').forEach(d => d.onclick = () => { if (S.video) { try { S.video.currentTime = parseFloat(d.dataset.seek); } catch (_) {} _play(); } });
 }
+// ── Debug drawer (pipeline trace) ────────────────────────────
+function _debugDrawerHtml() {
+  const t = S.lastTrace;
+  const head = `<div class="rv-dbg-head">🐞 Pipeline trace<span class="rv-spacer"></span><button class="rv-btn rv-tiny" data-act="debugclose">hide</button></div>`;
+  if (!t || !t.stages || !t.stages.length) {
+    return `<div class="rv-debug">${head}<div class="rv-dbg-body"><i>Run <b>Suggest</b> with debug on to populate the trace.</i></div></div>`;
+  }
+  let body = '';
+  for (const st of t.stages) {
+    if (st.stage === 'junk') body += _dbgJunk(st);
+    else if (st.stage === 'cluster') body += _dbgCluster(st);
+    else if (st.stage === 'script') body += _dbgScript(st);
+    else if (st.stage === 'llm') body += _dbgLlm(st);
+    else if (st.stage === 'final') body += _dbgFinal(st);
+  }
+  return `<div class="rv-debug">${head}<div class="rv-dbg-body">${body}</div></div>`;
+}
+function _dbgJunk(st) {
+  const rows = (st.cut || []).map(c => `<div>#${c.id} <b>${_esc(c.reason)}</b> <span dir="auto">${_esc(c.text)}</span></div>`).join('') || '<i>nothing cut as junk</i>';
+  return `<details><summary>Junk — ${(st.cut || []).length} cut · ${st.kept_after_junk} kept</summary>${rows}</details>`;
+}
+function _dbgCluster(st) {
+  const clusters = (st.clusters || []).map(c =>
+    `<div class="rv-dbg-cl">group ${c.group_id} · winner #${c.winner_id}: ${c.members.map(m => `<span class="${m.decision === 'cut' ? 'rv-w-cut' : ''}">#${m.id}</span>`).join(', ')}</div>`
+  ).join('') || '<i>no retake groups formed</i>';
+  const pairs = (st.pairs || []).map(p => {
+    const cls = p.skipped ? 'rv-dbg-skip' : (p.clustered ? 'rv-dbg-hit' : 'rv-dbg-miss');
+    const result = p.skipped ? `SKIPPED (${p.skipped})` : (p.clustered ? 'grouped' : 'not grouped');
+    return `<tr class="${cls}"><td>#${p.a_id}</td><td class="rv-dbg-tx" dir="auto">${_esc(p.a_text)}</td><td>#${p.b_id}</td><td class="rv-dbg-tx" dir="auto">${_esc(p.b_text)}</td><td>${p.score == null ? '—' : p.score}</td><td>${result}</td></tr>`;
+  }).join('');
+  const tbl = pairs ? `<table class="rv-dbg-tbl"><tr><th>a</th><th>text</th><th>b</th><th>text</th><th>score</th><th>result</th></tr>${pairs}</table>` : '<i>no notable pairs</i>';
+  return `<details open><summary>Clustering — ${(st.clusters || []).length} groups · ${(st.pairs || []).length} notable pairs</summary>${clusters}${tbl}</details>`;
+}
+function _dbgScript(st) {
+  if (!st.enabled) return `<details><summary>Script match — no script provided</summary></details>`;
+  if (st.same_language === false) return `<details><summary>Script match — SKIPPED (different writing system)</summary><i>Transcript and script use different scripts, so no off-script cutting was done.</i></details>`;
+  const rows = (st.matches || []).map(m => `<div class="${m.cut ? 'rv-dbg-miss' : ''}">#${m.id} score ${m.score} ${m.cut ? '→ CUT (off-script)' : '→ kept'} <span dir="auto">${_esc(m.best_line || '')}</span></div>`).join('');
+  const cutCount = (st.matches || []).filter(m => m.cut).length;
+  return `<details><summary>Script match — ${cutCount} cut as off-script</summary>${rows}</details>`;
+}
+function _dbgLlm(st) {
+  const warn = st.truncated ? `<div class="rv-dbg-warn">⚠ Reply looks TRUNCATED — parsed ${st.parsed_count} of ${st.segment_count} segments at max_tokens=${st.max_tokens}. Raise the budget or chunk the request.</div>` : '';
+  const err = st.error ? `<div class="rv-dbg-warn">LLM error: ${_esc(st.error)}</div>` : '';
+  const flips = (st.flips || []).map(f => `#${f.id} (${_esc(f.reason)})`).join(', ') || 'none';
+  return `<details><summary>LLM — used:${st.used} · parsed ${st.parsed_count}/${st.segment_count} · ${st.response_chars} chars${st.truncated ? ' · TRUNCATED' : ''}</summary>${warn}${err}<div>Flipped keep→cut: ${flips}</div><details><summary>Prompt (${(st.prompt || '').length} chars)</summary><pre class="rv-dbg-pre">${_esc(st.prompt)}</pre></details><details><summary>Raw response (${st.response_chars} chars)</summary><pre class="rv-dbg-pre">${_esc(st.raw_response)}</pre></details></details>`;
+}
+function _dbgFinal(st) {
+  const rows = (st.segments || []).map(s => `<tr><td>#${s.id}</td><td>${_esc(s.decision)}</td><td>${_esc(s.decided_by)}</td><td class="rv-dbg-tx" dir="auto">${_esc((s.text || '').slice(0, 60))}</td></tr>`).join('');
+  return `<details><summary>Final decisions — ${(st.segments || []).length} segments</summary><table class="rv-dbg-tbl"><tr><th>id</th><th>decision</th><th>by</th><th>text</th></tr>${rows}</table></details>`;
+}
+
 async function _applyPastedPlan() {
   const txt = ($('#rv-plan-text')?.value || '').trim(); const status = $('#rv-status');
   if (!txt) { _setStatus(status, 'Paste a plan JSON first.', true); return; }

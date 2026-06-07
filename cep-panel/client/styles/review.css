@@ -368,3 +368,20 @@
 .q-falsestart, .q-repeat { background: rgba(242,91,91,.16); color: var(--error); }
 .q-stumble { background: rgba(224,179,74,.14); color: var(--warning); }
 .rv-finetrim { font-size: 10px; color: var(--accent-hover); padding: 0 0 8px 16px; cursor: pointer; }
+
+/* ── Debug drawer (pipeline trace) ───────────────────────────── */
+.rv-debug { flex-shrink: 0; max-height: 42vh; overflow: auto; border-top: 2px solid var(--accent); background: var(--bg-surface); font-size: 11px; }
+.rv-dbg-head { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--bg-elevated); border-bottom: 1px solid var(--border); font-weight: 600; color: var(--text-bright); }
+.rv-dbg-body { padding: 8px 10px; }
+.rv-dbg-body details { margin: 5px 0; border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; }
+.rv-dbg-body summary { cursor: pointer; color: var(--text-bright); }
+.rv-dbg-tbl { width: 100%; border-collapse: collapse; margin-top: 5px; }
+.rv-dbg-tbl th, .rv-dbg-tbl td { border: 1px solid var(--border); padding: 2px 5px; text-align: left; vertical-align: top; }
+.rv-dbg-tx { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rv-dbg-skip { background: rgba(242,91,91,.16); }   /* length-guard skip — the fragment bug */
+.rv-dbg-miss { background: rgba(224,179,74,.13); }   /* scored but below the grouping threshold */
+.rv-dbg-hit  { background: rgba(78,201,176,.13); }   /* grouped as a retake */
+.rv-dbg-warn { background: rgba(242,91,91,.20); color: var(--text-bright); padding: 5px 8px; border-radius: 5px; margin: 4px 0; }
+.rv-dbg-pre { white-space: pre-wrap; max-height: 220px; overflow: auto; background: var(--bg); padding: 6px; border-radius: 5px; font-family: var(--font-mono); margin: 4px 0; }
+.rv-dbg-cl { padding: 2px 0; }
+.rv-btn.rv-on { outline: 1px solid var(--accent); }
