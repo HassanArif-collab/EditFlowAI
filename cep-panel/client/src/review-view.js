@@ -370,7 +370,7 @@ function _renderPlanList() {
   $('#rv-plan-meta') && ($('#rv-plan-meta').textContent = `${ranges.length} spans · ${_fmtDur(ranges.reduce((s, r) => s + (r[1] - r[0]), 0))}`);
   el.innerHTML = ranges.map(r => {
     const txt = S.words.filter(w => w.keep && w.start >= r[0] - 0.01 && w.end <= r[1] + 0.01).map(w => w.text).join(' ').slice(0, 60);
-    return `<div class="rv-planrow" data-seek="${r[0]}"><span class="rv-tc">${_fmtDur(r[0])}</span><span class="rv-txt">${_esc(txt)}</span></div>`;
+    return `<div class="rv-planrow" data-seek="${r[0]}"><span class="rv-tc">${_fmtDur(r[0])}</span><span class="rv-txt" dir="${_baseDir(txt)}">${_esc(txt)}</span></div>`;
   }).join('') || '<div class="rv-dim" style="padding:8px">No cuts yet — select words to cut.</div>';
   el.querySelectorAll('[data-seek]').forEach(d => d.onclick = () => { if (S.video) { try { S.video.currentTime = parseFloat(d.dataset.seek); } catch (_) {} _play(); } });
 }
@@ -427,7 +427,7 @@ function _takesHtml() {
         <span class="rv-radio"></span>
         <button class="rv-pl" data-playseg="${seg.id}">▶</button>
         <span class="rv-tc">${_fmtDur(seg.start)}</span>
-        <span class="rv-snip">${_esc((seg.text || '').slice(0, 70))}</span>
+        <span class="rv-snip" dir="${_baseDir(seg.text)}">${_esc((seg.text || '').slice(0, 70))}</span>
         <span class="rv-qtag q-${q.replace(' ', '')}">${q}</span></div>`;
     }
     html += `<div class="rv-finetrim" data-fine="${win}">↳ fine-trim in Edit →</div></div>`;
@@ -460,20 +460,39 @@ function _pickTake(segId) {
 // ── Transcript words + native selection ──────────────────────
 function _renderWords() {
   const doc = $('#rv-doc'); if (!doc) return;
-  let html = '', cur = -1;
+  // LANGUAGE-AGNOSTIC bidi: each line (segment) gets its OWN base direction from
+  // the majority of its strong characters — not a global RTL, and not first-strong
+  // (which flipped Urdu lines that began with an English word). Every word is an
+  // isolated run with dir="auto", so an English word in the middle of an Arabic/
+  // Hebrew/Urdu line — or a Roman word among CJK — sits in the right place and the
+  // surrounding text doesn't reorder. Works for any language pair.
+  const paras = []; let cur = -1, group = null;
   for (const w of S.words) {
-    if (w.segment_id !== cur) { if (cur !== -1) html += '</p>'; html += '<p class="rv-para">'; cur = w.segment_id; }
-    // Latin tokens (English words, F6, tech…) are isolated LTR islands so they
-    // don't reorder the surrounding RTL Urdu (spec §5). The paragraph base stays
-    // RTL even when the first token is English — that was the line-flip bug.
-    const isEn = /[A-Za-z]/.test(w.text || '');
-    const cls = ['rv-w', w.keep ? '' : 'rv-w-cut', isEn ? 'rv-en' : ''].join(' ').replace(/\s+/g, ' ').trim();
-    const title = (!w.keep && w.reason) ? ` title="${_esc(_reason(w.reason))}"` : '';
-    html += `<span class="${cls}" data-id="${w.id}"${isEn ? ' dir="ltr"' : ''}${title}>${_esc(w.text)}</span> `;
+    if (w.segment_id !== cur) { group = []; paras.push(group); cur = w.segment_id; }
+    group.push(w);
   }
-  if (cur !== -1) html += '</p>';
+  let html = '';
+  for (const group of paras) {
+    const dir = _baseDir(group.map(w => w.text).join(' '));
+    html += `<p class="rv-para" dir="${dir}">`;
+    for (const w of group) {
+      const isLatin = /[A-Za-z]/.test(w.text || '');   // render Latin in the UI font
+      const cls = ['rv-w', w.keep ? '' : 'rv-w-cut', isLatin ? 'rv-en' : ''].join(' ').replace(/\s+/g, ' ').trim();
+      const title = (!w.keep && w.reason) ? ` title="${_esc(_reason(w.reason))}"` : '';
+      html += `<span class="${cls}" data-id="${w.id}" dir="auto"${title}>${_esc(w.text)}</span> `;
+    }
+    html += '</p>';
+  }
   doc.innerHTML = html || '<p class="rv-dim" style="padding:12px">No words.</p>';
   _markNow(_lastNow);
+}
+// Majority-of-strong-characters base direction. RTL scripts: Hebrew, Arabic,
+// Syriac, Thaana, Arabic Supplement/Extended, Arabic Presentation Forms.
+function _baseDir(text) {
+  const t = String(text || '');
+  const rtl = (t.match(/[֐-׿؀-ۿ܀-ݏހ-޿ࢠ-ࣿיִ-﷿ﹰ-﻿]/g) || []).length;
+  const ltr = (t.match(/[A-Za-zÀ-ɏЀ-ӿͰ-Ͽ]/g) || []).length; // Latin/Cyrillic/Greek
+  return rtl > ltr ? 'rtl' : 'ltr';
 }
 function _bindDocEvents() {
   const doc = $('#rv-doc'); if (!doc) return;
