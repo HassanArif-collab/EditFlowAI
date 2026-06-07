@@ -873,3 +873,90 @@ def parse_gemma_decisions(raw: str, valid_ids: set[int]) -> dict[int, tuple[bool
         keep = bool(d.get("keep", True))
         out[sid] = (keep, str(d.get("reason", "")).strip()[:80])
     return out
+
+
+# ── Semantic dedup + coverage-preserving helpers (A8, from experiments) ────────
+# These add embedding-based dedup and a "don't drop unique content" guard. They
+# degrade gracefully to no-ops if sentence-transformers / the model is unavailable.
+
+def _cos(a: list[float], b: list[float]) -> float:
+    import math
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(x * x for x in b))
+    return dot / (na * nb) if na and nb else 0.0
+
+
+def _embed_kept(segments: list[Segment]):
+    """(kept_segments, embeddings|None). None when embeddings aren't available."""
+    kept = [s for s in segments if s.decision == "keep"]
+    if len(kept) < 2:
+        return kept, None
+    try:
+        from .embedding_service import embedding_service
+        return kept, embedding_service.embed([s.text for s in kept])
+    except Exception as exc:  # noqa: BLE001
+        logger.info("review: embedding dedup skipped (%s)", exc)
+        return kept, None
+
+
+def embedding_dedup(segments: list[Segment], cos_thresh: float = 0.5, tok_thresh: float = 0.45) -> None:
+    """Semantic dedup of KEPT segments via a COMBINED gate: merge a pair only when
+    embedding cosine >= cos_thresh AND token-containment >= tok_thresh (cosine alone
+    conflates related-but-distinct beats). Keep the last clean take per group, cut
+    the rest as ``semantic_dup``. No-op without embeddings. Mutates in place."""
+    kept, embs = _embed_kept(segments)
+    if embs is None:
+        return
+    toks = [_tokens(s.text) for s in kept]
+    n = len(kept)
+    parent = list(range(n))
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            if _cos(embs[i], embs[j]) >= cos_thresh and _token_containment(toks[i], toks[j]) >= tok_thresh:
+                ri, rj = find(i), find(j)
+                if ri != rj:
+                    parent[max(ri, rj)] = min(ri, rj)
+
+    groups: dict[int, list[int]] = {}
+    for i in range(n):
+        groups.setdefault(find(i), []).append(i)
+    for g in groups.values():
+        if len(g) < 2:
+            continue
+        clean = [i for i in g if _is_clean_take(kept[i].text)]
+        win = clean[-1] if clean else g[-1]
+        for i in g:
+            if i != win:
+                kept[i].decision, kept[i].reason = "cut", "semantic_dup"
+
+
+def redundant_kept_ids(segments: list[Segment], cos_safe: float = 0.5) -> set:
+    """Ids of kept segments that have a semantically-similar OTHER kept segment.
+    The LLM refine may cut these (they're redundant) but should NOT cut a kept
+    segment absent from this set (it's unique content → cutting it drops a beat)."""
+    kept, embs = _embed_kept(segments)
+    if embs is None:
+        return set()
+    out = set()
+    n = len(kept)
+    for i in range(n):
+        for j in range(n):
+            if i != j and _cos(embs[i], embs[j]) >= cos_safe:
+                out.add(kept[i].id)
+                break
+    return out
+
+
+def is_fragmentish(text: str) -> bool:
+    """A line safe for the LLM to cut even if unique: a false start / bracketed
+    cue / 1-2 word tail."""
+    t = (text or "").strip()
+    return "--" in t or _is_bracketed_nonspeech(t) or len(_tokens(_strip_brackets(t))) <= 2

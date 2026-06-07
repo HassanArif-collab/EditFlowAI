@@ -382,14 +382,26 @@ async def suggest(req: SuggestReq):
     trace = ReviewTrace() if req.debug else None
     classify(segments, rev.get("script", ""), trace=trace)
 
+    # A8 (experiment winner): semantic dedup of the kept set via a combined
+    # embedding+token gate. No-op if embeddings are unavailable.
+    from ..services.review_service import embedding_dedup, redundant_kept_ids, is_fragmentish
+    embedding_dedup(segments)
+
     llm_used = False
     if req.use_llm:
-        prompt = build_gemma_prompt(segments, rev.get("script", ""))
+        # Focus the model on the still-kept segments only — smaller, cleaner input
+        # cuts the model's run-to-run variance.
+        kept_now = [s for s in segments if s.decision == "keep"]
+        prompt = build_gemma_prompt(kept_now, rev.get("script", ""))
         text = ""
         decisions: dict = {}
         flips: list[dict] = []
         err: Optional[str] = None
-        max_tokens = _suggest_max_tokens(len(segments))
+        max_tokens = _suggest_max_tokens(len(kept_now))
+        # Coverage-preserving guard: the model may cut a segment ONLY if it's a
+        # fragment OR genuinely redundant (has a semantically-similar kept
+        # neighbour). Unique content is vetoed, so the model can never drop a beat.
+        redundant = redundant_kept_ids(segments)
         try:
             from ..services.provider_service import provider_service
             raw = await provider_service.chat(
@@ -398,16 +410,14 @@ async def suggest(req: SuggestReq):
                 max_tokens=max_tokens,
             )
             text = (raw or {}).get("response") or ""
-            decisions = parse_gemma_decisions(text, {s.id for s in segments})
-            # The model may only TIGHTEN (flip keep→cut); it can't resurrect a
-            # reliable deterministic cut. This keeps the safe baseline intact.
+            decisions = parse_gemma_decisions(text, {s.id for s in kept_now})
             for s in segments:
-                if s.decision == "keep" and s.id in decisions:
-                    keep, reason = decisions[s.id]
-                    if not keep:
+                if s.decision == "keep" and s.id in decisions and not decisions[s.id][0]:
+                    if is_fragmentish(s.text) or s.id in redundant:
                         s.decision = "cut"
-                        s.reason = reason or "llm_off_script"
+                        s.reason = decisions[s.id][1] or "llm_off_script"
                         flips.append({"id": s.id, "reason": s.reason})
+                    # else: veto — unique content, keep it
             llm_used = bool(decisions)
         except Exception as exc:  # noqa: BLE001
             err = str(exc) or exc.__class__.__name__
