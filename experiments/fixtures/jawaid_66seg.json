@@ -1,0 +1,7312 @@
+{
+  "source_path": "G:\\YT Videos\\2026-4-25 What being a Billionare Really Looks in pakistan\\TestingEditFlow\\IMG_1694.MOV",
+  "source_name": "IMG_1694.MOV",
+  "proxy_path": "G:\\Tech\\AI Orchestration System\\AI Editing\\EditFlowAI\\data\\review\\proxies\\61e6eaab371c3d9b.mp4",
+  "script": "Now let's 10x this. I'm Javed. I invested 14 crore in a tech startup, it blew up, and now I'm worth 10,000 crore.\n\nSame debt trick, bigger numbers. A 2% loan against my portfolio gives me 200 crore in tax-free cash. CGT hits 0% after six years, so my portfolio grows way faster than my interest rate.\n\nI live in F-6 Islamabad. Six bedrooms, a massive four-kanal estate, worth 250 crore. It's got a pool, a private garden, and a basement entertainment complex. It's one of seven homes I own — Dubai Marina, London Mayfair, a Lahore farmhouse, Punjab farmland.",
+  "duration": 323.515,
+  "codec": "hevc",
+  "media_error": null,
+  "segments": [
+    {
+      "id": 0,
+      "start": 1.94,
+      "end": 3.08,
+      "text": "So اب کیا کرتے ہیں کہ اب ہم--",
+      "tight_in": 1.966,
+      "tight_out": 3.08,
+      "decision": "cut",
+      "reason": "false start",
+      "group_id": -1,
+      "script_line": ""
+    },
+    {
+      "id": 1,
+      "start": 3.72,
+      "end": 7.08,
+      "text": "تو اب ہم اپنی income کو دس گنا کر دیتے ہیں۔",
+      "tight_in": 3.765,
+      "tight_out": 5.945,
+      "decision": "keep",
+      "reason": "",
+      "group_id": -1,
+      "script_line": ""
+    },
+    {
+      "id": 2,
+      "start": 8.6,
+      "end": 11.5,
+      "text": "تو اب میری ہزار کروڑ کی income-- تو اب ہم ہزار کروڑ کی--",
+      "tight_in": 8.6,
+      "tight_out": 11.5,
+      "decision": "cut",
+      "reason": "retake_of:#3",
+      "group_id": 2,
+      "script_line": ""
+    },
+    {
+      "id": 3,
+      "start": 12.22,
+      "end": 16.74,
+      "text": "تو اب ہم ہزار کروڑ کی income تو-- [گلا صاف کرنے کی آواز] اب ہم ہزار کروڑ کی",
+      "tight_in": 12.258,
+      "tight_out": 16.74,
+      "decision": "cut",
+      "reason": "throat-clearing non-speech",
+      "group_id": 2,
+      "script_line": ""
+    },
+    {
+      "id": 4,
+      "start": 16.74,
+      "end": 21.96,
+      "text": "income کو-- اب ہم ہزار کروڑ کی income کو دس گنا کر دیتے ہیں۔ So میرا نام ہے جاوید۔",
+      "tight_in": 16.74,
+      "tight_out": 21.96,
+      "decision": "keep",
+      "reason": "",
+      "group_id": -1,
+      "script_line": ""
+    },
+    {
+      "id": 5,
+      "start": 21.96,
+      "end": 26.04,
+      "text": "میں نے چودہ کروڑ invest کیے ایک tech startup میں اور جو چلا اور",
+      "tight_in": 21.96,
+      "tight_out": 26.04,
+      "decision": "cut",
+      "reason": "retake_of:#10",
+      "group_id": 4,
+      "script_line": ""
+    },
+    {
+      "id": 6,
+      "start": 27.02,
+      "end": 31.98,
+      "text": "اس سے بیچنے کے بعد مجھے ملے چودہ ہزار کروڑ روپے۔",
+      "tight_in": 27.035,
+      "tight_out": 31.367,
+      "decision": "keep",
+      "reason": "",
+      "group_id": -1,
+      "script_line": ""
+    },
+    {
+      "id": 7,
+      "start": 34.28,
+      "end": 34.62,
+      "text": "اور یہ",
+      "tight_in": 34.351,
+      "tight_out": 34.62,
+      "decision": "cut",
+      "reason": "too_short",
+      "group_id": -1,
+      "script_line": ""
+    },
+    {
+      "id": 8,
+      "start": 35.3,
+      "end": 38.06,
+      "text": "کسی tech company کے اندر، میں tech کے startup کے اندر。",
+      "tight_in": 35.32,
+      "tight_out": 37.897,
+      "decision": "cut",
+      "reason": "repeated/retake of earlier content",
+      "group_id": -1,
+      "script_line": ""
+    },
+    {
+      "id": 9,
+      "start": 39.66,
+      "end": 44.26,
+      "text": "تو اب چلتے ہیں دس ہزار-- اب، اب میری ہزار کروڑ کی income کو دس گنا کر دیتے ہیں۔ تو",
+      "tight_in": 39.706,
+      "tight_out": 44.26,
+      "decision": "cut",
+      "reason": "repeated/retake of segment 1 and 4",
+      "group_id": -1,
+      "script_line": ""
+    },
+    {
+      "id": 10,
+      "start": 44.26,
+      "end": 48.94,
+      "text": "میں ہوں جاوید۔ میں نے چودہ کروڑ روپے invest کیے ایک tech startup کے اندر جو کہ",
+      "tight_in": 44.26,
+      "tight_out": 48.94,
+      "decision": "keep",
+      "reason": "",
+      "group_id": 4,
+      "script_line": ""
+    },
+    {
+      "id": 11,
+      "start": 48.94,
+      "end": 50.8,
+      "text": "چلا اور اس نے مجھے دیے-",
+      "tight_in": 48.94,
+      "tight_out": 50.8,
+      "decision": "cut",
+      "reason": "incomplete/false start",
+      "group_id": -1,
+      "script_line": ""
+    },
+    {
+      "id": 12,
+      "start": 52.86,
+      "end": 56.24,
+      "text": "-بہت ہی زیادہ چلا۔ -جو بہت ہی زیادہ چلا اور اس نے مجھے دیے--",
+      "tight_in": 52.86,
+      "tight_out": 56.24,
+      "decision": "cut",
+      "reason": "repeated/retake of segment 6 and 13",
+      "group_id": -1,
+      "script_line": ""
+    },
+    {
+      "id": 13,
+      "start": 56.24,
+      "end": 61.44,
+      "text": "جو بہت ہی زیادہ چلا اور اب میری net income ہے دس ہزار کروڑ روپے۔",
+      "tight_in": 56.24,
+      "tight_out": 60.161,
+      "decision": "cut",
+      "reason": "retake_of:#22",
+      "group_id": 11,
+      "script_line": ""
+    },
+    {
+      "id": 14,
+      "start": 61.44,
+      "end": 63.52,
+      "text": "-اور اب میرے پاس- -Worth.",
+      "tight_in": 61.494,
+      "tight_out": 62.99,
+      "decision": "cut",
+      "reason": "incomplete/false start",
+      "group_id": -1,
+      "script_line": ""
+    },
+    {
+      "id": 15,
+      "start": 63.52,
+      "end": 64.739,
+      "text": "Worth.",
+      "tight_in": 63.548,
+      "tight_out": 63.675,
+      "decision": "cut",
+      "reason": "too_short",
+      "group_id": -1,
+      "script_line": ""
+    },
+    {
+      "id": 16,
+      "start": 65.36,
+      "end": 66.4,
+      "text": "دس ہزار،",
+      "tight_in": 65.472,
+      "tight_out": 66.0,
+      "decision": "cut",
+      "reason": "incomplete/false start",
+      "group_id": -1,
+      "script_line": ""
+    },
+    {
+      "id": 17,
+      "start": 67.54,
+      "end": 70.66,
+      "text": "پانچ پیسہ ہے اور اب میرے پاس ہیں دس ہزار کروڑ روپے۔",
+      "tight_in": 67.604,
+      "tight_out": 70.298,
+      "decision": "cut",
+      "reason": "retake_of:#22",
+      "group_id": 11,
+      "script_line": ""
+    },
+    {
+      "id": 18,
+      "start": 74.2,
+      "end": 79.78,
+      "text": "جو بہت زیادہ چلا، جو بہت زیادہ چلا اور اب میرے پاس ہیں دس ہزار کروڑ روپے۔ جو بہت",
+      "tight_in": 74.2,
+      "tight_out": 79.78,
+      "decision": "cut",
+      "reason": "retake_of:#22",
+      "group_id": 11,
+      "script_line": ""
+    },
+    {
+      "id": 19,
+      "start": 79.78,
+      "end": 84.3,
+      "text": "زیادہ، جو بہت زیادہ چلا، جو بہت زیادہ چلا اور-- جو بہت زیادہ چلا اور اب-- جو بہت",
+      "tight_in": 79.78,
+      "tight_out": 84.3,
+      "decision": "cut",
+      "reason": "repeated/retake of segment 18",
+      "group_id": -1,
+      "script_line": ""
+    },
+    {
+      "id": 20,
+      "start": 84.3,
+      "end": 84.78,
+      "text": "زیادہ چلا،",
+      "tight_in": 84.3,
+      "tight_out": 84.78,
+      "decision": "cut",
+      "reason": "repeated/retake of segment 19",
+      "group_id": -1,
+      "script_line": ""
+    },
+    {
+      "id": 21,
+      "start": 85.58,
+      "end": 89.14,
+      "text": "جو بہت زیادہ چلا اور اب میرے پاس ہیں دس ہزار کروڑ روپے۔",
+      "tight_in": 85.591,
+      "tight_out": 88.284,
+      "decision": "cut",
+      "reason": "retake_of:#22",
+      "group_id": 11,
+      "script_line": ""
+    },
+    {
+      "id": 22,
+      "start": 91.34,
+      "end": 97.15,
+      "text": "جو بہت زیادہ چلا اور اب میرے پاس ہیں دس ہزار کروڑ روپے۔ اب ان دس ہزار کروڑ میں میں",
+      "tight_in": 91.399,
+      "tight_out": 97.15,
+      "decision": "cut",
+      "reason": "repeated/retake of segment 18 with false start",
+      "group_id": 11,
+      "script_line": ""
+    },
+    {
+      "id": 23,
+      "start": 97.15,
+      "end": 102.02,
+      "text": "وہی same trick کھیلوں گا loan لینے والی تاکہ کم سے کم ٹیکس دینا پڑے",
+      "tight_in": 97.15,
+      "tight_out": 102.02,
+      "decision": "keep",
+      "reason": "",
+      "group_id": -1,
+      "script_line": ""
+    },
+    {
+      "id": 24,
+      "start": 102.02,
+      "end": 104.84,
+      "text": "مجھے۔",
+      "tight_in": 102.02,
+      "tight_out": 104.267,
+      "decision": "cut",
+      "reason": "incomplete continuation of segment 23",
+      "group_id": -1,
+      "script_line": ""
+    },
+    {
+      "id": 25,
+      "start": 106.46,
+      "end": 108.08,
+      "text": "[بچے کی آواز]",
+      "tight_in": 106.815,
+      "tight_out": 106.87,
+      "decision": "cut",
+      "reason": "non_speech",
+      "group_id": 19,
+      "script_line": ""
+    },
+    {
+      "id": 26,
+      "start": 117.56,
+      "end": 119.67,
+      "text": "دو فیصد loan.",
+      "tight_in": 117.613,
+      "tight_out": 119.67,
+      "decision": "cut",
+      "reason": "incomplete - starts segment 28",
+      "group_id": -1,
+      "script_line": ""
+    },
+    {
+      "id": 27,
+      "start": 119.67,
+      "end": 129.32,
+      "text": "[بچے کی آواز]",
+      "tight_in": 119.67,
+      "tight_out": 123.917,
+      "decision": "cut",
+      "reason": "non_speech",
+      "group_id": 19,
+      "script_line": ""
+    },
+    {
+      "id": 28,
+      "start": 160.56,
+      "end": 161.45,
+      "text": "یعنی دو فیصد loan مجھے کے دو سو کروڑ روپے۔ [بچے کی آواز] دس فیصد。 [بچے کی آواز] یعنی",
+      "tight_in": 160.588,
+      "tight_out": 161.45,
+      "decision": "keep",
+      "reason": "",
+      "group_id": -1,
+      "script_line": ""
+    },
+    {
+      "id": 29,
+      "start": 161.45,
+      "end": 164.48,
+      "text": "دو فیصد loan لوں گا میں اپنے-- یعنی میں اپنے income پر-- یعنی میری income پر دو",
+      "tight_in": 161.45,
+      "tight_out": 164.48,
+      "decision": "cut",
+      "reason": "repeated/retake of segment 28",
+      "group_id": -1,
+      "script_line": ""
+    },
+    {
+      "id": 30,
+      "start": 164.48,
+      "end": 167.76,
+      "text": "فیصد loan میں لوں گا جو کہ بنے گا دو سو کروڑ روپے اور-",
+      "tight_in": 164.48,
+      "tight_out": 167.76,
+      "decision": "cut",
+      "reason": "retake_of:#34",
+      "group_id": 23,
+      "script_line": ""
+    },
+    {
+      "id": 31,
+      "start": 168.9,
+      "end": 169.5,
+      "text": "[بچے کی آواز]",
+      "tight_in": 168.9,
+      "tight_out": 169.5,
+      "decision": "cut",
+      "reason": "non_speech",
+      "group_id": 19,
+      "script_line": ""
+    },
+    {
+      "id": 32,
+      "start": 170.2,
+      "end": 170.64,
+      "text": "ٹیکس کے。",
+      "tight_in": 170.252,
+      "tight_out": 170.64,
+      "decision": "cut",
+      "reason": "too_short",
+      "group_id": -1,
+      "script_line": ""
+    },
+    {
+      "id": 33,
+      "start": 171.54,
+      "end": 175.26,
+      "text": "یعنی کہ اپنی total income پہ میں دو فیصد-- یعنی اپنی total income پہ میں دو فیصد",
+      "tight_in": 171.553,
+      "tight_out": 175.26,
+      "decision": "cut",
+      "reason": "repeated/retake of segment 30",
+      "group_id": -1,
+      "script_line": ""
+    },
+    {
+      "id": 34,
+      "start": 175.26,
+      "end": 179.96,
+      "text": "ٹیکس دوں گا جو کہ بنے گا دو سو کروڑ روپے بنا ٹیکس کے۔",
+      "tight_in": 175.26,
+      "tight_out": 179.565,
+      "decision": "keep",
+      "reason": "",
+      "group_id": 23,
+      "script_line": ""
+    },
+    {
+      "id": 35,
+      "start": 184.64,
+      "end": 190.859,
+      "text": "اور میرے جو دس ہزار کروڑ ہیں وہ دس percent کی income سے بڑھتے جا رہے ہیں۔ اور جو",
+      "tight_in": 185.444,
+      "tight_out": 190.859,
+      "decision": "cut",
+      "reason": "retake_of:#40",
+      "group_id": 26,
+      "script_line": ""
+    },
+    {
+      "id": 36,
+      "start": 190.86,
+      "end": 195.6,
+      "text": "میرے دو-- اور جو میرے دس ہزار کروڑ ہیں، جو میرے دس ہزار کروڑ ہیں وہ دس percent کی",
+      "tight_in": 190.86,
+      "tight_out": 195.6,
+      "decision": "cut",
+      "reason": "retake_of:#40",
+      "group_id": 26,
+      "script_line": ""
+    },
+    {
+      "id": 37,
+      "start": 195.6,
+      "end": 199.08,
+      "text": "income سے بڑھتے جائیں گے۔",
+      "tight_in": 195.6,
+      "tight_out": 198.705,
+      "decision": "cut",
+      "reason": "repeated/retake of segment 35",
+      "group_id": -1,
+      "script_line": ""
+    },
+    {
+      "id": 38,
+      "start": 199.7,
+      "end": 200.39,
+      "text": "[بچے کی آواز]",
+      "tight_in": 199.7,
+      "tight_out": 200.39,
+      "decision": "cut",
+      "reason": "non_speech",
+      "group_id": 19,
+      "script_line": ""
+    },
+    {
+      "id": 39,
+      "start": 201.0,
+      "end": 203.2,
+      "text": "اور جو میرے دس ہزار کروڑ ہیں وہ دس percent کی--",
+      "tight_in": 201.0,
+      "tight_out": 203.2,
+      "decision": "cut",
+      "reason": "retake_of:#40",
+      "group_id": 26,
+      "script_line": ""
+    },
+    {
+      "id": 40,
+      "start": 204.22,
+      "end": 208.32,
+      "text": "اور جو میرے دس ہزار کروڑ ہیں وہ دس percent کی growth سے بڑھتے جائیں",
+      "tight_in": 204.249,
+      "tight_out": 208.32,
+      "decision": "keep",
+      "reason": "",
+      "group_id": 26,
+      "script_line": ""
+    },
+    {
+      "id": 41,
+      "start": 208.32,
+      "end": 212.1,
+      "text": "گے۔",
+      "tight_in": 208.32,
+      "tight_out": 212.1,
+      "decision": "cut",
+      "reason": "incomplete continuation of segment 40",
+      "group_id": -1,
+      "script_line": ""
+    },
+    {
+      "id": 42,
+      "start": 218.82,
+      "end": 222.68,
+      "text": "چلیں اب، اب میرا گھر دیکھتے ہیں۔ تو چلیں اب میرا گھر دیکھتے ہیں۔ میں F6 اسلام آباد",
+      "tight_in": 218.866,
+      "tight_out": 222.68,
+      "decision": "cut",
+      "reason": "retake_of:#49",
+      "group_id": 29,
+      "script_line": ""
+    },
+    {
+      "id": 43,
+      "start": 222.68,
+      "end": 223.14,
+      "text": "میں رہتا ہوں",
+      "tight_in": 222.68,
+      "tight_out": 223.14,
+      "decision": "cut",
+      "reason": "incomplete/false start",
+      "group_id": -1,
+      "script_line": ""
+    },
+    {
+      "id": 44,
+      "start": 223.98,
+      "end": 226.46,
+      "text": "تو اب میرا گھر دیکھتے ہیں۔ میں F6 اسلام آباد میں رہتا ہوں-",
+      "tight_in": 224.008,
+      "tight_out": 226.46,
+      "decision": "cut",
+      "reason": "retake_of:#49",
+      "group_id": 29,
+      "script_line": ""
+    },
+    {
+      "id": 45,
+      "start": 227.82,
+      "end": 232.72,
+      "text": "[بچے کی آواز] جس میں اس کے bedroom ہیں",
+      "tight_in": 227.82,
+      "tight_out": 232.72,
+      "decision": "cut",
+      "reason": "child noise - non-speech",
+      "group_id": -1,
+      "script_line": ""
+    },
+    {
+      "id": 46,
+      "start": 234.12,
+      "end": 234.26,
+      "text": "چار--",
+      "tight_in": 234.12,
+      "tight_out": 234.26,
+      "decision": "cut",
+      "reason": "too_short",
+      "group_id": -1,
+      "script_line": ""
+    },
+    {
+      "id": 47,
+      "start": 236.04,
+      "end": 238.28,
+      "text": "جس میں چھ-- جو کہ چار کنال",
+      "tight_in": 236.04,
+      "tight_out": 238.229,
+      "decision": "cut",
+      "reason": "repeated/retake - bedroom count",
+      "group_id": -1,
+      "script_line": ""
+    },
+    {
+      "id": 48,
+      "start": 239.2,
+      "end": 242.12,
+      "text": "-رقبے پر پھیلا ہے۔ -جو کہ چار--",
+      "tight_in": 239.256,
+      "tight_out": 242.12,
+      "decision": "cut",
+      "reason": "retake_of:#52",
+      "group_id": 34,
+      "script_line": ""
+    },
+    {
+      "id": 49,
+      "start": 243.1,
+      "end": 246.84,
+      "text": "اب میرا گھر دیکھتے ہیں، اب میرا گھر دیکھتے ہیں میں F6 اسلام آباد میں رہتا ہوں",
+      "tight_in": 243.1,
+      "tight_out": 246.84,
+      "decision": "cut",
+      "reason": "repeated/retake of segment 44",
+      "group_id": 29,
+      "script_line": ""
+    },
+    {
+      "id": 50,
+      "start": 247.68,
+      "end": 248.06,
+      "text": "جس میں چ--",
+      "tight_in": 247.68,
+      "tight_out": 248.06,
+      "decision": "cut",
+      "reason": "too_short",
+      "group_id": -1,
+      "script_line": ""
+    },
+    {
+      "id": 51,
+      "start": 250.42,
+      "end": 255.62,
+      "text": "اب، اب چلتے ہیں میرے گھر کی طرف۔ میں F6 اسلام آباد میں رہتا ہوں، میرا گھر چار کنال",
+      "tight_in": 250.42,
+      "tight_out": 255.62,
+      "decision": "cut",
+      "reason": "retake_of:#53",
+      "group_id": 36,
+      "script_line": ""
+    },
+    {
+      "id": 52,
+      "start": 255.62,
+      "end": 257.64,
+      "text": "کے رقبے پر پھیلا ہے جس میں--",
+      "tight_in": 255.62,
+      "tight_out": 257.059,
+      "decision": "cut",
+      "reason": "incomplete/false start",
+      "group_id": 34,
+      "script_line": ""
+    },
+    {
+      "id": 53,
+      "start": 264.26,
+      "end": 268.74,
+      "text": "اب چلتے ہیں میرے گھر کی طرف۔ میں F6 اسلام آباد میں رہتا ہوں، میرا گھر چار کنال کے",
+      "tight_in": 264.26,
+      "tight_out": 268.74,
+      "decision": "cut",
+      "reason": "repeated/retake of segment 51",
+      "group_id": 36,
+      "script_line": ""
+    },
+    {
+      "id": 54,
+      "start": 268.74,
+      "end": 272.4,
+      "text": "رقبے پر پھیلا ہے جس میں صرف چھ bedroom ہیں اور-",
+      "tight_in": 268.74,
+      "tight_out": 272.4,
+      "decision": "keep",
+      "reason": "",
+      "group_id": -1,
+      "script_line": ""
+    },
+    {
+      "id": 55,
+      "start": 274.58,
+      "end": 278.6,
+      "text": "-[بچے کی آواز] -جانتی ہوں میں بھی۔",
+      "tight_in": 275.078,
+      "tight_out": 278.377,
+      "decision": "cut",
+      "reason": "child noise and filler",
+      "group_id": -1,
+      "script_line": ""
+    },
+    {
+      "id": 56,
+      "start": 282.12,
+      "end": 286.84,
+      "text": "اب چلتے ہیں میرے گھر کی طرف، اب چلتے ہیں میرے بنگلے کی طرف۔ میرا گھر-- اب چلتے ہیں",
+      "tight_in": 282.157,
+      "tight_out": 286.84,
+      "decision": "cut",
+      "reason": "repeated/retake - house description",
+      "group_id": -1,
+      "script_line": ""
+    },
+    {
+      "id": 57,
+      "start": 286.84,
+      "end": 291.78,
+      "text": "میرے بنگلے کی طرف۔ میرا بنگلہ چار کنال کے رقبے پر پھیلا ہوا ہے۔ اس کے اندر چھ",
+      "tight_in": 286.84,
+      "tight_out": 291.78,
+      "decision": "keep",
+      "reason": "",
+      "group_id": -1,
+      "script_line": ""
+    },
+    {
+      "id": 58,
+      "start": 291.78,
+      "end": 296.82,
+      "text": "bedrooms ہیں totally بائیس کمرے ہیں اور",
+      "tight_in": 291.78,
+      "tight_out": 295.766,
+      "decision": "cut",
+      "reason": "repeated/retake of segment 57",
+      "group_id": -1,
+      "script_line": ""
+    },
+    {
+      "id": 59,
+      "start": 298.88,
+      "end": 303.94,
+      "text": "اس کی total قیمت ڈھائی سو کروڑ روپے ہے۔ یہ-- اس میں ایک بڑا سا pool ہے، ایک",
+      "tight_in": 298.88,
+      "tight_out": 303.94,
+      "decision": "keep",
+      "reason": "",
+      "group_id": -1,
+      "script_line": ""
+    },
+    {
+      "id": 60,
+      "start": 303.94,
+      "end": 307.94,
+      "text": "private garden ہے۔ اس میں ایک pool ہے، ایک private garden ہے۔ اس میں ایک pool ہے،",
+      "tight_in": 303.94,
+      "tight_out": 307.94,
+      "decision": "cut",
+      "reason": "repeated/retake of segment 59",
+      "group_id": -1,
+      "script_line": ""
+    },
+    {
+      "id": 61,
+      "start": 307.94,
+      "end": 311.66,
+      "text": "ایک private garden ہے، ایک basement entertainment complex ہے۔",
+      "tight_in": 307.94,
+      "tight_out": 311.66,
+      "decision": "cut",
+      "reason": "retake_of:#62",
+      "group_id": 44,
+      "script_line": ""
+    },
+    {
+      "id": 62,
+      "start": 312.4,
+      "end": 317.02,
+      "text": "اس میں ایک pool ہے، ایک private garden ہے، ایک basement entertainment complex ہے۔ یہ",
+      "tight_in": 312.428,
+      "tight_out": 317.02,
+      "decision": "cut",
+      "reason": "repeated/retake of segment 61",
+      "group_id": 44,
+      "script_line": ""
+    },
+    {
+      "id": 63,
+      "start": 317.02,
+      "end": 321.87,
+      "text": "میرے سات گھروں میں سے ایک ہے۔ میرے پاس ایک دبئی کے اندر ہے، ایک مدینہ کے اندر ہے۔",
+      "tight_in": 317.02,
+      "tight_out": 321.87,
+      "decision": "keep",
+      "reason": "",
+      "group_id": -1,
+      "script_line": ""
+    },
+    {
+      "id": 64,
+      "start": 321.87,
+      "end": 322.46,
+      "text": "ہاں جی!",
+      "tight_in": 321.87,
+      "tight_out": 322.46,
+      "decision": "cut",
+      "reason": "filler",
+      "group_id": -1,
+      "script_line": ""
+    },
+    {
+      "id": 65,
+      "start": 323.46,
+      "end": 323.49,
+      "text": "[بچے کی آواز]",
+      "tight_in": 323.46,
+      "tight_out": 323.49,
+      "decision": "cut",
+      "reason": "non_speech",
+      "group_id": 19,
+      "script_line": ""
+    }
+  ],
+  "words": [
+    {
+      "id": 0,
+      "text": "So",
+      "start": 1.966,
+      "end": 2.067,
+      "segment_id": 0,
+      "keep": false,
+      "reason": "false start"
+    },
+    {
+      "id": 1,
+      "text": "اب",
+      "start": 2.067,
+      "end": 2.169,
+      "segment_id": 0,
+      "keep": false,
+      "reason": "false start"
+    },
+    {
+      "id": 2,
+      "text": "کیا",
+      "start": 2.169,
+      "end": 2.32,
+      "segment_id": 0,
+      "keep": false,
+      "reason": "false start"
+    },
+    {
+      "id": 3,
+      "text": "کرتے",
+      "start": 2.32,
+      "end": 2.523,
+      "segment_id": 0,
+      "keep": false,
+      "reason": "false start"
+    },
+    {
+      "id": 4,
+      "text": "ہیں",
+      "start": 2.523,
+      "end": 2.675,
+      "segment_id": 0,
+      "keep": false,
+      "reason": "false start"
+    },
+    {
+      "id": 5,
+      "text": "کہ",
+      "start": 2.675,
+      "end": 2.776,
+      "segment_id": 0,
+      "keep": false,
+      "reason": "false start"
+    },
+    {
+      "id": 6,
+      "text": "اب",
+      "start": 2.776,
+      "end": 2.877,
+      "segment_id": 0,
+      "keep": false,
+      "reason": "false start"
+    },
+    {
+      "id": 7,
+      "text": "ہم--",
+      "start": 2.877,
+      "end": 3.08,
+      "segment_id": 0,
+      "keep": false,
+      "reason": "false start"
+    },
+    {
+      "id": 8,
+      "text": "تو",
+      "start": 3.765,
+      "end": 3.897,
+      "segment_id": 1,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 9,
+      "text": "اب",
+      "start": 3.897,
+      "end": 4.029,
+      "segment_id": 1,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 10,
+      "text": "ہم",
+      "start": 4.029,
+      "end": 4.161,
+      "segment_id": 1,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 11,
+      "text": "اپنی",
+      "start": 4.161,
+      "end": 4.426,
+      "segment_id": 1,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 12,
+      "text": "income",
+      "start": 4.426,
+      "end": 4.822,
+      "segment_id": 1,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 13,
+      "text": "کو",
+      "start": 4.822,
+      "end": 4.954,
+      "segment_id": 1,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 14,
+      "text": "دس",
+      "start": 4.954,
+      "end": 5.086,
+      "segment_id": 1,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 15,
+      "text": "گنا",
+      "start": 5.086,
+      "end": 5.284,
+      "segment_id": 1,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 16,
+      "text": "کر",
+      "start": 5.284,
+      "end": 5.417,
+      "segment_id": 1,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 17,
+      "text": "دیتے",
+      "start": 5.417,
+      "end": 5.681,
+      "segment_id": 1,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 18,
+      "text": "ہیں۔",
+      "start": 5.681,
+      "end": 5.945,
+      "segment_id": 1,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 19,
+      "text": "تو",
+      "start": 8.6,
+      "end": 8.732,
+      "segment_id": 2,
+      "keep": false,
+      "reason": "retake_of:#3"
+    },
+    {
+      "id": 20,
+      "text": "اب",
+      "start": 8.732,
+      "end": 8.864,
+      "segment_id": 2,
+      "keep": false,
+      "reason": "retake_of:#3"
+    },
+    {
+      "id": 21,
+      "text": "میری",
+      "start": 8.864,
+      "end": 9.127,
+      "segment_id": 2,
+      "keep": false,
+      "reason": "retake_of:#3"
+    },
+    {
+      "id": 22,
+      "text": "ہزار",
+      "start": 9.127,
+      "end": 9.391,
+      "segment_id": 2,
+      "keep": false,
+      "reason": "retake_of:#3"
+    },
+    {
+      "id": 23,
+      "text": "کروڑ",
+      "start": 9.391,
+      "end": 9.655,
+      "segment_id": 2,
+      "keep": false,
+      "reason": "retake_of:#3"
+    },
+    {
+      "id": 24,
+      "text": "کی",
+      "start": 9.655,
+      "end": 9.786,
+      "segment_id": 2,
+      "keep": false,
+      "reason": "retake_of:#3"
+    },
+    {
+      "id": 25,
+      "text": "income--",
+      "start": 9.786,
+      "end": 10.314,
+      "segment_id": 2,
+      "keep": false,
+      "reason": "retake_of:#3"
+    },
+    {
+      "id": 26,
+      "text": "تو",
+      "start": 10.314,
+      "end": 10.445,
+      "segment_id": 2,
+      "keep": false,
+      "reason": "retake_of:#3"
+    },
+    {
+      "id": 27,
+      "text": "اب",
+      "start": 10.445,
+      "end": 10.577,
+      "segment_id": 2,
+      "keep": false,
+      "reason": "retake_of:#3"
+    },
+    {
+      "id": 28,
+      "text": "ہم",
+      "start": 10.577,
+      "end": 10.709,
+      "segment_id": 2,
+      "keep": false,
+      "reason": "retake_of:#3"
+    },
+    {
+      "id": 29,
+      "text": "ہزار",
+      "start": 10.709,
+      "end": 10.973,
+      "segment_id": 2,
+      "keep": false,
+      "reason": "retake_of:#3"
+    },
+    {
+      "id": 30,
+      "text": "کروڑ",
+      "start": 10.973,
+      "end": 11.236,
+      "segment_id": 2,
+      "keep": false,
+      "reason": "retake_of:#3"
+    },
+    {
+      "id": 31,
+      "text": "کی--",
+      "start": 11.236,
+      "end": 11.5,
+      "segment_id": 2,
+      "keep": false,
+      "reason": "retake_of:#3"
+    },
+    {
+      "id": 32,
+      "text": "تو",
+      "start": 12.258,
+      "end": 12.413,
+      "segment_id": 3,
+      "keep": false,
+      "reason": "throat-clearing non-speech"
+    },
+    {
+      "id": 33,
+      "text": "اب",
+      "start": 12.413,
+      "end": 12.567,
+      "segment_id": 3,
+      "keep": false,
+      "reason": "throat-clearing non-speech"
+    },
+    {
+      "id": 34,
+      "text": "ہم",
+      "start": 12.567,
+      "end": 12.722,
+      "segment_id": 3,
+      "keep": false,
+      "reason": "throat-clearing non-speech"
+    },
+    {
+      "id": 35,
+      "text": "ہزار",
+      "start": 12.722,
+      "end": 13.031,
+      "segment_id": 3,
+      "keep": false,
+      "reason": "throat-clearing non-speech"
+    },
+    {
+      "id": 36,
+      "text": "کروڑ",
+      "start": 13.031,
+      "end": 13.34,
+      "segment_id": 3,
+      "keep": false,
+      "reason": "throat-clearing non-speech"
+    },
+    {
+      "id": 37,
+      "text": "کی",
+      "start": 13.34,
+      "end": 13.494,
+      "segment_id": 3,
+      "keep": false,
+      "reason": "throat-clearing non-speech"
+    },
+    {
+      "id": 38,
+      "text": "income",
+      "start": 13.494,
+      "end": 13.958,
+      "segment_id": 3,
+      "keep": false,
+      "reason": "throat-clearing non-speech"
+    },
+    {
+      "id": 39,
+      "text": "تو--",
+      "start": 13.958,
+      "end": 14.267,
+      "segment_id": 3,
+      "keep": false,
+      "reason": "throat-clearing non-speech"
+    },
+    {
+      "id": 40,
+      "text": "[گلا",
+      "start": 14.267,
+      "end": 14.576,
+      "segment_id": 3,
+      "keep": false,
+      "reason": "throat-clearing non-speech"
+    },
+    {
+      "id": 41,
+      "text": "صاف",
+      "start": 14.576,
+      "end": 14.808,
+      "segment_id": 3,
+      "keep": false,
+      "reason": "throat-clearing non-speech"
+    },
+    {
+      "id": 42,
+      "text": "کرنے",
+      "start": 14.808,
+      "end": 15.117,
+      "segment_id": 3,
+      "keep": false,
+      "reason": "throat-clearing non-speech"
+    },
+    {
+      "id": 43,
+      "text": "کی",
+      "start": 15.117,
+      "end": 15.272,
+      "segment_id": 3,
+      "keep": false,
+      "reason": "throat-clearing non-speech"
+    },
+    {
+      "id": 44,
+      "text": "آواز]",
+      "start": 15.272,
+      "end": 15.658,
+      "segment_id": 3,
+      "keep": false,
+      "reason": "throat-clearing non-speech"
+    },
+    {
+      "id": 45,
+      "text": "اب",
+      "start": 15.658,
+      "end": 15.813,
+      "segment_id": 3,
+      "keep": false,
+      "reason": "throat-clearing non-speech"
+    },
+    {
+      "id": 46,
+      "text": "ہم",
+      "start": 15.813,
+      "end": 15.967,
+      "segment_id": 3,
+      "keep": false,
+      "reason": "throat-clearing non-speech"
+    },
+    {
+      "id": 47,
+      "text": "ہزار",
+      "start": 15.967,
+      "end": 16.276,
+      "segment_id": 3,
+      "keep": false,
+      "reason": "throat-clearing non-speech"
+    },
+    {
+      "id": 48,
+      "text": "کروڑ",
+      "start": 16.276,
+      "end": 16.585,
+      "segment_id": 3,
+      "keep": false,
+      "reason": "throat-clearing non-speech"
+    },
+    {
+      "id": 49,
+      "text": "کی",
+      "start": 16.585,
+      "end": 16.74,
+      "segment_id": 3,
+      "keep": false,
+      "reason": "throat-clearing non-speech"
+    },
+    {
+      "id": 50,
+      "text": "income",
+      "start": 16.74,
+      "end": 17.229,
+      "segment_id": 4,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 51,
+      "text": "کو--",
+      "start": 17.229,
+      "end": 17.556,
+      "segment_id": 4,
+      "keep": false,
+      "reason": "false_start"
+    },
+    {
+      "id": 52,
+      "text": "اب",
+      "start": 17.556,
+      "end": 17.719,
+      "segment_id": 4,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 53,
+      "text": "ہم",
+      "start": 17.719,
+      "end": 17.882,
+      "segment_id": 4,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 54,
+      "text": "ہزار",
+      "start": 17.882,
+      "end": 18.208,
+      "segment_id": 4,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 55,
+      "text": "کروڑ",
+      "start": 18.208,
+      "end": 18.534,
+      "segment_id": 4,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 56,
+      "text": "کی",
+      "start": 18.534,
+      "end": 18.697,
+      "segment_id": 4,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 57,
+      "text": "income",
+      "start": 18.697,
+      "end": 19.187,
+      "segment_id": 4,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 58,
+      "text": "کو",
+      "start": 19.187,
+      "end": 19.35,
+      "segment_id": 4,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 59,
+      "text": "دس",
+      "start": 19.35,
+      "end": 19.513,
+      "segment_id": 4,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 60,
+      "text": "گنا",
+      "start": 19.513,
+      "end": 19.758,
+      "segment_id": 4,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 61,
+      "text": "کر",
+      "start": 19.758,
+      "end": 19.921,
+      "segment_id": 4,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 62,
+      "text": "دیتے",
+      "start": 19.921,
+      "end": 20.247,
+      "segment_id": 4,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 63,
+      "text": "ہیں۔",
+      "start": 20.247,
+      "end": 20.573,
+      "segment_id": 4,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 64,
+      "text": "So",
+      "start": 20.573,
+      "end": 20.737,
+      "segment_id": 4,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 65,
+      "text": "میرا",
+      "start": 20.737,
+      "end": 21.063,
+      "segment_id": 4,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 66,
+      "text": "نام",
+      "start": 21.063,
+      "end": 21.308,
+      "segment_id": 4,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 67,
+      "text": "ہے",
+      "start": 21.308,
+      "end": 21.471,
+      "segment_id": 4,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 68,
+      "text": "جاوید۔",
+      "start": 21.471,
+      "end": 21.96,
+      "segment_id": 4,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 69,
+      "text": "میں",
+      "start": 21.96,
+      "end": 22.205,
+      "segment_id": 5,
+      "keep": false,
+      "reason": "retake_of:#10"
+    },
+    {
+      "id": 70,
+      "text": "نے",
+      "start": 22.205,
+      "end": 22.368,
+      "segment_id": 5,
+      "keep": false,
+      "reason": "retake_of:#10"
+    },
+    {
+      "id": 71,
+      "text": "چودہ",
+      "start": 22.368,
+      "end": 22.694,
+      "segment_id": 5,
+      "keep": false,
+      "reason": "retake_of:#10"
+    },
+    {
+      "id": 72,
+      "text": "کروڑ",
+      "start": 22.694,
+      "end": 23.021,
+      "segment_id": 5,
+      "keep": false,
+      "reason": "retake_of:#10"
+    },
+    {
+      "id": 73,
+      "text": "invest",
+      "start": 23.021,
+      "end": 23.51,
+      "segment_id": 5,
+      "keep": false,
+      "reason": "retake_of:#10"
+    },
+    {
+      "id": 74,
+      "text": "کیے",
+      "start": 23.51,
+      "end": 23.755,
+      "segment_id": 5,
+      "keep": false,
+      "reason": "retake_of:#10"
+    },
+    {
+      "id": 75,
+      "text": "ایک",
+      "start": 23.755,
+      "end": 24.0,
+      "segment_id": 5,
+      "keep": false,
+      "reason": "retake_of:#10"
+    },
+    {
+      "id": 76,
+      "text": "tech",
+      "start": 24.0,
+      "end": 24.326,
+      "segment_id": 5,
+      "keep": false,
+      "reason": "retake_of:#10"
+    },
+    {
+      "id": 77,
+      "text": "startup",
+      "start": 24.326,
+      "end": 24.898,
+      "segment_id": 5,
+      "keep": false,
+      "reason": "retake_of:#10"
+    },
+    {
+      "id": 78,
+      "text": "میں",
+      "start": 24.898,
+      "end": 25.142,
+      "segment_id": 5,
+      "keep": false,
+      "reason": "retake_of:#10"
+    },
+    {
+      "id": 79,
+      "text": "اور",
+      "start": 25.142,
+      "end": 25.387,
+      "segment_id": 5,
+      "keep": false,
+      "reason": "retake_of:#10"
+    },
+    {
+      "id": 80,
+      "text": "جو",
+      "start": 25.387,
+      "end": 25.55,
+      "segment_id": 5,
+      "keep": false,
+      "reason": "retake_of:#10"
+    },
+    {
+      "id": 81,
+      "text": "چلا",
+      "start": 25.55,
+      "end": 25.795,
+      "segment_id": 5,
+      "keep": false,
+      "reason": "retake_of:#10"
+    },
+    {
+      "id": 82,
+      "text": "اور",
+      "start": 25.795,
+      "end": 26.04,
+      "segment_id": 5,
+      "keep": false,
+      "reason": "retake_of:#10"
+    },
+    {
+      "id": 83,
+      "text": "اس",
+      "start": 27.035,
+      "end": 27.263,
+      "segment_id": 6,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 84,
+      "text": "سے",
+      "start": 27.263,
+      "end": 27.491,
+      "segment_id": 6,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 85,
+      "text": "بیچنے",
+      "start": 27.491,
+      "end": 28.061,
+      "segment_id": 6,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 86,
+      "text": "کے",
+      "start": 28.061,
+      "end": 28.289,
+      "segment_id": 6,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 87,
+      "text": "بعد",
+      "start": 28.289,
+      "end": 28.631,
+      "segment_id": 6,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 88,
+      "text": "مجھے",
+      "start": 28.631,
+      "end": 29.087,
+      "segment_id": 6,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 89,
+      "text": "ملے",
+      "start": 29.087,
+      "end": 29.429,
+      "segment_id": 6,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 90,
+      "text": "چودہ",
+      "start": 29.429,
+      "end": 29.885,
+      "segment_id": 6,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 91,
+      "text": "ہزار",
+      "start": 29.885,
+      "end": 30.341,
+      "segment_id": 6,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 92,
+      "text": "کروڑ",
+      "start": 30.341,
+      "end": 30.797,
+      "segment_id": 6,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 93,
+      "text": "روپے۔",
+      "start": 30.797,
+      "end": 31.367,
+      "segment_id": 6,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 94,
+      "text": "اور",
+      "start": 34.351,
+      "end": 34.512,
+      "segment_id": 7,
+      "keep": false,
+      "reason": "too_short"
+    },
+    {
+      "id": 95,
+      "text": "یہ",
+      "start": 34.512,
+      "end": 34.62,
+      "segment_id": 7,
+      "keep": false,
+      "reason": "too_short"
+    },
+    {
+      "id": 96,
+      "text": "کسی",
+      "start": 35.32,
+      "end": 35.496,
+      "segment_id": 8,
+      "keep": false,
+      "reason": "repeated/retake of earlier content"
+    },
+    {
+      "id": 97,
+      "text": "tech",
+      "start": 35.496,
+      "end": 35.73,
+      "segment_id": 8,
+      "keep": false,
+      "reason": "repeated/retake of earlier content"
+    },
+    {
+      "id": 98,
+      "text": "company",
+      "start": 35.73,
+      "end": 36.14,
+      "segment_id": 8,
+      "keep": false,
+      "reason": "repeated/retake of earlier content"
+    },
+    {
+      "id": 99,
+      "text": "کے",
+      "start": 36.14,
+      "end": 36.257,
+      "segment_id": 8,
+      "keep": false,
+      "reason": "repeated/retake of earlier content"
+    },
+    {
+      "id": 100,
+      "text": "اندر،",
+      "start": 36.257,
+      "end": 36.55,
+      "segment_id": 8,
+      "keep": false,
+      "reason": "repeated/retake of earlier content"
+    },
+    {
+      "id": 101,
+      "text": "میں",
+      "start": 36.55,
+      "end": 36.726,
+      "segment_id": 8,
+      "keep": false,
+      "reason": "repeated/retake of earlier content"
+    },
+    {
+      "id": 102,
+      "text": "tech",
+      "start": 36.726,
+      "end": 36.96,
+      "segment_id": 8,
+      "keep": false,
+      "reason": "repeated/retake of earlier content"
+    },
+    {
+      "id": 103,
+      "text": "کے",
+      "start": 36.96,
+      "end": 37.077,
+      "segment_id": 8,
+      "keep": false,
+      "reason": "repeated/retake of earlier content"
+    },
+    {
+      "id": 104,
+      "text": "startup",
+      "start": 37.077,
+      "end": 37.487,
+      "segment_id": 8,
+      "keep": false,
+      "reason": "repeated/retake of earlier content"
+    },
+    {
+      "id": 105,
+      "text": "کے",
+      "start": 37.487,
+      "end": 37.604,
+      "segment_id": 8,
+      "keep": false,
+      "reason": "repeated/retake of earlier content"
+    },
+    {
+      "id": 106,
+      "text": "اندر。",
+      "start": 37.604,
+      "end": 37.897,
+      "segment_id": 8,
+      "keep": false,
+      "reason": "repeated/retake of earlier content"
+    },
+    {
+      "id": 107,
+      "text": "تو",
+      "start": 39.706,
+      "end": 39.851,
+      "segment_id": 9,
+      "keep": false,
+      "reason": "repeated/retake of segment 1 and 4"
+    },
+    {
+      "id": 108,
+      "text": "اب",
+      "start": 39.851,
+      "end": 39.995,
+      "segment_id": 9,
+      "keep": false,
+      "reason": "repeated/retake of segment 1 and 4"
+    },
+    {
+      "id": 109,
+      "text": "چلتے",
+      "start": 39.995,
+      "end": 40.284,
+      "segment_id": 9,
+      "keep": false,
+      "reason": "repeated/retake of segment 1 and 4"
+    },
+    {
+      "id": 110,
+      "text": "ہیں",
+      "start": 40.284,
+      "end": 40.501,
+      "segment_id": 9,
+      "keep": false,
+      "reason": "repeated/retake of segment 1 and 4"
+    },
+    {
+      "id": 111,
+      "text": "دس",
+      "start": 40.501,
+      "end": 40.646,
+      "segment_id": 9,
+      "keep": false,
+      "reason": "repeated/retake of segment 1 and 4"
+    },
+    {
+      "id": 112,
+      "text": "ہزار--",
+      "start": 40.646,
+      "end": 41.079,
+      "segment_id": 9,
+      "keep": false,
+      "reason": "repeated/retake of segment 1 and 4"
+    },
+    {
+      "id": 113,
+      "text": "اب،",
+      "start": 41.079,
+      "end": 41.296,
+      "segment_id": 9,
+      "keep": false,
+      "reason": "repeated/retake of segment 1 and 4"
+    },
+    {
+      "id": 114,
+      "text": "اب",
+      "start": 41.296,
+      "end": 41.441,
+      "segment_id": 9,
+      "keep": false,
+      "reason": "repeated/retake of segment 1 and 4"
+    },
+    {
+      "id": 115,
+      "text": "میری",
+      "start": 41.441,
+      "end": 41.73,
+      "segment_id": 9,
+      "keep": false,
+      "reason": "repeated/retake of segment 1 and 4"
+    },
+    {
+      "id": 116,
+      "text": "ہزار",
+      "start": 41.73,
+      "end": 42.019,
+      "segment_id": 9,
+      "keep": false,
+      "reason": "repeated/retake of segment 1 and 4"
+    },
+    {
+      "id": 117,
+      "text": "کروڑ",
+      "start": 42.019,
+      "end": 42.308,
+      "segment_id": 9,
+      "keep": false,
+      "reason": "repeated/retake of segment 1 and 4"
+    },
+    {
+      "id": 118,
+      "text": "کی",
+      "start": 42.308,
+      "end": 42.453,
+      "segment_id": 9,
+      "keep": false,
+      "reason": "repeated/retake of segment 1 and 4"
+    },
+    {
+      "id": 119,
+      "text": "income",
+      "start": 42.453,
+      "end": 42.887,
+      "segment_id": 9,
+      "keep": false,
+      "reason": "repeated/retake of segment 1 and 4"
+    },
+    {
+      "id": 120,
+      "text": "کو",
+      "start": 42.887,
+      "end": 43.031,
+      "segment_id": 9,
+      "keep": false,
+      "reason": "repeated/retake of segment 1 and 4"
+    },
+    {
+      "id": 121,
+      "text": "دس",
+      "start": 43.031,
+      "end": 43.176,
+      "segment_id": 9,
+      "keep": false,
+      "reason": "repeated/retake of segment 1 and 4"
+    },
+    {
+      "id": 122,
+      "text": "گنا",
+      "start": 43.176,
+      "end": 43.393,
+      "segment_id": 9,
+      "keep": false,
+      "reason": "repeated/retake of segment 1 and 4"
+    },
+    {
+      "id": 123,
+      "text": "کر",
+      "start": 43.393,
+      "end": 43.537,
+      "segment_id": 9,
+      "keep": false,
+      "reason": "repeated/retake of segment 1 and 4"
+    },
+    {
+      "id": 124,
+      "text": "دیتے",
+      "start": 43.537,
+      "end": 43.826,
+      "segment_id": 9,
+      "keep": false,
+      "reason": "repeated/retake of segment 1 and 4"
+    },
+    {
+      "id": 125,
+      "text": "ہیں۔",
+      "start": 43.826,
+      "end": 44.115,
+      "segment_id": 9,
+      "keep": false,
+      "reason": "repeated/retake of segment 1 and 4"
+    },
+    {
+      "id": 126,
+      "text": "تو",
+      "start": 44.115,
+      "end": 44.26,
+      "segment_id": 9,
+      "keep": false,
+      "reason": "repeated/retake of segment 1 and 4"
+    },
+    {
+      "id": 127,
+      "text": "میں",
+      "start": 44.26,
+      "end": 44.486,
+      "segment_id": 10,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 128,
+      "text": "ہوں",
+      "start": 44.486,
+      "end": 44.713,
+      "segment_id": 10,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 129,
+      "text": "جاوید۔",
+      "start": 44.713,
+      "end": 45.166,
+      "segment_id": 10,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 130,
+      "text": "میں",
+      "start": 45.166,
+      "end": 45.392,
+      "segment_id": 10,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 131,
+      "text": "نے",
+      "start": 45.392,
+      "end": 45.543,
+      "segment_id": 10,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 132,
+      "text": "چودہ",
+      "start": 45.543,
+      "end": 45.845,
+      "segment_id": 10,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 133,
+      "text": "کروڑ",
+      "start": 45.845,
+      "end": 46.147,
+      "segment_id": 10,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 134,
+      "text": "روپے",
+      "start": 46.147,
+      "end": 46.449,
+      "segment_id": 10,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 135,
+      "text": "invest",
+      "start": 46.449,
+      "end": 46.902,
+      "segment_id": 10,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 136,
+      "text": "کیے",
+      "start": 46.902,
+      "end": 47.128,
+      "segment_id": 10,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 137,
+      "text": "ایک",
+      "start": 47.128,
+      "end": 47.355,
+      "segment_id": 10,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 138,
+      "text": "tech",
+      "start": 47.355,
+      "end": 47.657,
+      "segment_id": 10,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 139,
+      "text": "startup",
+      "start": 47.657,
+      "end": 48.185,
+      "segment_id": 10,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 140,
+      "text": "کے",
+      "start": 48.185,
+      "end": 48.336,
+      "segment_id": 10,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 141,
+      "text": "اندر",
+      "start": 48.336,
+      "end": 48.638,
+      "segment_id": 10,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 142,
+      "text": "جو",
+      "start": 48.638,
+      "end": 48.789,
+      "segment_id": 10,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 143,
+      "text": "کہ",
+      "start": 48.789,
+      "end": 48.94,
+      "segment_id": 10,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 144,
+      "text": "چلا",
+      "start": 48.94,
+      "end": 49.25,
+      "segment_id": 11,
+      "keep": false,
+      "reason": "incomplete/false start"
+    },
+    {
+      "id": 145,
+      "text": "اور",
+      "start": 49.25,
+      "end": 49.56,
+      "segment_id": 11,
+      "keep": false,
+      "reason": "incomplete/false start"
+    },
+    {
+      "id": 146,
+      "text": "اس",
+      "start": 49.56,
+      "end": 49.767,
+      "segment_id": 11,
+      "keep": false,
+      "reason": "incomplete/false start"
+    },
+    {
+      "id": 147,
+      "text": "نے",
+      "start": 49.767,
+      "end": 49.973,
+      "segment_id": 11,
+      "keep": false,
+      "reason": "incomplete/false start"
+    },
+    {
+      "id": 148,
+      "text": "مجھے",
+      "start": 49.973,
+      "end": 50.387,
+      "segment_id": 11,
+      "keep": false,
+      "reason": "incomplete/false start"
+    },
+    {
+      "id": 149,
+      "text": "دیے-",
+      "start": 50.387,
+      "end": 50.8,
+      "segment_id": 11,
+      "keep": false,
+      "reason": "incomplete/false start"
+    },
+    {
+      "id": 150,
+      "text": "-بہت",
+      "start": 52.86,
+      "end": 53.148,
+      "segment_id": 12,
+      "keep": false,
+      "reason": "repeated/retake of segment 6 and 13"
+    },
+    {
+      "id": 151,
+      "text": "ہی",
+      "start": 53.148,
+      "end": 53.291,
+      "segment_id": 12,
+      "keep": false,
+      "reason": "repeated/retake of segment 6 and 13"
+    },
+    {
+      "id": 152,
+      "text": "زیادہ",
+      "start": 53.291,
+      "end": 53.651,
+      "segment_id": 12,
+      "keep": false,
+      "reason": "repeated/retake of segment 6 and 13"
+    },
+    {
+      "id": 153,
+      "text": "چلا۔",
+      "start": 53.651,
+      "end": 53.939,
+      "segment_id": 12,
+      "keep": false,
+      "reason": "repeated/retake of segment 6 and 13"
+    },
+    {
+      "id": 154,
+      "text": "-جو",
+      "start": 53.939,
+      "end": 54.154,
+      "segment_id": 12,
+      "keep": false,
+      "reason": "repeated/retake of segment 6 and 13"
+    },
+    {
+      "id": 155,
+      "text": "بہت",
+      "start": 54.154,
+      "end": 54.37,
+      "segment_id": 12,
+      "keep": false,
+      "reason": "repeated/retake of segment 6 and 13"
+    },
+    {
+      "id": 156,
+      "text": "ہی",
+      "start": 54.37,
+      "end": 54.514,
+      "segment_id": 12,
+      "keep": false,
+      "reason": "repeated/retake of segment 6 and 13"
+    },
+    {
+      "id": 157,
+      "text": "زیادہ",
+      "start": 54.514,
+      "end": 54.874,
+      "segment_id": 12,
+      "keep": false,
+      "reason": "repeated/retake of segment 6 and 13"
+    },
+    {
+      "id": 158,
+      "text": "چلا",
+      "start": 54.874,
+      "end": 55.089,
+      "segment_id": 12,
+      "keep": false,
+      "reason": "repeated/retake of segment 6 and 13"
+    },
+    {
+      "id": 159,
+      "text": "اور",
+      "start": 55.089,
+      "end": 55.305,
+      "segment_id": 12,
+      "keep": false,
+      "reason": "repeated/retake of segment 6 and 13"
+    },
+    {
+      "id": 160,
+      "text": "اس",
+      "start": 55.305,
+      "end": 55.449,
+      "segment_id": 12,
+      "keep": false,
+      "reason": "repeated/retake of segment 6 and 13"
+    },
+    {
+      "id": 161,
+      "text": "نے",
+      "start": 55.449,
+      "end": 55.593,
+      "segment_id": 12,
+      "keep": false,
+      "reason": "repeated/retake of segment 6 and 13"
+    },
+    {
+      "id": 162,
+      "text": "مجھے",
+      "start": 55.593,
+      "end": 55.88,
+      "segment_id": 12,
+      "keep": false,
+      "reason": "repeated/retake of segment 6 and 13"
+    },
+    {
+      "id": 163,
+      "text": "دیے--",
+      "start": 55.88,
+      "end": 56.24,
+      "segment_id": 12,
+      "keep": false,
+      "reason": "repeated/retake of segment 6 and 13"
+    },
+    {
+      "id": 164,
+      "text": "جو",
+      "start": 56.24,
+      "end": 56.397,
+      "segment_id": 13,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 165,
+      "text": "بہت",
+      "start": 56.397,
+      "end": 56.632,
+      "segment_id": 13,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 166,
+      "text": "ہی",
+      "start": 56.632,
+      "end": 56.789,
+      "segment_id": 13,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 167,
+      "text": "زیادہ",
+      "start": 56.789,
+      "end": 57.181,
+      "segment_id": 13,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 168,
+      "text": "چلا",
+      "start": 57.181,
+      "end": 57.416,
+      "segment_id": 13,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 169,
+      "text": "اور",
+      "start": 57.416,
+      "end": 57.652,
+      "segment_id": 13,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 170,
+      "text": "اب",
+      "start": 57.652,
+      "end": 57.808,
+      "segment_id": 13,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 171,
+      "text": "میری",
+      "start": 57.808,
+      "end": 58.122,
+      "segment_id": 13,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 172,
+      "text": "net",
+      "start": 58.122,
+      "end": 58.357,
+      "segment_id": 13,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 173,
+      "text": "income",
+      "start": 58.357,
+      "end": 58.828,
+      "segment_id": 13,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 174,
+      "text": "ہے",
+      "start": 58.828,
+      "end": 58.985,
+      "segment_id": 13,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 175,
+      "text": "دس",
+      "start": 58.985,
+      "end": 59.142,
+      "segment_id": 13,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 176,
+      "text": "ہزار",
+      "start": 59.142,
+      "end": 59.455,
+      "segment_id": 13,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 177,
+      "text": "کروڑ",
+      "start": 59.455,
+      "end": 59.769,
+      "segment_id": 13,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 178,
+      "text": "روپے۔",
+      "start": 59.769,
+      "end": 60.161,
+      "segment_id": 13,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 179,
+      "text": "-اور",
+      "start": 61.494,
+      "end": 61.779,
+      "segment_id": 14,
+      "keep": false,
+      "reason": "incomplete/false start"
+    },
+    {
+      "id": 180,
+      "text": "اب",
+      "start": 61.779,
+      "end": 61.921,
+      "segment_id": 14,
+      "keep": false,
+      "reason": "incomplete/false start"
+    },
+    {
+      "id": 181,
+      "text": "میرے",
+      "start": 61.921,
+      "end": 62.206,
+      "segment_id": 14,
+      "keep": false,
+      "reason": "incomplete/false start"
+    },
+    {
+      "id": 182,
+      "text": "پاس-",
+      "start": 62.206,
+      "end": 62.491,
+      "segment_id": 14,
+      "keep": false,
+      "reason": "incomplete/false start"
+    },
+    {
+      "id": 183,
+      "text": "-Worth.",
+      "start": 62.491,
+      "end": 62.99,
+      "segment_id": 14,
+      "keep": false,
+      "reason": "incomplete/false start"
+    },
+    {
+      "id": 184,
+      "text": "Worth.",
+      "start": 63.548,
+      "end": 63.675,
+      "segment_id": 15,
+      "keep": false,
+      "reason": "too_short"
+    },
+    {
+      "id": 185,
+      "text": "دس",
+      "start": 65.472,
+      "end": 65.623,
+      "segment_id": 16,
+      "keep": false,
+      "reason": "incomplete/false start"
+    },
+    {
+      "id": 186,
+      "text": "ہزار،",
+      "start": 65.623,
+      "end": 66.0,
+      "segment_id": 16,
+      "keep": false,
+      "reason": "incomplete/false start"
+    },
+    {
+      "id": 187,
+      "text": "پانچ",
+      "start": 67.604,
+      "end": 67.873,
+      "segment_id": 17,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 188,
+      "text": "پیسہ",
+      "start": 67.873,
+      "end": 68.143,
+      "segment_id": 17,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 189,
+      "text": "ہے",
+      "start": 68.143,
+      "end": 68.278,
+      "segment_id": 17,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 190,
+      "text": "اور",
+      "start": 68.278,
+      "end": 68.48,
+      "segment_id": 17,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 191,
+      "text": "اب",
+      "start": 68.48,
+      "end": 68.614,
+      "segment_id": 17,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 192,
+      "text": "میرے",
+      "start": 68.614,
+      "end": 68.884,
+      "segment_id": 17,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 193,
+      "text": "پاس",
+      "start": 68.884,
+      "end": 69.086,
+      "segment_id": 17,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 194,
+      "text": "ہیں",
+      "start": 69.086,
+      "end": 69.288,
+      "segment_id": 17,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 195,
+      "text": "دس",
+      "start": 69.288,
+      "end": 69.422,
+      "segment_id": 17,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 196,
+      "text": "ہزار",
+      "start": 69.422,
+      "end": 69.692,
+      "segment_id": 17,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 197,
+      "text": "کروڑ",
+      "start": 69.692,
+      "end": 69.961,
+      "segment_id": 17,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 198,
+      "text": "روپے۔",
+      "start": 69.961,
+      "end": 70.298,
+      "segment_id": 17,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 199,
+      "text": "جو",
+      "start": 74.2,
+      "end": 74.38,
+      "segment_id": 18,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 200,
+      "text": "بہت",
+      "start": 74.38,
+      "end": 74.65,
+      "segment_id": 18,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 201,
+      "text": "زیادہ",
+      "start": 74.65,
+      "end": 75.1,
+      "segment_id": 18,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 202,
+      "text": "چلا،",
+      "start": 75.1,
+      "end": 75.46,
+      "segment_id": 18,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 203,
+      "text": "جو",
+      "start": 75.46,
+      "end": 75.64,
+      "segment_id": 18,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 204,
+      "text": "بہت",
+      "start": 75.64,
+      "end": 75.91,
+      "segment_id": 18,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 205,
+      "text": "زیادہ",
+      "start": 75.91,
+      "end": 76.36,
+      "segment_id": 18,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 206,
+      "text": "چلا",
+      "start": 76.36,
+      "end": 76.63,
+      "segment_id": 18,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 207,
+      "text": "اور",
+      "start": 76.63,
+      "end": 76.9,
+      "segment_id": 18,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 208,
+      "text": "اب",
+      "start": 76.9,
+      "end": 77.08,
+      "segment_id": 18,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 209,
+      "text": "میرے",
+      "start": 77.08,
+      "end": 77.44,
+      "segment_id": 18,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 210,
+      "text": "پاس",
+      "start": 77.44,
+      "end": 77.71,
+      "segment_id": 18,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 211,
+      "text": "ہیں",
+      "start": 77.71,
+      "end": 77.98,
+      "segment_id": 18,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 212,
+      "text": "دس",
+      "start": 77.98,
+      "end": 78.16,
+      "segment_id": 18,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 213,
+      "text": "ہزار",
+      "start": 78.16,
+      "end": 78.52,
+      "segment_id": 18,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 214,
+      "text": "کروڑ",
+      "start": 78.52,
+      "end": 78.88,
+      "segment_id": 18,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 215,
+      "text": "روپے۔",
+      "start": 78.88,
+      "end": 79.33,
+      "segment_id": 18,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 216,
+      "text": "جو",
+      "start": 79.33,
+      "end": 79.51,
+      "segment_id": 18,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 217,
+      "text": "بہت",
+      "start": 79.51,
+      "end": 79.78,
+      "segment_id": 18,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 218,
+      "text": "زیادہ،",
+      "start": 79.78,
+      "end": 80.21,
+      "segment_id": 19,
+      "keep": false,
+      "reason": "repeated/retake of segment 18"
+    },
+    {
+      "id": 219,
+      "text": "جو",
+      "start": 80.21,
+      "end": 80.354,
+      "segment_id": 19,
+      "keep": false,
+      "reason": "repeated/retake of segment 18"
+    },
+    {
+      "id": 220,
+      "text": "بہت",
+      "start": 80.354,
+      "end": 80.569,
+      "segment_id": 19,
+      "keep": false,
+      "reason": "repeated/retake of segment 18"
+    },
+    {
+      "id": 221,
+      "text": "زیادہ",
+      "start": 80.569,
+      "end": 80.928,
+      "segment_id": 19,
+      "keep": false,
+      "reason": "repeated/retake of segment 18"
+    },
+    {
+      "id": 222,
+      "text": "چلا،",
+      "start": 80.928,
+      "end": 81.215,
+      "segment_id": 19,
+      "keep": false,
+      "reason": "repeated/retake of segment 18"
+    },
+    {
+      "id": 223,
+      "text": "جو",
+      "start": 81.215,
+      "end": 81.358,
+      "segment_id": 19,
+      "keep": false,
+      "reason": "repeated/retake of segment 18"
+    },
+    {
+      "id": 224,
+      "text": "بہت",
+      "start": 81.358,
+      "end": 81.574,
+      "segment_id": 19,
+      "keep": false,
+      "reason": "repeated/retake of segment 18"
+    },
+    {
+      "id": 225,
+      "text": "زیادہ",
+      "start": 81.574,
+      "end": 81.932,
+      "segment_id": 19,
+      "keep": false,
+      "reason": "repeated/retake of segment 18"
+    },
+    {
+      "id": 226,
+      "text": "چلا",
+      "start": 81.932,
+      "end": 82.148,
+      "segment_id": 19,
+      "keep": false,
+      "reason": "repeated/retake of segment 18"
+    },
+    {
+      "id": 227,
+      "text": "اور--",
+      "start": 82.148,
+      "end": 82.506,
+      "segment_id": 19,
+      "keep": false,
+      "reason": "repeated/retake of segment 18"
+    },
+    {
+      "id": 228,
+      "text": "جو",
+      "start": 82.506,
+      "end": 82.65,
+      "segment_id": 19,
+      "keep": false,
+      "reason": "repeated/retake of segment 18"
+    },
+    {
+      "id": 229,
+      "text": "بہت",
+      "start": 82.65,
+      "end": 82.865,
+      "segment_id": 19,
+      "keep": false,
+      "reason": "repeated/retake of segment 18"
+    },
+    {
+      "id": 230,
+      "text": "زیادہ",
+      "start": 82.865,
+      "end": 83.224,
+      "segment_id": 19,
+      "keep": false,
+      "reason": "repeated/retake of segment 18"
+    },
+    {
+      "id": 231,
+      "text": "چلا",
+      "start": 83.224,
+      "end": 83.439,
+      "segment_id": 19,
+      "keep": false,
+      "reason": "repeated/retake of segment 18"
+    },
+    {
+      "id": 232,
+      "text": "اور",
+      "start": 83.439,
+      "end": 83.654,
+      "segment_id": 19,
+      "keep": false,
+      "reason": "repeated/retake of segment 18"
+    },
+    {
+      "id": 233,
+      "text": "اب--",
+      "start": 83.654,
+      "end": 83.941,
+      "segment_id": 19,
+      "keep": false,
+      "reason": "repeated/retake of segment 18"
+    },
+    {
+      "id": 234,
+      "text": "جو",
+      "start": 83.941,
+      "end": 84.085,
+      "segment_id": 19,
+      "keep": false,
+      "reason": "repeated/retake of segment 18"
+    },
+    {
+      "id": 235,
+      "text": "بہت",
+      "start": 84.085,
+      "end": 84.3,
+      "segment_id": 19,
+      "keep": false,
+      "reason": "repeated/retake of segment 18"
+    },
+    {
+      "id": 236,
+      "text": "زیادہ",
+      "start": 84.3,
+      "end": 84.567,
+      "segment_id": 20,
+      "keep": false,
+      "reason": "repeated/retake of segment 19"
+    },
+    {
+      "id": 237,
+      "text": "چلا،",
+      "start": 84.567,
+      "end": 84.78,
+      "segment_id": 20,
+      "keep": false,
+      "reason": "repeated/retake of segment 19"
+    },
+    {
+      "id": 238,
+      "text": "جو",
+      "start": 85.591,
+      "end": 85.716,
+      "segment_id": 21,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 239,
+      "text": "بہت",
+      "start": 85.716,
+      "end": 85.904,
+      "segment_id": 21,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 240,
+      "text": "زیادہ",
+      "start": 85.904,
+      "end": 86.217,
+      "segment_id": 21,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 241,
+      "text": "چلا",
+      "start": 86.217,
+      "end": 86.405,
+      "segment_id": 21,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 242,
+      "text": "اور",
+      "start": 86.405,
+      "end": 86.593,
+      "segment_id": 21,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 243,
+      "text": "اب",
+      "start": 86.593,
+      "end": 86.718,
+      "segment_id": 21,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 244,
+      "text": "میرے",
+      "start": 86.718,
+      "end": 86.969,
+      "segment_id": 21,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 245,
+      "text": "پاس",
+      "start": 86.969,
+      "end": 87.157,
+      "segment_id": 21,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 246,
+      "text": "ہیں",
+      "start": 87.157,
+      "end": 87.345,
+      "segment_id": 21,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 247,
+      "text": "دس",
+      "start": 87.345,
+      "end": 87.47,
+      "segment_id": 21,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 248,
+      "text": "ہزار",
+      "start": 87.47,
+      "end": 87.72,
+      "segment_id": 21,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 249,
+      "text": "کروڑ",
+      "start": 87.72,
+      "end": 87.971,
+      "segment_id": 21,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 250,
+      "text": "روپے۔",
+      "start": 87.971,
+      "end": 88.284,
+      "segment_id": 21,
+      "keep": false,
+      "reason": "retake_of:#22"
+    },
+    {
+      "id": 251,
+      "text": "جو",
+      "start": 91.399,
+      "end": 91.582,
+      "segment_id": 22,
+      "keep": false,
+      "reason": "repeated/retake of segment 18 with false start"
+    },
+    {
+      "id": 252,
+      "text": "بہت",
+      "start": 91.582,
+      "end": 91.855,
+      "segment_id": 22,
+      "keep": false,
+      "reason": "repeated/retake of segment 18 with false start"
+    },
+    {
+      "id": 253,
+      "text": "زیادہ",
+      "start": 91.855,
+      "end": 92.312,
+      "segment_id": 22,
+      "keep": false,
+      "reason": "repeated/retake of segment 18 with false start"
+    },
+    {
+      "id": 254,
+      "text": "چلا",
+      "start": 92.312,
+      "end": 92.586,
+      "segment_id": 22,
+      "keep": false,
+      "reason": "repeated/retake of segment 18 with false start"
+    },
+    {
+      "id": 255,
+      "text": "اور",
+      "start": 92.586,
+      "end": 92.86,
+      "segment_id": 22,
+      "keep": false,
+      "reason": "repeated/retake of segment 18 with false start"
+    },
+    {
+      "id": 256,
+      "text": "اب",
+      "start": 92.86,
+      "end": 93.042,
+      "segment_id": 22,
+      "keep": false,
+      "reason": "repeated/retake of segment 18 with false start"
+    },
+    {
+      "id": 257,
+      "text": "میرے",
+      "start": 93.042,
+      "end": 93.407,
+      "segment_id": 22,
+      "keep": false,
+      "reason": "repeated/retake of segment 18 with false start"
+    },
+    {
+      "id": 258,
+      "text": "پاس",
+      "start": 93.407,
+      "end": 93.681,
+      "segment_id": 22,
+      "keep": false,
+      "reason": "repeated/retake of segment 18 with false start"
+    },
+    {
+      "id": 259,
+      "text": "ہیں",
+      "start": 93.681,
+      "end": 93.955,
+      "segment_id": 22,
+      "keep": false,
+      "reason": "repeated/retake of segment 18 with false start"
+    },
+    {
+      "id": 260,
+      "text": "دس",
+      "start": 93.955,
+      "end": 94.138,
+      "segment_id": 22,
+      "keep": false,
+      "reason": "repeated/retake of segment 18 with false start"
+    },
+    {
+      "id": 261,
+      "text": "ہزار",
+      "start": 94.138,
+      "end": 94.503,
+      "segment_id": 22,
+      "keep": false,
+      "reason": "repeated/retake of segment 18 with false start"
+    },
+    {
+      "id": 262,
+      "text": "کروڑ",
+      "start": 94.503,
+      "end": 94.868,
+      "segment_id": 22,
+      "keep": false,
+      "reason": "repeated/retake of segment 18 with false start"
+    },
+    {
+      "id": 263,
+      "text": "روپے۔",
+      "start": 94.868,
+      "end": 95.324,
+      "segment_id": 22,
+      "keep": false,
+      "reason": "repeated/retake of segment 18 with false start"
+    },
+    {
+      "id": 264,
+      "text": "اب",
+      "start": 95.324,
+      "end": 95.507,
+      "segment_id": 22,
+      "keep": false,
+      "reason": "repeated/retake of segment 18 with false start"
+    },
+    {
+      "id": 265,
+      "text": "ان",
+      "start": 95.507,
+      "end": 95.689,
+      "segment_id": 22,
+      "keep": false,
+      "reason": "repeated/retake of segment 18 with false start"
+    },
+    {
+      "id": 266,
+      "text": "دس",
+      "start": 95.689,
+      "end": 95.872,
+      "segment_id": 22,
+      "keep": false,
+      "reason": "repeated/retake of segment 18 with false start"
+    },
+    {
+      "id": 267,
+      "text": "ہزار",
+      "start": 95.872,
+      "end": 96.237,
+      "segment_id": 22,
+      "keep": false,
+      "reason": "repeated/retake of segment 18 with false start"
+    },
+    {
+      "id": 268,
+      "text": "کروڑ",
+      "start": 96.237,
+      "end": 96.602,
+      "segment_id": 22,
+      "keep": false,
+      "reason": "repeated/retake of segment 18 with false start"
+    },
+    {
+      "id": 269,
+      "text": "میں",
+      "start": 96.602,
+      "end": 96.876,
+      "segment_id": 22,
+      "keep": false,
+      "reason": "repeated/retake of segment 18 with false start"
+    },
+    {
+      "id": 270,
+      "text": "میں",
+      "start": 96.876,
+      "end": 97.15,
+      "segment_id": 22,
+      "keep": false,
+      "reason": "repeated/retake of segment 18 with false start"
+    },
+    {
+      "id": 271,
+      "text": "وہی",
+      "start": 97.15,
+      "end": 97.426,
+      "segment_id": 23,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 272,
+      "text": "same",
+      "start": 97.426,
+      "end": 97.793,
+      "segment_id": 23,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 273,
+      "text": "trick",
+      "start": 97.793,
+      "end": 98.253,
+      "segment_id": 23,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 274,
+      "text": "کھیلوں",
+      "start": 98.253,
+      "end": 98.804,
+      "segment_id": 23,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 275,
+      "text": "گا",
+      "start": 98.804,
+      "end": 98.988,
+      "segment_id": 23,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 276,
+      "text": "loan",
+      "start": 98.988,
+      "end": 99.355,
+      "segment_id": 23,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 277,
+      "text": "لینے",
+      "start": 99.355,
+      "end": 99.723,
+      "segment_id": 23,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 278,
+      "text": "والی",
+      "start": 99.723,
+      "end": 100.09,
+      "segment_id": 23,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 279,
+      "text": "تاکہ",
+      "start": 100.09,
+      "end": 100.458,
+      "segment_id": 23,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 280,
+      "text": "کم",
+      "start": 100.458,
+      "end": 100.642,
+      "segment_id": 23,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 281,
+      "text": "سے",
+      "start": 100.642,
+      "end": 100.825,
+      "segment_id": 23,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 282,
+      "text": "کم",
+      "start": 100.825,
+      "end": 101.009,
+      "segment_id": 23,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 283,
+      "text": "ٹیکس",
+      "start": 101.009,
+      "end": 101.377,
+      "segment_id": 23,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 284,
+      "text": "دینا",
+      "start": 101.377,
+      "end": 101.744,
+      "segment_id": 23,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 285,
+      "text": "پڑے",
+      "start": 101.744,
+      "end": 102.02,
+      "segment_id": 23,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 286,
+      "text": "مجھے۔",
+      "start": 102.02,
+      "end": 104.267,
+      "segment_id": 24,
+      "keep": false,
+      "reason": "incomplete continuation of segment 23"
+    },
+    {
+      "id": 287,
+      "text": "[بچے",
+      "start": 106.815,
+      "end": 106.835,
+      "segment_id": 25,
+      "keep": false,
+      "reason": "non_speech"
+    },
+    {
+      "id": 288,
+      "text": "کی",
+      "start": 106.835,
+      "end": 106.845,
+      "segment_id": 25,
+      "keep": false,
+      "reason": "non_speech"
+    },
+    {
+      "id": 289,
+      "text": "آواز]",
+      "start": 106.845,
+      "end": 106.87,
+      "segment_id": 25,
+      "keep": false,
+      "reason": "non_speech"
+    },
+    {
+      "id": 290,
+      "text": "دو",
+      "start": 117.613,
+      "end": 117.987,
+      "segment_id": 26,
+      "keep": false,
+      "reason": "incomplete - starts segment 28"
+    },
+    {
+      "id": 291,
+      "text": "فیصد",
+      "start": 117.987,
+      "end": 118.735,
+      "segment_id": 26,
+      "keep": false,
+      "reason": "incomplete - starts segment 28"
+    },
+    {
+      "id": 292,
+      "text": "loan.",
+      "start": 118.735,
+      "end": 119.67,
+      "segment_id": 26,
+      "keep": false,
+      "reason": "incomplete - starts segment 28"
+    },
+    {
+      "id": 293,
+      "text": "[بچے",
+      "start": 119.67,
+      "end": 121.214,
+      "segment_id": 27,
+      "keep": false,
+      "reason": "non_speech"
+    },
+    {
+      "id": 294,
+      "text": "کی",
+      "start": 121.214,
+      "end": 121.987,
+      "segment_id": 27,
+      "keep": false,
+      "reason": "non_speech"
+    },
+    {
+      "id": 295,
+      "text": "آواز]",
+      "start": 121.987,
+      "end": 123.917,
+      "segment_id": 27,
+      "keep": false,
+      "reason": "non_speech"
+    },
+    {
+      "id": 296,
+      "text": "یعنی",
+      "start": 160.588,
+      "end": 160.64,
+      "segment_id": 28,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 297,
+      "text": "دو",
+      "start": 160.64,
+      "end": 160.666,
+      "segment_id": 28,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 298,
+      "text": "فیصد",
+      "start": 160.666,
+      "end": 160.719,
+      "segment_id": 28,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 299,
+      "text": "loan",
+      "start": 160.719,
+      "end": 160.771,
+      "segment_id": 28,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 300,
+      "text": "مجھے",
+      "start": 160.771,
+      "end": 160.823,
+      "segment_id": 28,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 301,
+      "text": "کے",
+      "start": 160.823,
+      "end": 160.849,
+      "segment_id": 28,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 302,
+      "text": "دو",
+      "start": 160.849,
+      "end": 160.875,
+      "segment_id": 28,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 303,
+      "text": "سو",
+      "start": 160.875,
+      "end": 160.901,
+      "segment_id": 28,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 304,
+      "text": "کروڑ",
+      "start": 160.901,
+      "end": 160.954,
+      "segment_id": 28,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 305,
+      "text": "روپے۔",
+      "start": 160.954,
+      "end": 161.019,
+      "segment_id": 28,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 306,
+      "text": "[بچے",
+      "start": 161.019,
+      "end": 161.071,
+      "segment_id": 28,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 307,
+      "text": "کی",
+      "start": 161.071,
+      "end": 161.097,
+      "segment_id": 28,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 308,
+      "text": "آواز]",
+      "start": 161.097,
+      "end": 161.163,
+      "segment_id": 28,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 309,
+      "text": "دس",
+      "start": 161.163,
+      "end": 161.189,
+      "segment_id": 28,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 310,
+      "text": "فیصد。",
+      "start": 161.189,
+      "end": 161.254,
+      "segment_id": 28,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 311,
+      "text": "[بچے",
+      "start": 161.254,
+      "end": 161.306,
+      "segment_id": 28,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 312,
+      "text": "کی",
+      "start": 161.306,
+      "end": 161.332,
+      "segment_id": 28,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 313,
+      "text": "آواز]",
+      "start": 161.332,
+      "end": 161.398,
+      "segment_id": 28,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 314,
+      "text": "یعنی",
+      "start": 161.398,
+      "end": 161.45,
+      "segment_id": 28,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 315,
+      "text": "دو",
+      "start": 161.45,
+      "end": 161.546,
+      "segment_id": 29,
+      "keep": false,
+      "reason": "repeated/retake of segment 28"
+    },
+    {
+      "id": 316,
+      "text": "فیصد",
+      "start": 161.546,
+      "end": 161.739,
+      "segment_id": 29,
+      "keep": false,
+      "reason": "repeated/retake of segment 28"
+    },
+    {
+      "id": 317,
+      "text": "loan",
+      "start": 161.739,
+      "end": 161.931,
+      "segment_id": 29,
+      "keep": false,
+      "reason": "repeated/retake of segment 28"
+    },
+    {
+      "id": 318,
+      "text": "لوں",
+      "start": 161.931,
+      "end": 162.075,
+      "segment_id": 29,
+      "keep": false,
+      "reason": "repeated/retake of segment 28"
+    },
+    {
+      "id": 319,
+      "text": "گا",
+      "start": 162.075,
+      "end": 162.171,
+      "segment_id": 29,
+      "keep": false,
+      "reason": "repeated/retake of segment 28"
+    },
+    {
+      "id": 320,
+      "text": "میں",
+      "start": 162.171,
+      "end": 162.316,
+      "segment_id": 29,
+      "keep": false,
+      "reason": "repeated/retake of segment 28"
+    },
+    {
+      "id": 321,
+      "text": "اپنے--",
+      "start": 162.316,
+      "end": 162.604,
+      "segment_id": 29,
+      "keep": false,
+      "reason": "repeated/retake of segment 28"
+    },
+    {
+      "id": 322,
+      "text": "یعنی",
+      "start": 162.604,
+      "end": 162.797,
+      "segment_id": 29,
+      "keep": false,
+      "reason": "repeated/retake of segment 28"
+    },
+    {
+      "id": 323,
+      "text": "میں",
+      "start": 162.797,
+      "end": 162.941,
+      "segment_id": 29,
+      "keep": false,
+      "reason": "repeated/retake of segment 28"
+    },
+    {
+      "id": 324,
+      "text": "اپنے",
+      "start": 162.941,
+      "end": 163.133,
+      "segment_id": 29,
+      "keep": false,
+      "reason": "repeated/retake of segment 28"
+    },
+    {
+      "id": 325,
+      "text": "income",
+      "start": 163.133,
+      "end": 163.422,
+      "segment_id": 29,
+      "keep": false,
+      "reason": "repeated/retake of segment 28"
+    },
+    {
+      "id": 326,
+      "text": "پر--",
+      "start": 163.422,
+      "end": 163.614,
+      "segment_id": 29,
+      "keep": false,
+      "reason": "repeated/retake of segment 28"
+    },
+    {
+      "id": 327,
+      "text": "یعنی",
+      "start": 163.614,
+      "end": 163.807,
+      "segment_id": 29,
+      "keep": false,
+      "reason": "repeated/retake of segment 28"
+    },
+    {
+      "id": 328,
+      "text": "میری",
+      "start": 163.807,
+      "end": 163.999,
+      "segment_id": 29,
+      "keep": false,
+      "reason": "repeated/retake of segment 28"
+    },
+    {
+      "id": 329,
+      "text": "income",
+      "start": 163.999,
+      "end": 164.288,
+      "segment_id": 29,
+      "keep": false,
+      "reason": "repeated/retake of segment 28"
+    },
+    {
+      "id": 330,
+      "text": "پر",
+      "start": 164.288,
+      "end": 164.384,
+      "segment_id": 29,
+      "keep": false,
+      "reason": "repeated/retake of segment 28"
+    },
+    {
+      "id": 331,
+      "text": "دو",
+      "start": 164.384,
+      "end": 164.48,
+      "segment_id": 29,
+      "keep": false,
+      "reason": "repeated/retake of segment 28"
+    },
+    {
+      "id": 332,
+      "text": "فیصد",
+      "start": 164.48,
+      "end": 164.8,
+      "segment_id": 30,
+      "keep": false,
+      "reason": "retake_of:#34"
+    },
+    {
+      "id": 333,
+      "text": "loan",
+      "start": 164.8,
+      "end": 165.12,
+      "segment_id": 30,
+      "keep": false,
+      "reason": "retake_of:#34"
+    },
+    {
+      "id": 334,
+      "text": "میں",
+      "start": 165.12,
+      "end": 165.36,
+      "segment_id": 30,
+      "keep": false,
+      "reason": "retake_of:#34"
+    },
+    {
+      "id": 335,
+      "text": "لوں",
+      "start": 165.36,
+      "end": 165.6,
+      "segment_id": 30,
+      "keep": false,
+      "reason": "retake_of:#34"
+    },
+    {
+      "id": 336,
+      "text": "گا",
+      "start": 165.6,
+      "end": 165.76,
+      "segment_id": 30,
+      "keep": false,
+      "reason": "retake_of:#34"
+    },
+    {
+      "id": 337,
+      "text": "جو",
+      "start": 165.76,
+      "end": 165.92,
+      "segment_id": 30,
+      "keep": false,
+      "reason": "retake_of:#34"
+    },
+    {
+      "id": 338,
+      "text": "کہ",
+      "start": 165.92,
+      "end": 166.08,
+      "segment_id": 30,
+      "keep": false,
+      "reason": "retake_of:#34"
+    },
+    {
+      "id": 339,
+      "text": "بنے",
+      "start": 166.08,
+      "end": 166.32,
+      "segment_id": 30,
+      "keep": false,
+      "reason": "retake_of:#34"
+    },
+    {
+      "id": 340,
+      "text": "گا",
+      "start": 166.32,
+      "end": 166.48,
+      "segment_id": 30,
+      "keep": false,
+      "reason": "retake_of:#34"
+    },
+    {
+      "id": 341,
+      "text": "دو",
+      "start": 166.48,
+      "end": 166.64,
+      "segment_id": 30,
+      "keep": false,
+      "reason": "retake_of:#34"
+    },
+    {
+      "id": 342,
+      "text": "سو",
+      "start": 166.64,
+      "end": 166.8,
+      "segment_id": 30,
+      "keep": false,
+      "reason": "retake_of:#34"
+    },
+    {
+      "id": 343,
+      "text": "کروڑ",
+      "start": 166.8,
+      "end": 167.12,
+      "segment_id": 30,
+      "keep": false,
+      "reason": "retake_of:#34"
+    },
+    {
+      "id": 344,
+      "text": "روپے",
+      "start": 167.12,
+      "end": 167.44,
+      "segment_id": 30,
+      "keep": false,
+      "reason": "retake_of:#34"
+    },
+    {
+      "id": 345,
+      "text": "اور-",
+      "start": 167.44,
+      "end": 167.76,
+      "segment_id": 30,
+      "keep": false,
+      "reason": "retake_of:#34"
+    },
+    {
+      "id": 346,
+      "text": "[بچے",
+      "start": 168.9,
+      "end": 169.118,
+      "segment_id": 31,
+      "keep": false,
+      "reason": "non_speech"
+    },
+    {
+      "id": 347,
+      "text": "کی",
+      "start": 169.118,
+      "end": 169.227,
+      "segment_id": 31,
+      "keep": false,
+      "reason": "non_speech"
+    },
+    {
+      "id": 348,
+      "text": "آواز]",
+      "start": 169.227,
+      "end": 169.5,
+      "segment_id": 31,
+      "keep": false,
+      "reason": "non_speech"
+    },
+    {
+      "id": 349,
+      "text": "ٹیکس",
+      "start": 170.252,
+      "end": 170.474,
+      "segment_id": 32,
+      "keep": false,
+      "reason": "too_short"
+    },
+    {
+      "id": 350,
+      "text": "کے。",
+      "start": 170.474,
+      "end": 170.64,
+      "segment_id": 32,
+      "keep": false,
+      "reason": "too_short"
+    },
+    {
+      "id": 351,
+      "text": "یعنی",
+      "start": 171.553,
+      "end": 171.785,
+      "segment_id": 33,
+      "keep": false,
+      "reason": "repeated/retake of segment 30"
+    },
+    {
+      "id": 352,
+      "text": "کہ",
+      "start": 171.785,
+      "end": 171.901,
+      "segment_id": 33,
+      "keep": false,
+      "reason": "repeated/retake of segment 30"
+    },
+    {
+      "id": 353,
+      "text": "اپنی",
+      "start": 171.901,
+      "end": 172.132,
+      "segment_id": 33,
+      "keep": false,
+      "reason": "repeated/retake of segment 30"
+    },
+    {
+      "id": 354,
+      "text": "total",
+      "start": 172.132,
+      "end": 172.422,
+      "segment_id": 33,
+      "keep": false,
+      "reason": "repeated/retake of segment 30"
+    },
+    {
+      "id": 355,
+      "text": "income",
+      "start": 172.422,
+      "end": 172.769,
+      "segment_id": 33,
+      "keep": false,
+      "reason": "repeated/retake of segment 30"
+    },
+    {
+      "id": 356,
+      "text": "پہ",
+      "start": 172.769,
+      "end": 172.885,
+      "segment_id": 33,
+      "keep": false,
+      "reason": "repeated/retake of segment 30"
+    },
+    {
+      "id": 357,
+      "text": "میں",
+      "start": 172.885,
+      "end": 173.059,
+      "segment_id": 33,
+      "keep": false,
+      "reason": "repeated/retake of segment 30"
+    },
+    {
+      "id": 358,
+      "text": "دو",
+      "start": 173.059,
+      "end": 173.175,
+      "segment_id": 33,
+      "keep": false,
+      "reason": "repeated/retake of segment 30"
+    },
+    {
+      "id": 359,
+      "text": "فیصد--",
+      "start": 173.175,
+      "end": 173.522,
+      "segment_id": 33,
+      "keep": false,
+      "reason": "repeated/retake of segment 30"
+    },
+    {
+      "id": 360,
+      "text": "یعنی",
+      "start": 173.522,
+      "end": 173.754,
+      "segment_id": 33,
+      "keep": false,
+      "reason": "repeated/retake of segment 30"
+    },
+    {
+      "id": 361,
+      "text": "اپنی",
+      "start": 173.754,
+      "end": 173.986,
+      "segment_id": 33,
+      "keep": false,
+      "reason": "repeated/retake of segment 30"
+    },
+    {
+      "id": 362,
+      "text": "total",
+      "start": 173.986,
+      "end": 174.275,
+      "segment_id": 33,
+      "keep": false,
+      "reason": "repeated/retake of segment 30"
+    },
+    {
+      "id": 363,
+      "text": "income",
+      "start": 174.275,
+      "end": 174.623,
+      "segment_id": 33,
+      "keep": false,
+      "reason": "repeated/retake of segment 30"
+    },
+    {
+      "id": 364,
+      "text": "پہ",
+      "start": 174.623,
+      "end": 174.739,
+      "segment_id": 33,
+      "keep": false,
+      "reason": "repeated/retake of segment 30"
+    },
+    {
+      "id": 365,
+      "text": "میں",
+      "start": 174.739,
+      "end": 174.912,
+      "segment_id": 33,
+      "keep": false,
+      "reason": "repeated/retake of segment 30"
+    },
+    {
+      "id": 366,
+      "text": "دو",
+      "start": 174.912,
+      "end": 175.028,
+      "segment_id": 33,
+      "keep": false,
+      "reason": "repeated/retake of segment 30"
+    },
+    {
+      "id": 367,
+      "text": "فیصد",
+      "start": 175.028,
+      "end": 175.26,
+      "segment_id": 33,
+      "keep": false,
+      "reason": "repeated/retake of segment 30"
+    },
+    {
+      "id": 368,
+      "text": "ٹیکس",
+      "start": 175.26,
+      "end": 175.69,
+      "segment_id": 34,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 369,
+      "text": "دوں",
+      "start": 175.69,
+      "end": 176.013,
+      "segment_id": 34,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 370,
+      "text": "گا",
+      "start": 176.013,
+      "end": 176.229,
+      "segment_id": 34,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 371,
+      "text": "جو",
+      "start": 176.229,
+      "end": 176.444,
+      "segment_id": 34,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 372,
+      "text": "کہ",
+      "start": 176.444,
+      "end": 176.659,
+      "segment_id": 34,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 373,
+      "text": "بنے",
+      "start": 176.659,
+      "end": 176.982,
+      "segment_id": 34,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 374,
+      "text": "گا",
+      "start": 176.982,
+      "end": 177.197,
+      "segment_id": 34,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 375,
+      "text": "دو",
+      "start": 177.197,
+      "end": 177.412,
+      "segment_id": 34,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 376,
+      "text": "سو",
+      "start": 177.412,
+      "end": 177.628,
+      "segment_id": 34,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 377,
+      "text": "کروڑ",
+      "start": 177.628,
+      "end": 178.058,
+      "segment_id": 34,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 378,
+      "text": "روپے",
+      "start": 178.058,
+      "end": 178.489,
+      "segment_id": 34,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 379,
+      "text": "بنا",
+      "start": 178.489,
+      "end": 178.812,
+      "segment_id": 34,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 380,
+      "text": "ٹیکس",
+      "start": 178.812,
+      "end": 179.242,
+      "segment_id": 34,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 381,
+      "text": "کے۔",
+      "start": 179.242,
+      "end": 179.565,
+      "segment_id": 34,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 382,
+      "text": "اور",
+      "start": 185.444,
+      "end": 185.706,
+      "segment_id": 35,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 383,
+      "text": "میرے",
+      "start": 185.706,
+      "end": 186.055,
+      "segment_id": 35,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 384,
+      "text": "جو",
+      "start": 186.055,
+      "end": 186.23,
+      "segment_id": 35,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 385,
+      "text": "دس",
+      "start": 186.23,
+      "end": 186.405,
+      "segment_id": 35,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 386,
+      "text": "ہزار",
+      "start": 186.405,
+      "end": 186.754,
+      "segment_id": 35,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 387,
+      "text": "کروڑ",
+      "start": 186.754,
+      "end": 187.103,
+      "segment_id": 35,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 388,
+      "text": "ہیں",
+      "start": 187.103,
+      "end": 187.365,
+      "segment_id": 35,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 389,
+      "text": "وہ",
+      "start": 187.365,
+      "end": 187.54,
+      "segment_id": 35,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 390,
+      "text": "دس",
+      "start": 187.54,
+      "end": 187.715,
+      "segment_id": 35,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 391,
+      "text": "percent",
+      "start": 187.715,
+      "end": 188.326,
+      "segment_id": 35,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 392,
+      "text": "کی",
+      "start": 188.326,
+      "end": 188.501,
+      "segment_id": 35,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 393,
+      "text": "income",
+      "start": 188.501,
+      "end": 189.025,
+      "segment_id": 35,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 394,
+      "text": "سے",
+      "start": 189.025,
+      "end": 189.2,
+      "segment_id": 35,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 395,
+      "text": "بڑھتے",
+      "start": 189.2,
+      "end": 189.636,
+      "segment_id": 35,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 396,
+      "text": "جا",
+      "start": 189.636,
+      "end": 189.811,
+      "segment_id": 35,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 397,
+      "text": "رہے",
+      "start": 189.811,
+      "end": 190.073,
+      "segment_id": 35,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 398,
+      "text": "ہیں۔",
+      "start": 190.073,
+      "end": 190.422,
+      "segment_id": 35,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 399,
+      "text": "اور",
+      "start": 190.422,
+      "end": 190.684,
+      "segment_id": 35,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 400,
+      "text": "جو",
+      "start": 190.684,
+      "end": 190.859,
+      "segment_id": 35,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 401,
+      "text": "میرے",
+      "start": 190.86,
+      "end": 191.161,
+      "segment_id": 36,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 402,
+      "text": "دو--",
+      "start": 191.161,
+      "end": 191.462,
+      "segment_id": 36,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 403,
+      "text": "اور",
+      "start": 191.462,
+      "end": 191.688,
+      "segment_id": 36,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 404,
+      "text": "جو",
+      "start": 191.688,
+      "end": 191.838,
+      "segment_id": 36,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 405,
+      "text": "میرے",
+      "start": 191.838,
+      "end": 192.139,
+      "segment_id": 36,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 406,
+      "text": "دس",
+      "start": 192.139,
+      "end": 192.29,
+      "segment_id": 36,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 407,
+      "text": "ہزار",
+      "start": 192.29,
+      "end": 192.59,
+      "segment_id": 36,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 408,
+      "text": "کروڑ",
+      "start": 192.59,
+      "end": 192.891,
+      "segment_id": 36,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 409,
+      "text": "ہیں،",
+      "start": 192.891,
+      "end": 193.192,
+      "segment_id": 36,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 410,
+      "text": "جو",
+      "start": 193.192,
+      "end": 193.343,
+      "segment_id": 36,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 411,
+      "text": "میرے",
+      "start": 193.343,
+      "end": 193.644,
+      "segment_id": 36,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 412,
+      "text": "دس",
+      "start": 193.644,
+      "end": 193.794,
+      "segment_id": 36,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 413,
+      "text": "ہزار",
+      "start": 193.794,
+      "end": 194.095,
+      "segment_id": 36,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 414,
+      "text": "کروڑ",
+      "start": 194.095,
+      "end": 194.396,
+      "segment_id": 36,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 415,
+      "text": "ہیں",
+      "start": 194.396,
+      "end": 194.622,
+      "segment_id": 36,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 416,
+      "text": "وہ",
+      "start": 194.622,
+      "end": 194.772,
+      "segment_id": 36,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 417,
+      "text": "دس",
+      "start": 194.772,
+      "end": 194.923,
+      "segment_id": 36,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 418,
+      "text": "percent",
+      "start": 194.923,
+      "end": 195.45,
+      "segment_id": 36,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 419,
+      "text": "کی",
+      "start": 195.45,
+      "end": 195.6,
+      "segment_id": 36,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 420,
+      "text": "income",
+      "start": 195.6,
+      "end": 196.487,
+      "segment_id": 37,
+      "keep": false,
+      "reason": "repeated/retake of segment 35"
+    },
+    {
+      "id": 421,
+      "text": "سے",
+      "start": 196.487,
+      "end": 196.783,
+      "segment_id": 37,
+      "keep": false,
+      "reason": "repeated/retake of segment 35"
+    },
+    {
+      "id": 422,
+      "text": "بڑھتے",
+      "start": 196.783,
+      "end": 197.522,
+      "segment_id": 37,
+      "keep": false,
+      "reason": "repeated/retake of segment 35"
+    },
+    {
+      "id": 423,
+      "text": "جائیں",
+      "start": 197.522,
+      "end": 198.261,
+      "segment_id": 37,
+      "keep": false,
+      "reason": "repeated/retake of segment 35"
+    },
+    {
+      "id": 424,
+      "text": "گے۔",
+      "start": 198.261,
+      "end": 198.705,
+      "segment_id": 37,
+      "keep": false,
+      "reason": "repeated/retake of segment 35"
+    },
+    {
+      "id": 425,
+      "text": "[بچے",
+      "start": 199.7,
+      "end": 199.951,
+      "segment_id": 38,
+      "keep": false,
+      "reason": "non_speech"
+    },
+    {
+      "id": 426,
+      "text": "کی",
+      "start": 199.951,
+      "end": 200.076,
+      "segment_id": 38,
+      "keep": false,
+      "reason": "non_speech"
+    },
+    {
+      "id": 427,
+      "text": "آواز]",
+      "start": 200.076,
+      "end": 200.39,
+      "segment_id": 38,
+      "keep": false,
+      "reason": "non_speech"
+    },
+    {
+      "id": 428,
+      "text": "اور",
+      "start": 201.0,
+      "end": 201.178,
+      "segment_id": 39,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 429,
+      "text": "جو",
+      "start": 201.178,
+      "end": 201.297,
+      "segment_id": 39,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 430,
+      "text": "میرے",
+      "start": 201.297,
+      "end": 201.535,
+      "segment_id": 39,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 431,
+      "text": "دس",
+      "start": 201.535,
+      "end": 201.654,
+      "segment_id": 39,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 432,
+      "text": "ہزار",
+      "start": 201.654,
+      "end": 201.892,
+      "segment_id": 39,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 433,
+      "text": "کروڑ",
+      "start": 201.892,
+      "end": 202.13,
+      "segment_id": 39,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 434,
+      "text": "ہیں",
+      "start": 202.13,
+      "end": 202.308,
+      "segment_id": 39,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 435,
+      "text": "وہ",
+      "start": 202.308,
+      "end": 202.427,
+      "segment_id": 39,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 436,
+      "text": "دس",
+      "start": 202.427,
+      "end": 202.546,
+      "segment_id": 39,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 437,
+      "text": "percent",
+      "start": 202.546,
+      "end": 202.962,
+      "segment_id": 39,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 438,
+      "text": "کی--",
+      "start": 202.962,
+      "end": 203.2,
+      "segment_id": 39,
+      "keep": false,
+      "reason": "retake_of:#40"
+    },
+    {
+      "id": 439,
+      "text": "اور",
+      "start": 204.249,
+      "end": 204.479,
+      "segment_id": 40,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 440,
+      "text": "جو",
+      "start": 204.479,
+      "end": 204.633,
+      "segment_id": 40,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 441,
+      "text": "میرے",
+      "start": 204.633,
+      "end": 204.94,
+      "segment_id": 40,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 442,
+      "text": "دس",
+      "start": 204.94,
+      "end": 205.094,
+      "segment_id": 40,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 443,
+      "text": "ہزار",
+      "start": 205.094,
+      "end": 205.401,
+      "segment_id": 40,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 444,
+      "text": "کروڑ",
+      "start": 205.401,
+      "end": 205.708,
+      "segment_id": 40,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 445,
+      "text": "ہیں",
+      "start": 205.708,
+      "end": 205.939,
+      "segment_id": 40,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 446,
+      "text": "وہ",
+      "start": 205.939,
+      "end": 206.092,
+      "segment_id": 40,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 447,
+      "text": "دس",
+      "start": 206.092,
+      "end": 206.246,
+      "segment_id": 40,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 448,
+      "text": "percent",
+      "start": 206.246,
+      "end": 206.784,
+      "segment_id": 40,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 449,
+      "text": "کی",
+      "start": 206.784,
+      "end": 206.937,
+      "segment_id": 40,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 450,
+      "text": "growth",
+      "start": 206.937,
+      "end": 207.398,
+      "segment_id": 40,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 451,
+      "text": "سے",
+      "start": 207.398,
+      "end": 207.552,
+      "segment_id": 40,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 452,
+      "text": "بڑھتے",
+      "start": 207.552,
+      "end": 207.936,
+      "segment_id": 40,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 453,
+      "text": "جائیں",
+      "start": 207.936,
+      "end": 208.32,
+      "segment_id": 40,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 454,
+      "text": "گے۔",
+      "start": 208.32,
+      "end": 212.1,
+      "segment_id": 41,
+      "keep": false,
+      "reason": "incomplete continuation of segment 40"
+    },
+    {
+      "id": 455,
+      "text": "چلیں",
+      "start": 218.866,
+      "end": 219.101,
+      "segment_id": 42,
+      "keep": false,
+      "reason": "retake_of:#49"
+    },
+    {
+      "id": 456,
+      "text": "اب،",
+      "start": 219.101,
+      "end": 219.277,
+      "segment_id": 42,
+      "keep": false,
+      "reason": "retake_of:#49"
+    },
+    {
+      "id": 457,
+      "text": "اب",
+      "start": 219.277,
+      "end": 219.394,
+      "segment_id": 42,
+      "keep": false,
+      "reason": "retake_of:#49"
+    },
+    {
+      "id": 458,
+      "text": "میرا",
+      "start": 219.394,
+      "end": 219.629,
+      "segment_id": 42,
+      "keep": false,
+      "reason": "retake_of:#49"
+    },
+    {
+      "id": 459,
+      "text": "گھر",
+      "start": 219.629,
+      "end": 219.805,
+      "segment_id": 42,
+      "keep": false,
+      "reason": "retake_of:#49"
+    },
+    {
+      "id": 460,
+      "text": "دیکھتے",
+      "start": 219.805,
+      "end": 220.157,
+      "segment_id": 42,
+      "keep": false,
+      "reason": "retake_of:#49"
+    },
+    {
+      "id": 461,
+      "text": "ہیں۔",
+      "start": 220.157,
+      "end": 220.392,
+      "segment_id": 42,
+      "keep": false,
+      "reason": "retake_of:#49"
+    },
+    {
+      "id": 462,
+      "text": "تو",
+      "start": 220.392,
+      "end": 220.509,
+      "segment_id": 42,
+      "keep": false,
+      "reason": "retake_of:#49"
+    },
+    {
+      "id": 463,
+      "text": "چلیں",
+      "start": 220.509,
+      "end": 220.744,
+      "segment_id": 42,
+      "keep": false,
+      "reason": "retake_of:#49"
+    },
+    {
+      "id": 464,
+      "text": "اب",
+      "start": 220.744,
+      "end": 220.861,
+      "segment_id": 42,
+      "keep": false,
+      "reason": "retake_of:#49"
+    },
+    {
+      "id": 465,
+      "text": "میرا",
+      "start": 220.861,
+      "end": 221.096,
+      "segment_id": 42,
+      "keep": false,
+      "reason": "retake_of:#49"
+    },
+    {
+      "id": 466,
+      "text": "گھر",
+      "start": 221.096,
+      "end": 221.272,
+      "segment_id": 42,
+      "keep": false,
+      "reason": "retake_of:#49"
+    },
+    {
+      "id": 467,
+      "text": "دیکھتے",
+      "start": 221.272,
+      "end": 221.624,
+      "segment_id": 42,
+      "keep": false,
+      "reason": "retake_of:#49"
+    },
+    {
+      "id": 468,
+      "text": "ہیں۔",
+      "start": 221.624,
+      "end": 221.859,
+      "segment_id": 42,
+      "keep": false,
+      "reason": "retake_of:#49"
+    },
+    {
+      "id": 469,
+      "text": "میں",
+      "start": 221.859,
+      "end": 222.035,
+      "segment_id": 42,
+      "keep": false,
+      "reason": "retake_of:#49"
+    },
+    {
+      "id": 470,
+      "text": "F6",
+      "start": 222.035,
+      "end": 222.152,
+      "segment_id": 42,
+      "keep": false,
+      "reason": "retake_of:#49"
+    },
+    {
+      "id": 471,
+      "text": "اسلام",
+      "start": 222.152,
+      "end": 222.445,
+      "segment_id": 42,
+      "keep": false,
+      "reason": "retake_of:#49"
+    },
+    {
+      "id": 472,
+      "text": "آباد",
+      "start": 222.445,
+      "end": 222.68,
+      "segment_id": 42,
+      "keep": false,
+      "reason": "retake_of:#49"
+    },
+    {
+      "id": 473,
+      "text": "میں",
+      "start": 222.68,
+      "end": 222.818,
+      "segment_id": 43,
+      "keep": false,
+      "reason": "incomplete/false start"
+    },
+    {
+      "id": 474,
+      "text": "رہتا",
+      "start": 222.818,
+      "end": 223.002,
+      "segment_id": 43,
+      "keep": false,
+      "reason": "incomplete/false start"
+    },
+    {
+      "id": 475,
+      "text": "ہوں",
+      "start": 223.002,
+      "end": 223.14,
+      "segment_id": 43,
+      "keep": false,
+      "reason": "incomplete/false start"
+    },
+    {
+      "id": 476,
+      "text": "تو",
+      "start": 224.008,
+      "end": 224.115,
+      "segment_id": 44,
+      "keep": false,
+      "reason": "retake_of:#49"
+    },
+    {
+      "id": 477,
+      "text": "اب",
+      "start": 224.115,
+      "end": 224.221,
+      "segment_id": 44,
+      "keep": false,
+      "reason": "retake_of:#49"
+    },
+    {
+      "id": 478,
+      "text": "میرا",
+      "start": 224.221,
+      "end": 224.434,
+      "segment_id": 44,
+      "keep": false,
+      "reason": "retake_of:#49"
+    },
+    {
+      "id": 479,
+      "text": "گھر",
+      "start": 224.434,
+      "end": 224.594,
+      "segment_id": 44,
+      "keep": false,
+      "reason": "retake_of:#49"
+    },
+    {
+      "id": 480,
+      "text": "دیکھتے",
+      "start": 224.594,
+      "end": 224.914,
+      "segment_id": 44,
+      "keep": false,
+      "reason": "retake_of:#49"
+    },
+    {
+      "id": 481,
+      "text": "ہیں۔",
+      "start": 224.914,
+      "end": 225.127,
+      "segment_id": 44,
+      "keep": false,
+      "reason": "retake_of:#49"
+    },
+    {
+      "id": 482,
+      "text": "میں",
+      "start": 225.127,
+      "end": 225.287,
+      "segment_id": 44,
+      "keep": false,
+      "reason": "retake_of:#49"
+    },
+    {
+      "id": 483,
+      "text": "F6",
+      "start": 225.287,
+      "end": 225.394,
+      "segment_id": 44,
+      "keep": false,
+      "reason": "retake_of:#49"
+    },
+    {
+      "id": 484,
+      "text": "اسلام",
+      "start": 225.394,
+      "end": 225.66,
+      "segment_id": 44,
+      "keep": false,
+      "reason": "retake_of:#49"
+    },
+    {
+      "id": 485,
+      "text": "آباد",
+      "start": 225.66,
+      "end": 225.874,
+      "segment_id": 44,
+      "keep": false,
+      "reason": "retake_of:#49"
+    },
+    {
+      "id": 486,
+      "text": "میں",
+      "start": 225.874,
+      "end": 226.034,
+      "segment_id": 44,
+      "keep": false,
+      "reason": "retake_of:#49"
+    },
+    {
+      "id": 487,
+      "text": "رہتا",
+      "start": 226.034,
+      "end": 226.247,
+      "segment_id": 44,
+      "keep": false,
+      "reason": "retake_of:#49"
+    },
+    {
+      "id": 488,
+      "text": "ہوں-",
+      "start": 226.247,
+      "end": 226.46,
+      "segment_id": 44,
+      "keep": false,
+      "reason": "retake_of:#49"
+    },
+    {
+      "id": 489,
+      "text": "[بچے",
+      "start": 227.82,
+      "end": 228.473,
+      "segment_id": 45,
+      "keep": false,
+      "reason": "child noise - non-speech"
+    },
+    {
+      "id": 490,
+      "text": "کی",
+      "start": 228.473,
+      "end": 228.8,
+      "segment_id": 45,
+      "keep": false,
+      "reason": "child noise - non-speech"
+    },
+    {
+      "id": 491,
+      "text": "آواز]",
+      "start": 228.8,
+      "end": 229.617,
+      "segment_id": 45,
+      "keep": false,
+      "reason": "child noise - non-speech"
+    },
+    {
+      "id": 492,
+      "text": "جس",
+      "start": 229.617,
+      "end": 229.943,
+      "segment_id": 45,
+      "keep": false,
+      "reason": "child noise - non-speech"
+    },
+    {
+      "id": 493,
+      "text": "میں",
+      "start": 229.943,
+      "end": 230.433,
+      "segment_id": 45,
+      "keep": false,
+      "reason": "child noise - non-speech"
+    },
+    {
+      "id": 494,
+      "text": "اس",
+      "start": 230.433,
+      "end": 230.76,
+      "segment_id": 45,
+      "keep": false,
+      "reason": "child noise - non-speech"
+    },
+    {
+      "id": 495,
+      "text": "کے",
+      "start": 230.76,
+      "end": 231.087,
+      "segment_id": 45,
+      "keep": false,
+      "reason": "child noise - non-speech"
+    },
+    {
+      "id": 496,
+      "text": "bedroom",
+      "start": 231.087,
+      "end": 232.23,
+      "segment_id": 45,
+      "keep": false,
+      "reason": "child noise - non-speech"
+    },
+    {
+      "id": 497,
+      "text": "ہیں",
+      "start": 232.23,
+      "end": 232.72,
+      "segment_id": 45,
+      "keep": false,
+      "reason": "child noise - non-speech"
+    },
+    {
+      "id": 498,
+      "text": "چار--",
+      "start": 234.12,
+      "end": 234.26,
+      "segment_id": 46,
+      "keep": false,
+      "reason": "too_short"
+    },
+    {
+      "id": 499,
+      "text": "جس",
+      "start": 236.04,
+      "end": 236.259,
+      "segment_id": 47,
+      "keep": false,
+      "reason": "repeated/retake - bedroom count"
+    },
+    {
+      "id": 500,
+      "text": "میں",
+      "start": 236.259,
+      "end": 236.587,
+      "segment_id": 47,
+      "keep": false,
+      "reason": "repeated/retake - bedroom count"
+    },
+    {
+      "id": 501,
+      "text": "چھ--",
+      "start": 236.587,
+      "end": 237.025,
+      "segment_id": 47,
+      "keep": false,
+      "reason": "repeated/retake - bedroom count"
+    },
+    {
+      "id": 502,
+      "text": "جو",
+      "start": 237.025,
+      "end": 237.244,
+      "segment_id": 47,
+      "keep": false,
+      "reason": "repeated/retake - bedroom count"
+    },
+    {
+      "id": 503,
+      "text": "کہ",
+      "start": 237.244,
+      "end": 237.463,
+      "segment_id": 47,
+      "keep": false,
+      "reason": "repeated/retake - bedroom count"
+    },
+    {
+      "id": 504,
+      "text": "چار",
+      "start": 237.463,
+      "end": 237.791,
+      "segment_id": 47,
+      "keep": false,
+      "reason": "repeated/retake - bedroom count"
+    },
+    {
+      "id": 505,
+      "text": "کنال",
+      "start": 237.791,
+      "end": 238.229,
+      "segment_id": 47,
+      "keep": false,
+      "reason": "repeated/retake - bedroom count"
+    },
+    {
+      "id": 506,
+      "text": "-رقبے",
+      "start": 239.256,
+      "end": 239.829,
+      "segment_id": 48,
+      "keep": false,
+      "reason": "retake_of:#52"
+    },
+    {
+      "id": 507,
+      "text": "پر",
+      "start": 239.829,
+      "end": 240.058,
+      "segment_id": 48,
+      "keep": false,
+      "reason": "retake_of:#52"
+    },
+    {
+      "id": 508,
+      "text": "پھیلا",
+      "start": 240.058,
+      "end": 240.631,
+      "segment_id": 48,
+      "keep": false,
+      "reason": "retake_of:#52"
+    },
+    {
+      "id": 509,
+      "text": "ہے۔",
+      "start": 240.631,
+      "end": 240.974,
+      "segment_id": 48,
+      "keep": false,
+      "reason": "retake_of:#52"
+    },
+    {
+      "id": 510,
+      "text": "-جو",
+      "start": 240.974,
+      "end": 241.318,
+      "segment_id": 48,
+      "keep": false,
+      "reason": "retake_of:#52"
+    },
+    {
+      "id": 511,
+      "text": "کہ",
+      "start": 241.318,
+      "end": 241.547,
+      "segment_id": 48,
+      "keep": false,
+      "reason": "retake_of:#52"
+    },
+    {
+      "id": 512,
+      "text": "چار--",
+      "start": 241.547,
+      "end": 242.12,
+      "segment_id": 48,
+      "keep": false,
+      "reason": "retake_of:#52"
+    },
+    {
+      "id": 513,
+      "text": "اب",
+      "start": 243.1,
+      "end": 243.223,
+      "segment_id": 49,
+      "keep": false,
+      "reason": "repeated/retake of segment 44"
+    },
+    {
+      "id": 514,
+      "text": "میرا",
+      "start": 243.223,
+      "end": 243.468,
+      "segment_id": 49,
+      "keep": false,
+      "reason": "repeated/retake of segment 44"
+    },
+    {
+      "id": 515,
+      "text": "گھر",
+      "start": 243.468,
+      "end": 243.652,
+      "segment_id": 49,
+      "keep": false,
+      "reason": "repeated/retake of segment 44"
+    },
+    {
+      "id": 516,
+      "text": "دیکھتے",
+      "start": 243.652,
+      "end": 244.02,
+      "segment_id": 49,
+      "keep": false,
+      "reason": "repeated/retake of segment 44"
+    },
+    {
+      "id": 517,
+      "text": "ہیں،",
+      "start": 244.02,
+      "end": 244.265,
+      "segment_id": 49,
+      "keep": false,
+      "reason": "repeated/retake of segment 44"
+    },
+    {
+      "id": 518,
+      "text": "اب",
+      "start": 244.265,
+      "end": 244.388,
+      "segment_id": 49,
+      "keep": false,
+      "reason": "repeated/retake of segment 44"
+    },
+    {
+      "id": 519,
+      "text": "میرا",
+      "start": 244.388,
+      "end": 244.633,
+      "segment_id": 49,
+      "keep": false,
+      "reason": "repeated/retake of segment 44"
+    },
+    {
+      "id": 520,
+      "text": "گھر",
+      "start": 244.633,
+      "end": 244.817,
+      "segment_id": 49,
+      "keep": false,
+      "reason": "repeated/retake of segment 44"
+    },
+    {
+      "id": 521,
+      "text": "دیکھتے",
+      "start": 244.817,
+      "end": 245.185,
+      "segment_id": 49,
+      "keep": false,
+      "reason": "repeated/retake of segment 44"
+    },
+    {
+      "id": 522,
+      "text": "ہیں",
+      "start": 245.185,
+      "end": 245.369,
+      "segment_id": 49,
+      "keep": false,
+      "reason": "repeated/retake of segment 44"
+    },
+    {
+      "id": 523,
+      "text": "میں",
+      "start": 245.369,
+      "end": 245.552,
+      "segment_id": 49,
+      "keep": false,
+      "reason": "repeated/retake of segment 44"
+    },
+    {
+      "id": 524,
+      "text": "F6",
+      "start": 245.552,
+      "end": 245.675,
+      "segment_id": 49,
+      "keep": false,
+      "reason": "repeated/retake of segment 44"
+    },
+    {
+      "id": 525,
+      "text": "اسلام",
+      "start": 245.675,
+      "end": 245.982,
+      "segment_id": 49,
+      "keep": false,
+      "reason": "repeated/retake of segment 44"
+    },
+    {
+      "id": 526,
+      "text": "آباد",
+      "start": 245.982,
+      "end": 246.227,
+      "segment_id": 49,
+      "keep": false,
+      "reason": "repeated/retake of segment 44"
+    },
+    {
+      "id": 527,
+      "text": "میں",
+      "start": 246.227,
+      "end": 246.411,
+      "segment_id": 49,
+      "keep": false,
+      "reason": "repeated/retake of segment 44"
+    },
+    {
+      "id": 528,
+      "text": "رہتا",
+      "start": 246.411,
+      "end": 246.656,
+      "segment_id": 49,
+      "keep": false,
+      "reason": "repeated/retake of segment 44"
+    },
+    {
+      "id": 529,
+      "text": "ہوں",
+      "start": 246.656,
+      "end": 246.84,
+      "segment_id": 49,
+      "keep": false,
+      "reason": "repeated/retake of segment 44"
+    },
+    {
+      "id": 530,
+      "text": "جس",
+      "start": 247.68,
+      "end": 247.775,
+      "segment_id": 50,
+      "keep": false,
+      "reason": "too_short"
+    },
+    {
+      "id": 531,
+      "text": "میں",
+      "start": 247.775,
+      "end": 247.918,
+      "segment_id": 50,
+      "keep": false,
+      "reason": "too_short"
+    },
+    {
+      "id": 532,
+      "text": "چ--",
+      "start": 247.918,
+      "end": 248.06,
+      "segment_id": 50,
+      "keep": false,
+      "reason": "too_short"
+    },
+    {
+      "id": 533,
+      "text": "اب،",
+      "start": 250.42,
+      "end": 250.664,
+      "segment_id": 51,
+      "keep": false,
+      "reason": "retake_of:#53"
+    },
+    {
+      "id": 534,
+      "text": "اب",
+      "start": 250.664,
+      "end": 250.826,
+      "segment_id": 51,
+      "keep": false,
+      "reason": "retake_of:#53"
+    },
+    {
+      "id": 535,
+      "text": "چلتے",
+      "start": 250.826,
+      "end": 251.151,
+      "segment_id": 51,
+      "keep": false,
+      "reason": "retake_of:#53"
+    },
+    {
+      "id": 536,
+      "text": "ہیں",
+      "start": 251.151,
+      "end": 251.395,
+      "segment_id": 51,
+      "keep": false,
+      "reason": "retake_of:#53"
+    },
+    {
+      "id": 537,
+      "text": "میرے",
+      "start": 251.395,
+      "end": 251.72,
+      "segment_id": 51,
+      "keep": false,
+      "reason": "retake_of:#53"
+    },
+    {
+      "id": 538,
+      "text": "گھر",
+      "start": 251.72,
+      "end": 251.964,
+      "segment_id": 51,
+      "keep": false,
+      "reason": "retake_of:#53"
+    },
+    {
+      "id": 539,
+      "text": "کی",
+      "start": 251.964,
+      "end": 252.126,
+      "segment_id": 51,
+      "keep": false,
+      "reason": "retake_of:#53"
+    },
+    {
+      "id": 540,
+      "text": "طرف۔",
+      "start": 252.126,
+      "end": 252.451,
+      "segment_id": 51,
+      "keep": false,
+      "reason": "retake_of:#53"
+    },
+    {
+      "id": 541,
+      "text": "میں",
+      "start": 252.451,
+      "end": 252.695,
+      "segment_id": 51,
+      "keep": false,
+      "reason": "retake_of:#53"
+    },
+    {
+      "id": 542,
+      "text": "F6",
+      "start": 252.695,
+      "end": 252.857,
+      "segment_id": 51,
+      "keep": false,
+      "reason": "retake_of:#53"
+    },
+    {
+      "id": 543,
+      "text": "اسلام",
+      "start": 252.857,
+      "end": 253.264,
+      "segment_id": 51,
+      "keep": false,
+      "reason": "retake_of:#53"
+    },
+    {
+      "id": 544,
+      "text": "آباد",
+      "start": 253.264,
+      "end": 253.589,
+      "segment_id": 51,
+      "keep": false,
+      "reason": "retake_of:#53"
+    },
+    {
+      "id": 545,
+      "text": "میں",
+      "start": 253.589,
+      "end": 253.833,
+      "segment_id": 51,
+      "keep": false,
+      "reason": "retake_of:#53"
+    },
+    {
+      "id": 546,
+      "text": "رہتا",
+      "start": 253.833,
+      "end": 254.157,
+      "segment_id": 51,
+      "keep": false,
+      "reason": "retake_of:#53"
+    },
+    {
+      "id": 547,
+      "text": "ہوں،",
+      "start": 254.157,
+      "end": 254.482,
+      "segment_id": 51,
+      "keep": false,
+      "reason": "retake_of:#53"
+    },
+    {
+      "id": 548,
+      "text": "میرا",
+      "start": 254.482,
+      "end": 254.808,
+      "segment_id": 51,
+      "keep": false,
+      "reason": "retake_of:#53"
+    },
+    {
+      "id": 549,
+      "text": "گھر",
+      "start": 254.808,
+      "end": 255.051,
+      "segment_id": 51,
+      "keep": false,
+      "reason": "retake_of:#53"
+    },
+    {
+      "id": 550,
+      "text": "چار",
+      "start": 255.051,
+      "end": 255.295,
+      "segment_id": 51,
+      "keep": false,
+      "reason": "retake_of:#53"
+    },
+    {
+      "id": 551,
+      "text": "کنال",
+      "start": 255.295,
+      "end": 255.62,
+      "segment_id": 51,
+      "keep": false,
+      "reason": "retake_of:#53"
+    },
+    {
+      "id": 552,
+      "text": "کے",
+      "start": 255.62,
+      "end": 255.751,
+      "segment_id": 52,
+      "keep": false,
+      "reason": "incomplete/false start"
+    },
+    {
+      "id": 553,
+      "text": "رقبے",
+      "start": 255.751,
+      "end": 256.012,
+      "segment_id": 52,
+      "keep": false,
+      "reason": "incomplete/false start"
+    },
+    {
+      "id": 554,
+      "text": "پر",
+      "start": 256.012,
+      "end": 256.143,
+      "segment_id": 52,
+      "keep": false,
+      "reason": "incomplete/false start"
+    },
+    {
+      "id": 555,
+      "text": "پھیلا",
+      "start": 256.143,
+      "end": 256.47,
+      "segment_id": 52,
+      "keep": false,
+      "reason": "incomplete/false start"
+    },
+    {
+      "id": 556,
+      "text": "ہے",
+      "start": 256.47,
+      "end": 256.601,
+      "segment_id": 52,
+      "keep": false,
+      "reason": "incomplete/false start"
+    },
+    {
+      "id": 557,
+      "text": "جس",
+      "start": 256.601,
+      "end": 256.732,
+      "segment_id": 52,
+      "keep": false,
+      "reason": "incomplete/false start"
+    },
+    {
+      "id": 558,
+      "text": "میں--",
+      "start": 256.732,
+      "end": 257.059,
+      "segment_id": 52,
+      "keep": false,
+      "reason": "incomplete/false start"
+    },
+    {
+      "id": 559,
+      "text": "اب",
+      "start": 264.26,
+      "end": 264.402,
+      "segment_id": 53,
+      "keep": false,
+      "reason": "repeated/retake of segment 51"
+    },
+    {
+      "id": 560,
+      "text": "چلتے",
+      "start": 264.402,
+      "end": 264.687,
+      "segment_id": 53,
+      "keep": false,
+      "reason": "repeated/retake of segment 51"
+    },
+    {
+      "id": 561,
+      "text": "ہیں",
+      "start": 264.687,
+      "end": 264.9,
+      "segment_id": 53,
+      "keep": false,
+      "reason": "repeated/retake of segment 51"
+    },
+    {
+      "id": 562,
+      "text": "میرے",
+      "start": 264.9,
+      "end": 265.184,
+      "segment_id": 53,
+      "keep": false,
+      "reason": "repeated/retake of segment 51"
+    },
+    {
+      "id": 563,
+      "text": "گھر",
+      "start": 265.184,
+      "end": 265.398,
+      "segment_id": 53,
+      "keep": false,
+      "reason": "repeated/retake of segment 51"
+    },
+    {
+      "id": 564,
+      "text": "کی",
+      "start": 265.398,
+      "end": 265.54,
+      "segment_id": 53,
+      "keep": false,
+      "reason": "repeated/retake of segment 51"
+    },
+    {
+      "id": 565,
+      "text": "طرف۔",
+      "start": 265.54,
+      "end": 265.824,
+      "segment_id": 53,
+      "keep": false,
+      "reason": "repeated/retake of segment 51"
+    },
+    {
+      "id": 566,
+      "text": "میں",
+      "start": 265.824,
+      "end": 266.038,
+      "segment_id": 53,
+      "keep": false,
+      "reason": "repeated/retake of segment 51"
+    },
+    {
+      "id": 567,
+      "text": "F6",
+      "start": 266.038,
+      "end": 266.18,
+      "segment_id": 53,
+      "keep": false,
+      "reason": "repeated/retake of segment 51"
+    },
+    {
+      "id": 568,
+      "text": "اسلام",
+      "start": 266.18,
+      "end": 266.536,
+      "segment_id": 53,
+      "keep": false,
+      "reason": "repeated/retake of segment 51"
+    },
+    {
+      "id": 569,
+      "text": "آباد",
+      "start": 266.536,
+      "end": 266.82,
+      "segment_id": 53,
+      "keep": false,
+      "reason": "repeated/retake of segment 51"
+    },
+    {
+      "id": 570,
+      "text": "میں",
+      "start": 266.82,
+      "end": 267.033,
+      "segment_id": 53,
+      "keep": false,
+      "reason": "repeated/retake of segment 51"
+    },
+    {
+      "id": 571,
+      "text": "رہتا",
+      "start": 267.033,
+      "end": 267.318,
+      "segment_id": 53,
+      "keep": false,
+      "reason": "repeated/retake of segment 51"
+    },
+    {
+      "id": 572,
+      "text": "ہوں،",
+      "start": 267.318,
+      "end": 267.602,
+      "segment_id": 53,
+      "keep": false,
+      "reason": "repeated/retake of segment 51"
+    },
+    {
+      "id": 573,
+      "text": "میرا",
+      "start": 267.602,
+      "end": 267.887,
+      "segment_id": 53,
+      "keep": false,
+      "reason": "repeated/retake of segment 51"
+    },
+    {
+      "id": 574,
+      "text": "گھر",
+      "start": 267.887,
+      "end": 268.1,
+      "segment_id": 53,
+      "keep": false,
+      "reason": "repeated/retake of segment 51"
+    },
+    {
+      "id": 575,
+      "text": "چار",
+      "start": 268.1,
+      "end": 268.313,
+      "segment_id": 53,
+      "keep": false,
+      "reason": "repeated/retake of segment 51"
+    },
+    {
+      "id": 576,
+      "text": "کنال",
+      "start": 268.313,
+      "end": 268.598,
+      "segment_id": 53,
+      "keep": false,
+      "reason": "repeated/retake of segment 51"
+    },
+    {
+      "id": 577,
+      "text": "کے",
+      "start": 268.598,
+      "end": 268.74,
+      "segment_id": 53,
+      "keep": false,
+      "reason": "repeated/retake of segment 51"
+    },
+    {
+      "id": 578,
+      "text": "رقبے",
+      "start": 268.74,
+      "end": 269.136,
+      "segment_id": 54,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 579,
+      "text": "پر",
+      "start": 269.136,
+      "end": 269.334,
+      "segment_id": 54,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 580,
+      "text": "پھیلا",
+      "start": 269.334,
+      "end": 269.828,
+      "segment_id": 54,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 581,
+      "text": "ہے",
+      "start": 269.828,
+      "end": 270.026,
+      "segment_id": 54,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 582,
+      "text": "جس",
+      "start": 270.026,
+      "end": 270.224,
+      "segment_id": 54,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 583,
+      "text": "میں",
+      "start": 270.224,
+      "end": 270.521,
+      "segment_id": 54,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 584,
+      "text": "صرف",
+      "start": 270.521,
+      "end": 270.817,
+      "segment_id": 54,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 585,
+      "text": "چھ",
+      "start": 270.817,
+      "end": 271.015,
+      "segment_id": 54,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 586,
+      "text": "bedroom",
+      "start": 271.015,
+      "end": 271.708,
+      "segment_id": 54,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 587,
+      "text": "ہیں",
+      "start": 271.708,
+      "end": 272.004,
+      "segment_id": 54,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 588,
+      "text": "اور-",
+      "start": 272.004,
+      "end": 272.4,
+      "segment_id": 54,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 589,
+      "text": "-[بچے",
+      "start": 275.078,
+      "end": 275.667,
+      "segment_id": 55,
+      "keep": false,
+      "reason": "child noise and filler"
+    },
+    {
+      "id": 590,
+      "text": "کی",
+      "start": 275.667,
+      "end": 275.903,
+      "segment_id": 55,
+      "keep": false,
+      "reason": "child noise and filler"
+    },
+    {
+      "id": 591,
+      "text": "آواز]",
+      "start": 275.903,
+      "end": 276.492,
+      "segment_id": 55,
+      "keep": false,
+      "reason": "child noise and filler"
+    },
+    {
+      "id": 592,
+      "text": "-جانتی",
+      "start": 276.492,
+      "end": 277.199,
+      "segment_id": 55,
+      "keep": false,
+      "reason": "child noise and filler"
+    },
+    {
+      "id": 593,
+      "text": "ہوں",
+      "start": 277.199,
+      "end": 277.552,
+      "segment_id": 55,
+      "keep": false,
+      "reason": "child noise and filler"
+    },
+    {
+      "id": 594,
+      "text": "میں",
+      "start": 277.552,
+      "end": 277.906,
+      "segment_id": 55,
+      "keep": false,
+      "reason": "child noise and filler"
+    },
+    {
+      "id": 595,
+      "text": "بھی۔",
+      "start": 277.906,
+      "end": 278.377,
+      "segment_id": 55,
+      "keep": false,
+      "reason": "child noise and filler"
+    },
+    {
+      "id": 596,
+      "text": "اب",
+      "start": 282.157,
+      "end": 282.303,
+      "segment_id": 56,
+      "keep": false,
+      "reason": "repeated/retake - house description"
+    },
+    {
+      "id": 597,
+      "text": "چلتے",
+      "start": 282.303,
+      "end": 282.596,
+      "segment_id": 56,
+      "keep": false,
+      "reason": "repeated/retake - house description"
+    },
+    {
+      "id": 598,
+      "text": "ہیں",
+      "start": 282.596,
+      "end": 282.816,
+      "segment_id": 56,
+      "keep": false,
+      "reason": "repeated/retake - house description"
+    },
+    {
+      "id": 599,
+      "text": "میرے",
+      "start": 282.816,
+      "end": 283.108,
+      "segment_id": 56,
+      "keep": false,
+      "reason": "repeated/retake - house description"
+    },
+    {
+      "id": 600,
+      "text": "گھر",
+      "start": 283.108,
+      "end": 283.328,
+      "segment_id": 56,
+      "keep": false,
+      "reason": "repeated/retake - house description"
+    },
+    {
+      "id": 601,
+      "text": "کی",
+      "start": 283.328,
+      "end": 283.474,
+      "segment_id": 56,
+      "keep": false,
+      "reason": "repeated/retake - house description"
+    },
+    {
+      "id": 602,
+      "text": "طرف،",
+      "start": 283.474,
+      "end": 283.767,
+      "segment_id": 56,
+      "keep": false,
+      "reason": "repeated/retake - house description"
+    },
+    {
+      "id": 603,
+      "text": "اب",
+      "start": 283.767,
+      "end": 283.913,
+      "segment_id": 56,
+      "keep": false,
+      "reason": "repeated/retake - house description"
+    },
+    {
+      "id": 604,
+      "text": "چلتے",
+      "start": 283.913,
+      "end": 284.206,
+      "segment_id": 56,
+      "keep": false,
+      "reason": "repeated/retake - house description"
+    },
+    {
+      "id": 605,
+      "text": "ہیں",
+      "start": 284.206,
+      "end": 284.425,
+      "segment_id": 56,
+      "keep": false,
+      "reason": "repeated/retake - house description"
+    },
+    {
+      "id": 606,
+      "text": "میرے",
+      "start": 284.425,
+      "end": 284.718,
+      "segment_id": 56,
+      "keep": false,
+      "reason": "repeated/retake - house description"
+    },
+    {
+      "id": 607,
+      "text": "بنگلے",
+      "start": 284.718,
+      "end": 285.084,
+      "segment_id": 56,
+      "keep": false,
+      "reason": "repeated/retake - house description"
+    },
+    {
+      "id": 608,
+      "text": "کی",
+      "start": 285.084,
+      "end": 285.23,
+      "segment_id": 56,
+      "keep": false,
+      "reason": "repeated/retake - house description"
+    },
+    {
+      "id": 609,
+      "text": "طرف۔",
+      "start": 285.23,
+      "end": 285.523,
+      "segment_id": 56,
+      "keep": false,
+      "reason": "repeated/retake - house description"
+    },
+    {
+      "id": 610,
+      "text": "میرا",
+      "start": 285.523,
+      "end": 285.816,
+      "segment_id": 56,
+      "keep": false,
+      "reason": "repeated/retake - house description"
+    },
+    {
+      "id": 611,
+      "text": "گھر--",
+      "start": 285.816,
+      "end": 286.181,
+      "segment_id": 56,
+      "keep": false,
+      "reason": "repeated/retake - house description"
+    },
+    {
+      "id": 612,
+      "text": "اب",
+      "start": 286.181,
+      "end": 286.328,
+      "segment_id": 56,
+      "keep": false,
+      "reason": "repeated/retake - house description"
+    },
+    {
+      "id": 613,
+      "text": "چلتے",
+      "start": 286.328,
+      "end": 286.62,
+      "segment_id": 56,
+      "keep": false,
+      "reason": "repeated/retake - house description"
+    },
+    {
+      "id": 614,
+      "text": "ہیں",
+      "start": 286.62,
+      "end": 286.84,
+      "segment_id": 56,
+      "keep": false,
+      "reason": "repeated/retake - house description"
+    },
+    {
+      "id": 615,
+      "text": "میرے",
+      "start": 286.84,
+      "end": 287.169,
+      "segment_id": 57,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 616,
+      "text": "بنگلے",
+      "start": 287.169,
+      "end": 287.581,
+      "segment_id": 57,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 617,
+      "text": "کی",
+      "start": 287.581,
+      "end": 287.746,
+      "segment_id": 57,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 618,
+      "text": "طرف۔",
+      "start": 287.746,
+      "end": 288.075,
+      "segment_id": 57,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 619,
+      "text": "میرا",
+      "start": 288.075,
+      "end": 288.404,
+      "segment_id": 57,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 620,
+      "text": "بنگلہ",
+      "start": 288.404,
+      "end": 288.816,
+      "segment_id": 57,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 621,
+      "text": "چار",
+      "start": 288.816,
+      "end": 289.063,
+      "segment_id": 57,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 622,
+      "text": "کنال",
+      "start": 289.063,
+      "end": 289.392,
+      "segment_id": 57,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 623,
+      "text": "کے",
+      "start": 289.392,
+      "end": 289.557,
+      "segment_id": 57,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 624,
+      "text": "رقبے",
+      "start": 289.557,
+      "end": 289.886,
+      "segment_id": 57,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 625,
+      "text": "پر",
+      "start": 289.886,
+      "end": 290.051,
+      "segment_id": 57,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 626,
+      "text": "پھیلا",
+      "start": 290.051,
+      "end": 290.463,
+      "segment_id": 57,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 627,
+      "text": "ہوا",
+      "start": 290.463,
+      "end": 290.71,
+      "segment_id": 57,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 628,
+      "text": "ہے۔",
+      "start": 290.71,
+      "end": 290.957,
+      "segment_id": 57,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 629,
+      "text": "اس",
+      "start": 290.957,
+      "end": 291.121,
+      "segment_id": 57,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 630,
+      "text": "کے",
+      "start": 291.121,
+      "end": 291.286,
+      "segment_id": 57,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 631,
+      "text": "اندر",
+      "start": 291.286,
+      "end": 291.615,
+      "segment_id": 57,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 632,
+      "text": "چھ",
+      "start": 291.615,
+      "end": 291.78,
+      "segment_id": 57,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 633,
+      "text": "bedrooms",
+      "start": 291.78,
+      "end": 292.746,
+      "segment_id": 58,
+      "keep": false,
+      "reason": "repeated/retake of segment 57"
+    },
+    {
+      "id": 634,
+      "text": "ہیں",
+      "start": 292.746,
+      "end": 293.109,
+      "segment_id": 58,
+      "keep": false,
+      "reason": "repeated/retake of segment 57"
+    },
+    {
+      "id": 635,
+      "text": "totally",
+      "start": 293.109,
+      "end": 293.954,
+      "segment_id": 58,
+      "keep": false,
+      "reason": "repeated/retake of segment 57"
+    },
+    {
+      "id": 636,
+      "text": "بائیس",
+      "start": 293.954,
+      "end": 294.558,
+      "segment_id": 58,
+      "keep": false,
+      "reason": "repeated/retake of segment 57"
+    },
+    {
+      "id": 637,
+      "text": "کمرے",
+      "start": 294.558,
+      "end": 295.041,
+      "segment_id": 58,
+      "keep": false,
+      "reason": "repeated/retake of segment 57"
+    },
+    {
+      "id": 638,
+      "text": "ہیں",
+      "start": 295.041,
+      "end": 295.404,
+      "segment_id": 58,
+      "keep": false,
+      "reason": "repeated/retake of segment 57"
+    },
+    {
+      "id": 639,
+      "text": "اور",
+      "start": 295.404,
+      "end": 295.766,
+      "segment_id": 58,
+      "keep": false,
+      "reason": "repeated/retake of segment 57"
+    },
+    {
+      "id": 640,
+      "text": "اس",
+      "start": 298.88,
+      "end": 299.054,
+      "segment_id": 59,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 641,
+      "text": "کی",
+      "start": 299.054,
+      "end": 299.229,
+      "segment_id": 59,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 642,
+      "text": "total",
+      "start": 299.229,
+      "end": 299.665,
+      "segment_id": 59,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 643,
+      "text": "قیمت",
+      "start": 299.665,
+      "end": 300.014,
+      "segment_id": 59,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 644,
+      "text": "ڈھائی",
+      "start": 300.014,
+      "end": 300.45,
+      "segment_id": 59,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 645,
+      "text": "سو",
+      "start": 300.45,
+      "end": 300.625,
+      "segment_id": 59,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 646,
+      "text": "کروڑ",
+      "start": 300.625,
+      "end": 300.974,
+      "segment_id": 59,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 647,
+      "text": "روپے",
+      "start": 300.974,
+      "end": 301.323,
+      "segment_id": 59,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 648,
+      "text": "ہے۔",
+      "start": 301.323,
+      "end": 301.584,
+      "segment_id": 59,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 649,
+      "text": "یہ--",
+      "start": 301.584,
+      "end": 301.933,
+      "segment_id": 59,
+      "keep": false,
+      "reason": "false_start"
+    },
+    {
+      "id": 650,
+      "text": "اس",
+      "start": 301.933,
+      "end": 302.108,
+      "segment_id": 59,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 651,
+      "text": "میں",
+      "start": 302.108,
+      "end": 302.37,
+      "segment_id": 59,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 652,
+      "text": "ایک",
+      "start": 302.37,
+      "end": 302.631,
+      "segment_id": 59,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 653,
+      "text": "بڑا",
+      "start": 302.631,
+      "end": 302.893,
+      "segment_id": 59,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 654,
+      "text": "سا",
+      "start": 302.893,
+      "end": 303.068,
+      "segment_id": 59,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 655,
+      "text": "pool",
+      "start": 303.068,
+      "end": 303.417,
+      "segment_id": 59,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 656,
+      "text": "ہے،",
+      "start": 303.417,
+      "end": 303.678,
+      "segment_id": 59,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 657,
+      "text": "ایک",
+      "start": 303.678,
+      "end": 303.94,
+      "segment_id": 59,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 658,
+      "text": "private",
+      "start": 303.94,
+      "end": 304.371,
+      "segment_id": 60,
+      "keep": false,
+      "reason": "repeated/retake of segment 59"
+    },
+    {
+      "id": 659,
+      "text": "garden",
+      "start": 304.371,
+      "end": 304.74,
+      "segment_id": 60,
+      "keep": false,
+      "reason": "repeated/retake of segment 59"
+    },
+    {
+      "id": 660,
+      "text": "ہے۔",
+      "start": 304.74,
+      "end": 304.925,
+      "segment_id": 60,
+      "keep": false,
+      "reason": "repeated/retake of segment 59"
+    },
+    {
+      "id": 661,
+      "text": "اس",
+      "start": 304.925,
+      "end": 305.048,
+      "segment_id": 60,
+      "keep": false,
+      "reason": "repeated/retake of segment 59"
+    },
+    {
+      "id": 662,
+      "text": "میں",
+      "start": 305.048,
+      "end": 305.232,
+      "segment_id": 60,
+      "keep": false,
+      "reason": "repeated/retake of segment 59"
+    },
+    {
+      "id": 663,
+      "text": "ایک",
+      "start": 305.232,
+      "end": 305.417,
+      "segment_id": 60,
+      "keep": false,
+      "reason": "repeated/retake of segment 59"
+    },
+    {
+      "id": 664,
+      "text": "pool",
+      "start": 305.417,
+      "end": 305.663,
+      "segment_id": 60,
+      "keep": false,
+      "reason": "repeated/retake of segment 59"
+    },
+    {
+      "id": 665,
+      "text": "ہے،",
+      "start": 305.663,
+      "end": 305.848,
+      "segment_id": 60,
+      "keep": false,
+      "reason": "repeated/retake of segment 59"
+    },
+    {
+      "id": 666,
+      "text": "ایک",
+      "start": 305.848,
+      "end": 306.032,
+      "segment_id": 60,
+      "keep": false,
+      "reason": "repeated/retake of segment 59"
+    },
+    {
+      "id": 667,
+      "text": "private",
+      "start": 306.032,
+      "end": 306.463,
+      "segment_id": 60,
+      "keep": false,
+      "reason": "repeated/retake of segment 59"
+    },
+    {
+      "id": 668,
+      "text": "garden",
+      "start": 306.463,
+      "end": 306.832,
+      "segment_id": 60,
+      "keep": false,
+      "reason": "repeated/retake of segment 59"
+    },
+    {
+      "id": 669,
+      "text": "ہے۔",
+      "start": 306.832,
+      "end": 307.017,
+      "segment_id": 60,
+      "keep": false,
+      "reason": "repeated/retake of segment 59"
+    },
+    {
+      "id": 670,
+      "text": "اس",
+      "start": 307.017,
+      "end": 307.14,
+      "segment_id": 60,
+      "keep": false,
+      "reason": "repeated/retake of segment 59"
+    },
+    {
+      "id": 671,
+      "text": "میں",
+      "start": 307.14,
+      "end": 307.325,
+      "segment_id": 60,
+      "keep": false,
+      "reason": "repeated/retake of segment 59"
+    },
+    {
+      "id": 672,
+      "text": "ایک",
+      "start": 307.325,
+      "end": 307.509,
+      "segment_id": 60,
+      "keep": false,
+      "reason": "repeated/retake of segment 59"
+    },
+    {
+      "id": 673,
+      "text": "pool",
+      "start": 307.509,
+      "end": 307.755,
+      "segment_id": 60,
+      "keep": false,
+      "reason": "repeated/retake of segment 59"
+    },
+    {
+      "id": 674,
+      "text": "ہے،",
+      "start": 307.755,
+      "end": 307.94,
+      "segment_id": 60,
+      "keep": false,
+      "reason": "repeated/retake of segment 59"
+    },
+    {
+      "id": 675,
+      "text": "ایک",
+      "start": 307.94,
+      "end": 308.151,
+      "segment_id": 61,
+      "keep": false,
+      "reason": "retake_of:#62"
+    },
+    {
+      "id": 676,
+      "text": "private",
+      "start": 308.151,
+      "end": 308.642,
+      "segment_id": 61,
+      "keep": false,
+      "reason": "retake_of:#62"
+    },
+    {
+      "id": 677,
+      "text": "garden",
+      "start": 308.642,
+      "end": 309.063,
+      "segment_id": 61,
+      "keep": false,
+      "reason": "retake_of:#62"
+    },
+    {
+      "id": 678,
+      "text": "ہے،",
+      "start": 309.063,
+      "end": 309.274,
+      "segment_id": 61,
+      "keep": false,
+      "reason": "retake_of:#62"
+    },
+    {
+      "id": 679,
+      "text": "ایک",
+      "start": 309.274,
+      "end": 309.484,
+      "segment_id": 61,
+      "keep": false,
+      "reason": "retake_of:#62"
+    },
+    {
+      "id": 680,
+      "text": "basement",
+      "start": 309.484,
+      "end": 310.046,
+      "segment_id": 61,
+      "keep": false,
+      "reason": "retake_of:#62"
+    },
+    {
+      "id": 681,
+      "text": "entertainment",
+      "start": 310.046,
+      "end": 310.958,
+      "segment_id": 61,
+      "keep": false,
+      "reason": "retake_of:#62"
+    },
+    {
+      "id": 682,
+      "text": "complex",
+      "start": 310.958,
+      "end": 311.449,
+      "segment_id": 61,
+      "keep": false,
+      "reason": "retake_of:#62"
+    },
+    {
+      "id": 683,
+      "text": "ہے۔",
+      "start": 311.449,
+      "end": 311.66,
+      "segment_id": 61,
+      "keep": false,
+      "reason": "retake_of:#62"
+    },
+    {
+      "id": 684,
+      "text": "اس",
+      "start": 312.428,
+      "end": 312.559,
+      "segment_id": 62,
+      "keep": false,
+      "reason": "repeated/retake of segment 61"
+    },
+    {
+      "id": 685,
+      "text": "میں",
+      "start": 312.559,
+      "end": 312.756,
+      "segment_id": 62,
+      "keep": false,
+      "reason": "repeated/retake of segment 61"
+    },
+    {
+      "id": 686,
+      "text": "ایک",
+      "start": 312.756,
+      "end": 312.953,
+      "segment_id": 62,
+      "keep": false,
+      "reason": "repeated/retake of segment 61"
+    },
+    {
+      "id": 687,
+      "text": "pool",
+      "start": 312.953,
+      "end": 313.215,
+      "segment_id": 62,
+      "keep": false,
+      "reason": "repeated/retake of segment 61"
+    },
+    {
+      "id": 688,
+      "text": "ہے،",
+      "start": 313.215,
+      "end": 313.412,
+      "segment_id": 62,
+      "keep": false,
+      "reason": "repeated/retake of segment 61"
+    },
+    {
+      "id": 689,
+      "text": "ایک",
+      "start": 313.412,
+      "end": 313.609,
+      "segment_id": 62,
+      "keep": false,
+      "reason": "repeated/retake of segment 61"
+    },
+    {
+      "id": 690,
+      "text": "private",
+      "start": 313.609,
+      "end": 314.068,
+      "segment_id": 62,
+      "keep": false,
+      "reason": "repeated/retake of segment 61"
+    },
+    {
+      "id": 691,
+      "text": "garden",
+      "start": 314.068,
+      "end": 314.462,
+      "segment_id": 62,
+      "keep": false,
+      "reason": "repeated/retake of segment 61"
+    },
+    {
+      "id": 692,
+      "text": "ہے،",
+      "start": 314.462,
+      "end": 314.658,
+      "segment_id": 62,
+      "keep": false,
+      "reason": "repeated/retake of segment 61"
+    },
+    {
+      "id": 693,
+      "text": "ایک",
+      "start": 314.658,
+      "end": 314.855,
+      "segment_id": 62,
+      "keep": false,
+      "reason": "repeated/retake of segment 61"
+    },
+    {
+      "id": 694,
+      "text": "basement",
+      "start": 314.855,
+      "end": 315.38,
+      "segment_id": 62,
+      "keep": false,
+      "reason": "repeated/retake of segment 61"
+    },
+    {
+      "id": 695,
+      "text": "entertainment",
+      "start": 315.38,
+      "end": 316.233,
+      "segment_id": 62,
+      "keep": false,
+      "reason": "repeated/retake of segment 61"
+    },
+    {
+      "id": 696,
+      "text": "complex",
+      "start": 316.233,
+      "end": 316.692,
+      "segment_id": 62,
+      "keep": false,
+      "reason": "repeated/retake of segment 61"
+    },
+    {
+      "id": 697,
+      "text": "ہے۔",
+      "start": 316.692,
+      "end": 316.889,
+      "segment_id": 62,
+      "keep": false,
+      "reason": "repeated/retake of segment 61"
+    },
+    {
+      "id": 698,
+      "text": "یہ",
+      "start": 316.889,
+      "end": 317.02,
+      "segment_id": 62,
+      "keep": false,
+      "reason": "repeated/retake of segment 61"
+    },
+    {
+      "id": 699,
+      "text": "میرے",
+      "start": 317.02,
+      "end": 317.328,
+      "segment_id": 63,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 700,
+      "text": "سات",
+      "start": 317.328,
+      "end": 317.559,
+      "segment_id": 63,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 701,
+      "text": "گھروں",
+      "start": 317.559,
+      "end": 317.944,
+      "segment_id": 63,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 702,
+      "text": "میں",
+      "start": 317.944,
+      "end": 318.175,
+      "segment_id": 63,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 703,
+      "text": "سے",
+      "start": 318.175,
+      "end": 318.329,
+      "segment_id": 63,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 704,
+      "text": "ایک",
+      "start": 318.329,
+      "end": 318.56,
+      "segment_id": 63,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 705,
+      "text": "ہے۔",
+      "start": 318.56,
+      "end": 318.791,
+      "segment_id": 63,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 706,
+      "text": "میرے",
+      "start": 318.791,
+      "end": 319.099,
+      "segment_id": 63,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 707,
+      "text": "پاس",
+      "start": 319.099,
+      "end": 319.33,
+      "segment_id": 63,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 708,
+      "text": "ایک",
+      "start": 319.33,
+      "end": 319.56,
+      "segment_id": 63,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 709,
+      "text": "دبئی",
+      "start": 319.56,
+      "end": 319.868,
+      "segment_id": 63,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 710,
+      "text": "کے",
+      "start": 319.868,
+      "end": 320.022,
+      "segment_id": 63,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 711,
+      "text": "اندر",
+      "start": 320.022,
+      "end": 320.33,
+      "segment_id": 63,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 712,
+      "text": "ہے،",
+      "start": 320.33,
+      "end": 320.561,
+      "segment_id": 63,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 713,
+      "text": "ایک",
+      "start": 320.561,
+      "end": 320.792,
+      "segment_id": 63,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 714,
+      "text": "مدینہ",
+      "start": 320.792,
+      "end": 321.177,
+      "segment_id": 63,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 715,
+      "text": "کے",
+      "start": 321.177,
+      "end": 321.331,
+      "segment_id": 63,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 716,
+      "text": "اندر",
+      "start": 321.331,
+      "end": 321.639,
+      "segment_id": 63,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 717,
+      "text": "ہے۔",
+      "start": 321.639,
+      "end": 321.87,
+      "segment_id": 63,
+      "keep": true,
+      "reason": ""
+    },
+    {
+      "id": 718,
+      "text": "ہاں",
+      "start": 321.87,
+      "end": 322.165,
+      "segment_id": 64,
+      "keep": false,
+      "reason": "filler"
+    },
+    {
+      "id": 719,
+      "text": "جی!",
+      "start": 322.165,
+      "end": 322.46,
+      "segment_id": 64,
+      "keep": false,
+      "reason": "filler"
+    },
+    {
+      "id": 720,
+      "text": "[بچے",
+      "start": 323.46,
+      "end": 323.471,
+      "segment_id": 65,
+      "keep": false,
+      "reason": "non_speech"
+    },
+    {
+      "id": 721,
+      "text": "کی",
+      "start": 323.471,
+      "end": 323.476,
+      "segment_id": 65,
+      "keep": false,
+      "reason": "non_speech"
+    },
+    {
+      "id": 722,
+      "text": "آواز]",
+      "start": 323.476,
+      "end": 323.49,
+      "segment_id": 65,
+      "keep": false,
+      "reason": "non_speech"
+    }
+  ]
+}
