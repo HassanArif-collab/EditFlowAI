@@ -41,6 +41,23 @@ The 2 dup-pairs are SEMANTIC near-dups → target with embeddings (A1/A5).
   `RESEARCH.md`; (b) implement approaches A1–A7 as proposer modules, score each;
   (c) record winners here; (d) cut integration branches for winners.
 
+### 2026-06-07 — +LLM measured (CRITICAL finding)
+Scoreboard WITH the LLM (avg of 3 runs, fixture jawaid_66seg):
+| proposer | composite | kept | coverage | dup | note |
+|---|---|---|---|---|---|
+| baseline+LLM | 38 | 8.3 | **5.0/8** | 0.3 | one run dropped ALL 8 beats — huge variance |
+| a7+LLM | 42 | 14.7 | 7.7/8 | 1.3 | |
+| a1_embed+LLM | 51 | 12.7 | 7.0/8 | 0.0 | best composite, but still drops ~1 beat |
+
+**THE core problem is the LLM**, not the deterministic layer: given all 66 segments
+it is so aggressive/inconsistent it CUTS WHOLE BEATS (loses real content). baseline
++LLM averages only 5/8 beats covered. The deterministic layer is reliable (8/8).
+→ **A1 deterministic-only (composite 48, guaranteed 8/8 coverage, dup 0) is arguably
+SAFER than any +LLM**, because dropping a beat (lost content) is worse than keeping a
+minor fragment. The promising direction: constrain the LLM so it can cut fragments/
+dups but NEVER drop the last representative of a beat (coverage-preserving refine).
+Measuring A2 (focused LLM on kept-only) + A1A2 now — does focusing stop beat-loss?
+
 ### 2026-06-07 — A7, A1 done (det)
 - A7 (false-start trim): marginal (composite 24, unchanged). Kept for safety.
 - **A1 (embedding+token dedup): WIN, composite 48** (see scoreboard + finding above).
