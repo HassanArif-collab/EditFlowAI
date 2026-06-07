@@ -3,6 +3,7 @@ from .baseline import baseline
 from .a7_trim import a7_trim
 from .a1_embed import a1_embed
 from .a2_focused import a2_focused, a1a2
+from .a8_safe import a8_safe
 
 REGISTRY = {
     "baseline": baseline,
@@ -10,4 +11,5 @@ REGISTRY = {
     "a1_embed": a1_embed,
     "a2_focused": a2_focused,
     "a1a2": a1a2,
+    "a8_safe": a8_safe,
 }
