@@ -6,10 +6,12 @@ from .a2_focused import a2_focused, a1a2
 from .a8_safe import a8_safe
 from .a5_script import a5_script
 from .a5_llm_script import a5_llm_script
+from .a5_clean import a5_clean
 
 REGISTRY = {
     "a5_script": a5_script,
     "a5_llm_script": a5_llm_script,
+    "a5_clean": a5_clean,
     "baseline": baseline,
     "a7_trim": a7_trim,
     "a1_embed": a1_embed,

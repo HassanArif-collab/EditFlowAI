@@ -36,12 +36,38 @@ def _beat_of(text):
     return "—"
 
 
-def merge_ranges(kept, gap=0.4):
-    """Merge time-adjacent kept segments into continuous [in,out] ranges."""
-    spans = sorted(((s.tight_in or s.start, s.tight_out or s.end, s) for s in kept), key=lambda x: x[0])
+def _word_spans(fixture):
+    """seg_id -> (first_word_start, last_word_end) — true speech bounds, no silence."""
+    words = json.load(open(fixture, encoding="utf-8")).get("words", [])
+    spans = {}
+    for w in words:
+        sid = w.get("segment_id")
+        s, e = w.get("start"), w.get("end")
+        if sid is None or s is None or e is None:
+            continue
+        lo, hi = spans.get(sid, (s, e))
+        spans[sid] = (min(lo, s), max(hi, e))
+    return spans
+
+
+def merge_ranges(kept, gap=0.4, fixture=None, pad=0.04):
+    """Merge time-adjacent kept segments into [in,out] ranges. When `fixture` is
+    given, each segment is trimmed to its WORD span (drops leading/trailing
+    silence) and a tighter gap is used so silent gaps aren't bridged."""
+    wspans = _word_spans(fixture) if fixture else {}
+    bounds = []
+    for s in kept:
+        if s.id in wspans:
+            a, b = wspans[s.id]
+            a, b = max(0, a - pad), b + pad
+        else:
+            a, b = (s.tight_in or s.start), (s.tight_out or s.end)
+        bounds.append((a, b, s))
+    bounds.sort(key=lambda x: x[0])
+    g = 0.12 if fixture else gap
     ranges, cur = [], None
-    for a, b, s in spans:
-        if cur and a - cur[1] <= gap:
+    for a, b, s in bounds:
+        if cur and a - cur[1] <= g:
             cur[1] = max(cur[1], b)
             cur[2].append(s)
         else:
@@ -61,7 +87,7 @@ def render(name, use_llm):
     if asyncio.iscoroutine(res):
         asyncio.run(res)
     kept = [s for s in segs if s.decision == "keep"]
-    ranges = merge_ranges(kept)
+    ranges = merge_ranges(kept, fixture=fixture)   # word-tight: trims silences
 
     os.makedirs(OUT_DIR, exist_ok=True)
     # plan text
