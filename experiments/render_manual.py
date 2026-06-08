@@ -12,7 +12,9 @@ PIECES = [
     (10, "میں ہوں جاوید۔ میں نے چودہ کروڑ روپے invest کیے ایک tech startup کے اندر"),  # I'm Javed, invested
     (13, "جو بہت ہی زیادہ چلا اور اب میری net income ہے دس ہزار کروڑ روپے"),  # blew up, 10,000 cr
     (23, "وہی same trick کھیلوں گا loan لینے والی تاکہ کم سے کم ٹیکس دینا پڑے"),  # same loan trick
-    (34, "ٹیکس دوں گا جو کہ بنے گا دو سو کروڑ روپے بنا ٹیکس کے"),             # 200cr tax-free (single take)
+    # tax line = seg33's CLEAN second half (after the '--') + seg34, comped:
+    {"seg": 33, "text": "یعنی اپنی total income پہ میں دو فیصد", "after_cutoff": True},  # "2% of my total income"
+    (34, "ٹیکس دوں گا جو کہ بنے گا دو سو کروڑ روپے بنا ٹیکس کے"),             # "tax = 200cr tax-free"
     (40, "اور جو میرے دس ہزار کروڑ ہیں وہ دس percent کی growth سے بڑھتے جائیں"),  # grows at 10%
     (53, "اب چلتے ہیں میرے گھر کی طرف۔ میں F6 اسلام آباد میں رہتا ہوں"),       # to my house, F-6 (opening only)
     (57, "میرے بنگلے کی طرف۔ میرا بنگلہ چار کنال کے رقبے پر پھیلا ہوا ہے۔ اس کے اندر چھ"),  # clean take B body

@@ -83,22 +83,29 @@ def build_prompt():
     return "\n".join(p)
 
 
-def locate(phrase, seg_id):
+def locate(phrase, seg_id, after_cutoff=False):
     """Find the time span of `phrase` inside segment `seg_id`'s words (subsequence
-    match on normalized tokens; from first to last matched word)."""
+    match on normalized tokens; from first to last matched word). When
+    `after_cutoff`, start matching AFTER the last '--' self-interrupt, so we grab
+    the clean retake of a phrase the speaker fumbled the first time."""
     sw = WORDS_BY_SEG.get(int(seg_id), [])
     pt = _normalize(phrase).split()
     if not sw or not pt:
         return None
     wt = [_normalize(w["text"]) for w in sw]
+    start_idx = 0
+    if after_cutoff:
+        for idx in range(len(sw)):
+            if "--" in sw[idx]["text"]:
+                start_idx = idx + 1
     first = last = None; k = 0
-    for idx, tok in enumerate(wt):
-        if k < len(pt) and tok == pt[k]:
+    for idx in range(start_idx, len(sw)):
+        if k < len(pt) and wt[idx] == pt[k]:
             if first is None:
                 first = idx
             last = idx; k += 1
     if first is None or k < max(1, len(pt) * 0.5):
-        first, last = 0, len(sw) - 1            # fallback: whole segment
+        first, last = start_idx, len(sw) - 1     # fallback: from start_idx to end
     # trim trailing/leading self-interrupt words (Scribe marks cut-offs with '-')
     while last > first and sw[last]["text"].rstrip().endswith("-"):
         last -= 1
@@ -114,9 +121,10 @@ def render_pieces(pieces, name="comp", title="COMP"):
     for p in pieces:
         sid = p.get("seg") if isinstance(p, dict) else p[0]
         ph = ((p.get("text") if isinstance(p, dict) else p[1]) or "").strip()
+        ac = p.get("after_cutoff", False) if isinstance(p, dict) else False
         if sid is None or not ph:
             continue
-        loc = locate(ph, sid)
+        loc = locate(ph, sid, after_cutoff=ac)
         if loc and loc[1] > loc[0]:
             ranges.append((loc[0] - 0.04, loc[1] + 0.04))
             plan.append((loc[0], int(sid), ph))
