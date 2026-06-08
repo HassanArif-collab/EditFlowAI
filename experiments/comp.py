@@ -7,15 +7,46 @@ Outputs experiments/preview/comp_plan.txt + comp_cut.mp4
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import re
 import subprocess
 import tempfile
+import urllib.request
 
-from backend.services.provider_service import provider_service
 from backend.services.review_service import _normalize
+
+MODEL = os.environ.get("COMP_MODEL", "gemma4:31b-cloud")   # stronger than minimax for comping
+
+
+def ollama_chat(prompt, model=MODEL, timeout=300):
+    body = json.dumps({"model": model, "messages": [{"role": "user", "content": prompt}],
+                       "stream": False, "options": {"temperature": 0}}).encode()
+    req = urllib.request.Request("http://localhost:11434/api/chat", data=body,
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read()).get("message", {}).get("content", "")
+
+
+def extract_json(text):
+    """Pull the {...} object out of a reply that may have ```json fences / prose."""
+    if not text:
+        return None
+    t = re.sub(r"```(?:json)?", "", text)
+    depth = start = 0
+    for i, ch in enumerate(t):
+        if ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    return json.loads(t[start:i + 1])
+                except Exception:
+                    pass
+    return None
 
 FIX = os.path.join("experiments", "fixtures", "jawaid_66seg.json")
 FF = os.path.join("data", "tools", "ffmpeg-8.1.1-full_build", "bin", "ffmpeg.exe")
@@ -71,12 +102,11 @@ def locate(phrase, seg_id):
     return sw[0]["start"], sw[-1]["end"]   # fallback: whole segment
 
 
-async def main():
-    raw = await provider_service.chat(
-        messages=[{"role": "user", "content": build_prompt()}], temperature=0.0, max_tokens=4000)
-    text = (raw or {}).get("response") or ""
-    m = re.search(r"\{.*\}", text, re.S)
-    pieces = (json.loads(m.group(0)).get("cut", []) if m else [])
+def main():
+    text = ollama_chat(build_prompt())
+    open(os.path.join(OUT, "_comp_raw.txt"), "w", encoding="utf-8").write(text)
+    data = extract_json(text)
+    pieces = (data.get("cut", []) if data else [])
 
     ranges, plan = [], []
     for p in pieces:
@@ -109,8 +139,8 @@ async def main():
     open(listf, "w", encoding="utf-8").write("\n".join(f"file '{p}'" for p in parts))
     subprocess.run([FF, "-y", "-f", "concat", "-safe", "0", "-i", listf, "-c", "copy",
                     os.path.join(OUT, "comp_cut.mp4")], check=True, capture_output=True)
-    print(f"PLAN: {OUT}/comp_plan.txt  VIDEO: {OUT}/comp_cut.mp4  phrases={len(plan)}")
+    print(f"PLAN: {OUT}/comp_plan.txt  VIDEO: {OUT}/comp_cut.mp4  phrases={len(plan)}  model={MODEL}")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
