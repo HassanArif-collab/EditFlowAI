@@ -95,3 +95,19 @@ Measuring A2 (focused LLM on kept-only) + A1A2 now — does focusing stop beat-l
   `experiment/approach-embed-dedup`.
 
 <!-- Append a new dated entry each time work advances. Keep the scoreboard current. -->
+
+### 2026-06-07 — PHRASE-COMPING works (the real goal)
+User clarified the actual requirement: don't pick a whole take — COMBINE the
+well-spoken parts across takes (good opening from take A + good body from take B;
+if a sentence was misspoken/cut/paused, take that part from another take).
+Built `experiments/comp.py`: LLM returns ordered {seg, verbatim-phrase} pieces;
+each phrase is located in that segment's WORDS (timestamps) and concatenated.
+- provider_service was dead (backend down) → call Ollama directly; use **gemma4:31b**
+  (much better cross-lingual comping than minimax).
+- RESULT (gemma4:31b): 12 phrases, 0:44, NO repeats, and it genuinely COMPED:
+  intro = seg1(10x)+seg10(I'm Javed/invest)+seg13(blew up/10000cr);
+  loan = seg30(2% loan=200cr)+seg34(tax-free); one clean house take (no double).
+- Refinement: trim trailing/leading '-' cut-off words at phrase edges (clean seams).
+- Evidence: preview/comp_plan.txt. Video: preview/comp_cut.mp4 (gitignored, local).
+- NEXT: trim dangling connectors (seg10 "جو کہ"); optional: have the LLM also avoid
+  number misspeaks (14000 vs 10000 crore); audio-seam smoothing is a separate track.

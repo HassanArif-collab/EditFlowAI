@@ -97,14 +97,24 @@ def locate(phrase, seg_id):
             if first is None:
                 first = idx
             last = idx; k += 1
-    if first is not None and k >= max(1, len(pt) * 0.5):
-        return sw[first]["start"], sw[last]["end"]
-    return sw[0]["start"], sw[-1]["end"]   # fallback: whole segment
+    if first is None or k < max(1, len(pt) * 0.5):
+        first, last = 0, len(sw) - 1            # fallback: whole segment
+    # trim trailing/leading self-interrupt words (Scribe marks cut-offs with '-')
+    while last > first and sw[last]["text"].rstrip().endswith("-"):
+        last -= 1
+    while first < last and sw[first]["text"].lstrip().startswith("-"):
+        first += 1
+    return sw[first]["start"], sw[last]["end"]
 
 
 def main():
-    text = ollama_chat(build_prompt())
-    open(os.path.join(OUT, "_comp_raw.txt"), "w", encoding="utf-8").write(text)
+    os.makedirs(OUT, exist_ok=True)
+    cache = os.path.join(OUT, "_comp_raw.txt")
+    if os.environ.get("COMP_CACHE") and os.path.exists(cache):
+        text = open(cache, encoding="utf-8").read()
+    else:
+        text = ollama_chat(build_prompt())
+        open(cache, "w", encoding="utf-8").write(text)
     data = extract_json(text)
     pieces = (data.get("cut", []) if data else [])
 
