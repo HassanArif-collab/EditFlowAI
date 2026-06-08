@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <!--
+    cep-loader.html — the actual panel.
+
+    History: this file used to be a tiny redirect that did
+      window.location.replace("http://127.0.0.1:8765/panel/index.html")
+    after a ping check. That redirect silently fails inside Premiere's CEP
+    runtime (file:// → http:// navigation is blocked), so the panel froze on
+    "Opening panel through the local backend..." and the user could not get
+    past it. All edits to index.html / main.js never reached the screen.
+
+    Fix: serve the panel content directly here, with absolute http URLs
+    pointing at the backend's mounted /panel route so the modules are
+    fetched through CORS-friendly origins rather than file://.
+  -->
+  <base href="http://127.0.0.1:8765/panel/">
+  <!-- Noto Nastaliq Urdu is bundled locally (styles/fonts.css → fonts/*.woff2)
+       so Urdu renders even when CEP is offline. No Google Fonts CDN at runtime. -->
+  <link rel="stylesheet" href="styles/fonts.css?v=20260607">
+  <link rel="stylesheet" href="styles/chat.css?v=20260606c">
+  <title>EditFlow AI</title>
+</head>
+<body>
+  <header id="app-header">
+    <span class="logo">EditFlow AI</span>
+    <span id="boot-tag" class="boot-tag" title="Frontend build tag — must match latest commit">build:unloaded</span>
+    <span class="header-spacer"></span>
+    <button id="btn-review" class="icon-btn" title="Review &amp; Cut (transcript editor)">&#128221;</button>
+    <button id="btn-diagnostics" class="icon-btn" title="Diagnostics">&#9432;</button>
+    <button id="btn-settings" class="icon-btn" title="Settings">&#9881;</button>
+  </header>
+
+  <!-- Inline fallback boot indicator — proves at least HTML is fresh.
+       main.js clears this once it starts. If it stays after 4 seconds the
+       text updates to tell the user exactly what to do. -->
+  <div id="inline-boot-check" style="position:fixed;top:0;left:0;right:0;padding:4px 12px;background:#5a2d2d;color:#fff;font:11px monospace;text-align:center;z-index:9999">
+    Boot pending — modules have not loaded yet.
+  </div>
+  <div id="backend-check" style="position:fixed;bottom:0;left:0;right:0;padding:4px 12px;background:#3a1d1d;color:#fff;font:11px monospace;text-align:center;z-index:9999;display:none"></div>
+  <script>
+    // Boot orchestrator — ensure the backend is up, AUTO-STARTING it if needed,
+    // before the page's module scripts load.
+    //
+    // WHY this lives inline: cep-loader.html is the only file loaded from disk
+    // (file://). Everything else — main.js, CSInterface.js, the CSS — resolves
+    // through the <base> tag to http://127.0.0.1:8765/panel/, i.e. it is served
+    // BY the backend. So the backend must already be up for those to load. The
+    // manifest enables Node (--enable-nodejs --mixed-context), so when the
+    // backend is down we spawn `python run.py --prod` ourselves, wait for
+    // /api/ping, then reload — on reload the static tags load cleanly.
+    (function () {
+      var PING = 'http://127.0.0.1:8765/api/ping';
+      var bootStart = Date.now();
+      window.__editflowBootStart = bootStart;
+
+      function top() { return document.getElementById('inline-boot-check'); }
+      function setTop(msg) { var el = top(); if (el && !el.dataset.cleared) el.textContent = msg; }
+      function showErr(msg) {
+        var box = document.getElementById('backend-check');
+        if (box) { box.style.display = 'block'; box.textContent = msg; }
+        var t = top();
+        if (t) { t.style.background = '#5a2d2d'; t.textContent = 'Backend problem — see message at bottom.'; }
+      }
+
+      // CEP exposes Node as a global require (mixed-context) or via cep_node.
+      function nodeReq() {
+        if (typeof require === 'function') return require;
+        if (window.cep_node && typeof window.cep_node.require === 'function') return window.cep_node.require;
+        return null;
+      }
+
+      function ping() {
+        return fetch(PING).then(function (r) { return r.ok; }).catch(function () { return false; });
+      }
+
+      // window.location is the real file:// URL of THIS file (NOT affected by
+      // <base>), e.g. file:///C:/Users/.../com.editflow.ai/client/cep-loader.html
+      function loaderFsPath() {
+        return decodeURIComponent(window.location.href.replace(/^file:\/+/, ''));
+      }
+
+      function repoRoot(req) {
+        // Manual override wins, in case path derivation is unreliable.
+        try { var o = localStorage.getItem('editflow_repo_root'); if (o) return o; } catch (e) {}
+        var path = req('path'), fs = req('fs');
+        var clientDir = path.dirname(loaderFsPath());   // <ext>/client
+        var extRoot = path.dirname(clientDir);          // <ext> (CEP junction)
+        try { extRoot = fs.realpathSync(extRoot); } catch (e) {}  // follow junction → repo/cep-panel
+        return path.dirname(extRoot);                   // repo root (run.py lives here)
+      }
+
+      function findPython(req, root) {
+        var fs = req('fs'), path = req('path');
+        try { var ov = localStorage.getItem('editflow_python_path'); if (ov && fs.existsSync(ov)) return ov; } catch (e) {}
+        var venv = path.join(root, '.venv', 'Scripts', 'python.exe');
+        if (fs.existsSync(venv)) return venv;
+        try {
+          var out = req('child_process').execSync('where python', { encoding: 'utf8' });
+          var lines = out.split(/\r?\n/);
+          for (var i = 0; i < lines.length; i++) {
+            var c = lines[i].trim();
+            // Skip the Windows Store python stub — it opens the Store, not python.
+            if (c && c.toLowerCase().indexOf('windowsapps') === -1 && fs.existsSync(c)) return c;
+          }
+        } catch (e) {}
+        return 'python'; // last resort: rely on PATH
+      }
+
+      function spawnBackend(req, root, python) {
+        var cp = req('child_process'), fs = req('fs'), path = req('path');
+        var dataDir = path.join(root, 'data');
+        try { fs.mkdirSync(dataDir, { recursive: true }); } catch (e) {}
+        var logPath = path.join(dataDir, 'backend.log');
+        var out = 'ignore', err = 'ignore';
+        try { out = fs.openSync(logPath, 'a'); err = fs.openSync(logPath, 'a'); } catch (e) {}
+        var child = cp.spawn(python, ['run.py', '--prod'], {
+          cwd: root, detached: true, windowsHide: true, stdio: ['ignore', out, err]
+        });
+        child.on('error', function (e) {
+          showErr('Could not start the backend (' + python + '): ' + e.message +
+            '. Set localStorage.editflow_python_path to your python.exe and reload.');
+        });
+        try { fs.writeFileSync(path.join(dataDir, 'backend.pid'), String(child.pid)); } catch (e) {}
+        child.unref();
+        return logPath;
+      }
+
+      function tailLog(req, logPath) {
+        try {
+          var lines = req('fs').readFileSync(logPath, 'utf8').split(/\r?\n/).filter(Boolean);
+          return lines.slice(-12).join(' | ');
+        } catch (e) { return ''; }
+      }
+
+      function pollUntilUp(maxMs, onTick) {
+        return new Promise(function (resolve) {
+          var start = Date.now();
+          (function tick() {
+            ping().then(function (ok) {
+              if (ok) return resolve(true);
+              if (onTick) onTick(Math.round((Date.now() - start) / 1000));
+              if (Date.now() - start > maxMs) return resolve(false);
+              setTimeout(tick, 500);
+            });
+          })();
+        });
+      }
+
+      // ── boot flow ──
+      ping().then(function (up) {
+        if (up) {
+          // Already running (manual start, or a prior spawn). Static tags load
+          // normally via <base>; main.js will clear this banner.
+          try { sessionStorage.removeItem('editflow_spawned'); } catch (e) {}
+          setTop('Backend up. Loading modules...');
+          return;
+        }
+
+        var req = nodeReq();
+        if (!req) {
+          showErr('Backend is down and Node integration is unavailable, so it ' +
+            'cannot be auto-started. Run "python run.py" and reload the panel.');
+          return;
+        }
+
+        var root, python, logPath;
+        try { root = repoRoot(req); python = findPython(req, root); }
+        catch (e) { showErr('Could not locate the backend launcher: ' + e.message +
+          '. Run "python run.py" manually and reload.'); return; }
+
+        // Spawn at most once per panel session (we only reload after a confirmed
+        // /api/ping, so a re-spawn on the reloaded page can't normally happen —
+        // this is belt-and-suspenders against a transient ping flake).
+        var tried = false;
+        try { tried = sessionStorage.getItem('editflow_spawned') === '1'; } catch (e) {}
+        if (!tried) {
+          try { sessionStorage.setItem('editflow_spawned', '1'); } catch (e) {}
+          setTop('Backend not running — starting it...');
+          logPath = spawnBackend(req, root, python);
+        } else {
+          setTop('Waiting for backend...');
+        }
+
+        pollUntilUp(90000, function (s) { setTop('Starting backend... ' + s + 's'); }).then(function (ok) {
+          if (ok) { setTop('Backend up. Reloading panel...'); window.location.reload(); return; }
+          var tail = logPath ? tailLog(req, logPath) : '';
+          showErr('Backend did not become ready in 90s. ' +
+            (tail ? ('Last log: ' + tail) : ('Check ' + root + '\\data\\backend.log')) +
+            ' — or run "python run.py" manually.');
+        });
+      });
+
+      // Safety hint if something stalls with the backend already up.
+      setTimeout(function () {
+        var el = top();
+        if (el && !el.dataset.cleared && Date.now() - bootStart > 9500) {
+          el.innerHTML = 'Still booting — if this persists, open the CEP debug ' +
+            'console (chrome://inspect or :8088) and check for module errors.';
+        }
+      }, 10000);
+    })();
+  </script>
+
+  <main id="app-main">
+    <div id="hero" class="hero">
+      <button id="btn-scan" class="hero-btn">&#8853; Scan Project</button>
+      <p class="hero-subtitle">Connect to your open Premiere project to begin.</p>
+    </div>
+    <div id="chat-scroll" class="chat-scroll hidden"></div>
+    <div id="drop-overlay" class="drop-overlay hidden">
+      <span>Drop here: bin, clip, folder, or document</span>
+    </div>
+  </main>
+
+  <footer id="app-footer" class="hidden">
+    <div id="selection-chip" class="selection-chip hidden"></div>
+    <div class="input-row">
+      <textarea id="chat-input" rows="1" placeholder="Type a message, or drop a file&#8230;"></textarea>
+      <button id="btn-attach" class="icon-btn" title="Attach script">&#128206;</button>
+      <button id="btn-send" class="send-btn">Send</button>
+    </div>
+  </footer>
+
+  <div id="settings-overlay" class="overlay hidden"></div>
+  <div id="diagnostics-popover" class="popover hidden"></div>
+
+  <script src="lib/CSInterface.js?v=20260606c"></script>
+  <!-- ?v= cache-buster: force CEP to refetch each release so module hot-swap
+       is reliable. Bump the value whenever any module changes. -->
+  <script type="module" src="src/main.js?v=20260606c"></script>
+</body>
+</html>

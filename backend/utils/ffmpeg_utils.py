@@ -3,45 +3,66 @@ EditFlow AI - FFmpeg Utilities
 Wrappers around ffmpeg/ffprobe for video analysis and frame extraction.
 """
 import asyncio
+import base64
 import json
 import subprocess
+import sys
 import tempfile
-import base64
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from ..config import Settings
+from ..config import get_settings
 
 
-def get_settings() -> Settings:
-    return Settings()
+# ── Async wrappers ──
 
+async def run_ffmpeg_async(
+    cmd: List[str],
+    timeout: int = 600,
+) -> subprocess.CompletedProcess:
+    """Run an FFmpeg/FFprobe command off the event loop.
+
+    Use this from any async handler that invokes ffmpeg/ffprobe — blocking
+    subprocess.run() inside an `async def` freezes the entire uvicorn worker.
+    """
+    return await asyncio.to_thread(
+        subprocess.run,
+        cmd,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+
+# ── Probing ──
 
 def probe_video(video_path: str | Path) -> Dict:
-    """Get comprehensive video information using ffprobe."""
+    """Get comprehensive video information using ffprobe. Sync, has a timeout."""
     ffprobe = get_settings().FFPROBE_PATH
     cmd = [
         ffprobe, "-v", "quiet", "-print_format", "json",
-        "-show_format", "-show_streams", str(video_path)
+        "-show_format", "-show_streams", str(video_path),
     ]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        return json.loads(result.stdout)
-    except Exception as e:
+        if result.returncode != 0:
+            return {"error": (result.stderr or "ffprobe failed").strip()[:200]}
+        return json.loads(result.stdout) if result.stdout else {}
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError) as e:
         return {"error": str(e)}
 
 
 def get_duration(video_path: str | Path) -> float:
-    """Get video duration in seconds."""
+    """Get video duration in seconds. Returns 0.0 on any failure."""
     ffprobe = get_settings().FFPROBE_PATH
     cmd = [
         ffprobe, "-v", "error", "-show_entries", "format=duration",
-        "-of", "default=noprint_wrappers=1:nokey=1", str(video_path)
+        "-of", "default=noprint_wrappers=1:nokey=1", str(video_path),
     ]
     try:
-        out = subprocess.check_output(cmd).decode().strip()
-        return float(out)
-    except Exception:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=True)
+        return float(out.stdout.strip())
+    except (subprocess.SubprocessError, ValueError, OSError):
         return 0.0
 
 
@@ -115,12 +136,12 @@ def extract_frames(
             cmd = [
                 ffmpeg, "-y", "-ss", str(timestamp), "-i", str(video_path),
                 "-vframes", "1", "-q:v", str(quality),
-                "-s", resolution, str(frame_path)
+                "-s", resolution, str(frame_path),
             ]
             try:
                 subprocess.run(
                     cmd, stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL, check=True, timeout=30
+                    stderr=subprocess.DEVNULL, check=True, timeout=30,
                 )
                 if frame_path.exists():
                     with open(frame_path, "rb") as f:
@@ -154,7 +175,7 @@ def extract_audio(
     cmd = [
         ffmpeg, "-y", "-v", "quiet", "-i", str(video_path),
         "-vn", "-acodec", "pcm_s16le", "-ar", str(sample_rate),
-        "-ac", "1", str(output_path)
+        "-ac", "1", str(output_path),
     ]
     subprocess.run(cmd, check=True, timeout=300)
     return output_path
@@ -178,7 +199,10 @@ def get_media_info(video_path: str | Path) -> Dict:
             codec = stream.get("codec_name", "")
             break
 
-    file_size = path.stat().st_size if path.exists() else 0
+    try:
+        file_size = path.stat().st_size
+    except OSError:
+        file_size = 0
 
     return {
         "path": str(path),
@@ -199,12 +223,15 @@ def scan_directory(
 ) -> List[Path]:
     """Recursively scan directory for video files.
 
+    On case-sensitive filesystems we also probe upper-case extensions;
+    on case-insensitive ones (Windows, default macOS) one pass is enough.
+
     Args:
         directory: Root directory to scan
         extensions: Video file extensions to include
 
     Returns:
-        List of video file paths
+        Sorted list of unique video file paths
     """
     if extensions is None:
         extensions = [".mp4", ".mov", ".m4v", ".mkv", ".avi", ".webm", ".mpg", ".mpeg"]
@@ -213,17 +240,17 @@ def scan_directory(
     if not directory.exists():
         return []
 
-    files = []
+    case_sensitive = sys.platform not in ("win32", "darwin")
+    seen: set = set()
+    unique: List[Path] = []
     for ext in extensions:
-        files.extend(directory.rglob(f"*{ext}"))
-        files.extend(directory.rglob(f"*{ext.upper()}"))
-
-    # Deduplicate
-    seen = set()
-    unique = []
-    for f in files:
-        if f not in seen:
-            seen.add(f)
-            unique.append(f)
+        patterns = [f"*{ext}"]
+        if case_sensitive and ext != ext.upper():
+            patterns.append(f"*{ext.upper()}")
+        for pat in patterns:
+            for f in directory.rglob(pat):
+                if f not in seen:
+                    seen.add(f)
+                    unique.append(f)
 
     return sorted(unique, key=lambda p: p.name)

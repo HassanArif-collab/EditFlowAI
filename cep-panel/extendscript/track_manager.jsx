@@ -1,119 +1,71 @@
-/**
- * EditFlow AI - Track Manager
- * Manages video and audio tracks in the sequence.
+/*
+ * track_manager.jsx - Manage tracks in the Premiere Pro sequence.
  */
-
-var trackManager = (function() {
+trackManager = (function() {
     "use strict";
 
-    /**
-     * Ensure the sequence has enough tracks for the EDL.
-     * @param {Sequence} seq
-     * @param {number} requiredVideoTracks
-     * @param {number} requiredAudioTracks
-     * @returns {Object} Result
-     */
     function ensureTracks(seq, requiredVideoTracks, requiredAudioTracks) {
-        var added = { video: 0, audio: 0 };
-
-        // Add video tracks if needed
+        var added = 0;
         while (seq.videoTracks.numTracks < requiredVideoTracks) {
-            seq.videoTracks.createVideoTrack("V" + (seq.videoTracks.numTracks + 1));
-            added.video++;
+            try { seq.createVideoTrack("Video " + (seq.videoTracks.numTracks + 1)); added++; } catch (e) { break; }
         }
-
-        // Add audio tracks if needed
         while (seq.audioTracks.numTracks < requiredAudioTracks) {
-            seq.audioTracks.createAudioTrack("A" + (seq.audioTracks.numTracks + 1));
-            added.audio++;
+            try { seq.createAudioTrack("Audio " + (seq.audioTracks.numTracks + 1)); added++; } catch (e) { break; }
         }
-
-        return {
-            success: true,
-            totalVideoTracks: seq.videoTracks.numTracks,
-            totalAudioTracks: seq.audioTracks.numTracks,
-            added: added
-        };
+        return added;
     }
 
-    /**
-     * Clear all clips from a track.
-     * @param {Sequence} seq
-     * @param {number} trackIndex
-     * @param {string} trackType - "video" or "audio"
-     * @returns {Object} Result
-     */
     function clearTrack(seq, trackIndex, trackType) {
-        try {
-            var tracks = (trackType === "video") ? seq.videoTracks : seq.audioTracks;
-            if (trackIndex >= tracks.numTracks) {
-                return { success: false, error: "Track index out of range" };
-            }
+        var tracks = (trackType === "audio") ? seq.audioTracks : seq.videoTracks;
+        if (trackIndex >= tracks.numTracks) return 0;
 
-            var track = tracks[trackIndex];
-            var removed = 0;
-
-            // Remove clips from end to start to avoid index shifting
-            while (track.clips.numItems > 0) {
-                track.clips[track.clips.numItems - 1].remove(false, true);
-                removed++;
-            }
-
-            return { success: true, removed: removed };
-        } catch(e) {
-            return { success: false, error: e.toString() };
+        var track = tracks[trackIndex];
+        var removed = 0;
+        while (track.clips.numItems > 0) {
+            track.clips[track.clips.numItems - 1].remove(false, true);
+            removed++;
         }
+        return removed;
     }
 
-    /**
-     * Mute/unmute a track.
-     * @param {Sequence} seq
-     * @param {number} trackIndex
-     * @param {string} trackType
-     * @param {boolean} mute
-     */
     function setTrackMute(seq, trackIndex, trackType, mute) {
-        try {
-            var tracks = (trackType === "video") ? seq.videoTracks : seq.audioTracks;
-            if (trackIndex < tracks.numTracks) {
-                tracks[trackIndex].setMute(mute ? 1 : 0);
-                return { success: true };
-            }
-            return { success: false, error: "Track not found" };
-        } catch(e) {
-            return { success: false, error: e.toString() };
-        }
+        var tracks = (trackType === "audio") ? seq.audioTracks : seq.videoTracks;
+        if (trackIndex >= tracks.numTracks) return false;
+        tracks[trackIndex].setMute(mute);
+        return true;
     }
 
     function manageTracks(options) {
-        options = options || {};
-        try {
-            var seq = app.project.activeSequence;
-            if (!seq) return { success: false, error: "No active sequence" };
-            var action = options.action || "";
-            var trackType = options.trackType || options.track_type || "video";
-            var trackIndex = options.trackIndex || options.track_index || 0;
-            if (action === "add") {
-                if (trackType === "audio") {
-                    ensureTracks(seq, seq.videoTracks.numTracks, trackIndex + 1);
-                } else {
-                    ensureTracks(seq, trackIndex + 1, seq.audioTracks.numTracks);
-                }
-                return { success: true, action: action, trackType: trackType, trackIndex: trackIndex };
-            }
-            if (action === "clear") {
-                return clearTrack(seq, trackIndex, trackType);
-            }
-            if (action === "mute") {
-                return setTrackMute(seq, trackIndex, trackType, options.mute !== false);
-            }
-            return { success: false, error: "Unsupported track action: " + action };
-        } catch(e) {
-            return { success: false, error: e.toString(), line: e.line };
+        var seq = app.project.activeSequence;
+        if (!seq) return editflowUtils.safeStringify({ success: false, error: "No active sequence" });
+
+        var action = editflowUtils.getParam(options, 'action') || "add";
+
+        switch (action) {
+            case "add":
+                var videoCount = editflowUtils.getParam(options, 'videoCount') || 1;
+                var audioCount = editflowUtils.getParam(options, 'audioCount') || 0;
+                var added = ensureTracks(seq, videoCount, audioCount);
+                return editflowUtils.safeStringify({ success: true, tracksAdded: added });
+
+            case "clear":
+                var trackIdx = editflowUtils.getParam(options, 'trackIndex', 'track') || 0;
+                var trackType = editflowUtils.getParam(options, 'trackType', 'type') || "video";
+                var removed = clearTrack(seq, trackIdx, trackType);
+                return editflowUtils.safeStringify({ success: true, clipsRemoved: removed });
+
+            case "mute":
+                var trackIdx = editflowUtils.getParam(options, 'trackIndex', 'track') || 0;
+                var trackType = editflowUtils.getParam(options, 'trackType', 'type') || "video";
+                var mute = editflowUtils.getParam(options, 'mute') !== false;
+                setTrackMute(seq, trackIdx, trackType, mute);
+                return editflowUtils.safeStringify({ success: true, muted: mute });
+
+            default:
+                return editflowUtils.safeStringify({ success: false, error: "Unknown track action: " + action });
         }
     }
 
-    // Public API
     return {
         ensureTracks: ensureTracks,
         clearTrack: clearTrack,

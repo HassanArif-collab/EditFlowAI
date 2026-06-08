@@ -1,0 +1,81 @@
+{
+    "fixture_id": "interview_short",
+    "spec_version": 1,
+    "script_id": "script_v2_paraphrased",
+    "description": "Expected stage-6 output for script_v2_paraphrased.txt. Both beats are paraphrased: 'Welcome back, everyone' is not literally said in any take; 'a really fascinating topic that I hope you'll enjoy' is closest to take 2's actual phrasing. The matcher must use embedding similarity + LLM rerank to prefer take 2 over takes 0/1 for both beats. Take 2 is the highest-quality take, has no fillers, and semantically covers both beats — so it gets used twice on the timeline.",
+    "planner_inputs": {
+        "engine": "whisperx",
+        "boundary_window_ms": 200,
+        "frame_rate": 24.0,
+        "frame_quantum_ms": 41.667,
+        "silence_fade_ms": 15,
+        "word_boundary_fade_ms": 25,
+        "audio_normalize_default": false
+    },
+    "bin_reference": "@bin:fixtures/short",
+    "target_kind": "new",
+    "sequence_hash_at_plan_time": "FIXTURE",
+    "cuts": [
+        {
+            "beat_index": 0,
+            "beat_text": "Welcome back, everyone.",
+            "take_index": 2,
+            "source_file": "interview_short.wav",
+            "source_in": 20.083,
+            "source_out": 21.917,
+            "duration": 1.834,
+            "audio_fade_in_ms": 15,
+            "audio_fade_out_ms": 15,
+            "timeline_position": 0.000,
+            "confidence_band": "medium",
+            "expected_confidence_min": 0.60,
+            "alternates": [0],
+            "warnings": ["paraphrase_match"],
+            "snap_notes": "Picks take 2 over take 0 even though both contain 'Welcome back' — take 2 has higher quality (no fillers). End snapped after 'channel' word_end (21.75) to the VAD silence around 21.92."
+        },
+        {
+            "beat_index": 1,
+            "beat_text": "Today's video is about a really fascinating topic that I hope you'll enjoy.",
+            "take_index": 2,
+            "source_file": "interview_short.wav",
+            "source_in": 22.167,
+            "source_out": 31.250,
+            "duration": 9.083,
+            "audio_fade_in_ms": 15,
+            "audio_fade_out_ms": 15,
+            "timeline_position": 1.834,
+            "confidence_band": "high",
+            "expected_confidence_min": 0.75,
+            "alternates": [1],
+            "warnings": [],
+            "snap_notes": "Beat 1 maps to the second half of take 2 (from after 'channel' to the end). source_in snapped to the silence midpoint between 'channel' (end 21.75) and 'Today' (start 22.20). source_out snapped to nearest frame inside the post-speech silence (final word 'enjoy' ends at 31.10, snapped to 31.25 for headroom)."
+        }
+    ],
+    "gaps": [],
+    "level_warnings": [],
+    "beat_repetition_warnings": [
+        {
+            "between_beats": [0, 1],
+            "repeated_phrase": "back to the channel ... today",
+            "remediation": "fine — single take, no actual repetition in spoken audio. Suppressed."
+        }
+    ],
+    "summary": {
+        "total_duration": 10.917,
+        "total_beats": 2,
+        "matched": 2,
+        "unmatched": 0,
+        "low_confidence": 0,
+        "estimated_apply_time_s": 0.6
+    },
+    "tolerance": {
+        "source_in_ms": 50,
+        "source_out_ms": 50,
+        "timeline_position_ms": 50,
+        "fade_ms": 5
+    },
+    "notes": [
+        "This plan demonstrates that take 2 can be used twice on the same timeline — once for each beat — because the speaker's continuous third take happens to cover both script beats. Stage 6 must NOT add a beat_repetition warning here because the cuts come from the same continuous speech (not separate takes joined with audible overlap).",
+        "Frame quantum at 24 fps is 1/24 s ≈ 0.04167. All source_in/source_out values above are multiples of this within ±0.001 tolerance. Test must use modulo math, not equality, to verify."
+    ]
+}

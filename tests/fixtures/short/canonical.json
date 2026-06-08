@@ -1,0 +1,124 @@
+{
+    "fixture_id": "interview_short",
+    "spec_version": 1,
+    "description": "Hand-authored ground truth for the 33-second 3-take interview fixture. Times are in seconds, in original-source-file time. Probabilities are nominal 1.0 because this is canonical, not a real transcription. See spec.md for the narrative.",
+    "duration": 33.0,
+    "language": "en",
+    "sample_rate": 16000,
+    "channels": 1,
+    "speaker_id": null,
+    "takes": [
+        {
+            "take_index": 0,
+            "source_start": 2.0,
+            "source_end": 9.0,
+            "text": "Hello and welcome back to my channel. Today I want to, uh, talk about something really cool.",
+            "clean_text": "Hello and welcome back to my channel. Today I want to talk about something really cool.",
+            "quality_intent": {
+                "filler_count": 1,
+                "filler_words": ["uh"],
+                "false_starts": 0,
+                "long_pauses": 0,
+                "completes_thought": true,
+                "expected_overall_score_range": [0.55, 0.75]
+            },
+            "words": [
+                {"text": "Hello",     "start":  2.10, "end":  2.55, "prob": 1.0, "is_filler": false},
+                {"text": "and",       "start":  2.55, "end":  2.75, "prob": 1.0, "is_filler": false},
+                {"text": "welcome",   "start":  2.75, "end":  3.20, "prob": 1.0, "is_filler": false},
+                {"text": "back",      "start":  3.20, "end":  3.50, "prob": 1.0, "is_filler": false},
+                {"text": "to",        "start":  3.50, "end":  3.65, "prob": 1.0, "is_filler": false},
+                {"text": "my",        "start":  3.65, "end":  3.85, "prob": 1.0, "is_filler": false},
+                {"text": "channel",   "start":  3.85, "end":  4.45, "prob": 1.0, "is_filler": false},
+                {"text": "Today",     "start":  4.80, "end":  5.20, "prob": 1.0, "is_filler": false},
+                {"text": "I",         "start":  5.20, "end":  5.30, "prob": 1.0, "is_filler": false},
+                {"text": "want",      "start":  5.30, "end":  5.55, "prob": 1.0, "is_filler": false},
+                {"text": "to",        "start":  5.55, "end":  5.70, "prob": 1.0, "is_filler": false},
+                {"text": "uh",        "start":  5.85, "end":  6.20, "prob": 1.0, "is_filler": true},
+                {"text": "talk",      "start":  6.35, "end":  6.70, "prob": 1.0, "is_filler": false},
+                {"text": "about",     "start":  6.70, "end":  7.05, "prob": 1.0, "is_filler": false},
+                {"text": "something", "start":  7.05, "end":  7.55, "prob": 1.0, "is_filler": false},
+                {"text": "really",    "start":  7.55, "end":  7.95, "prob": 1.0, "is_filler": false},
+                {"text": "cool",      "start":  7.95, "end":  8.55, "prob": 1.0, "is_filler": false}
+            ]
+        },
+        {
+            "take_index": 1,
+            "source_start": 11.0,
+            "source_end": 18.0,
+            "text": "Today I want to talk about something interesting, uh, something that I think you'll find fascinating.",
+            "clean_text": "Today I want to talk about something interesting, something that I think you'll find fascinating.",
+            "quality_intent": {
+                "filler_count": 1,
+                "filler_words": ["uh"],
+                "false_starts": 0,
+                "long_pauses": 0,
+                "completes_thought": true,
+                "expected_overall_score_range": [0.55, 0.75]
+            },
+            "words": [
+                {"text": "Today",       "start": 11.10, "end": 11.45, "prob": 1.0, "is_filler": false},
+                {"text": "I",           "start": 11.45, "end": 11.55, "prob": 1.0, "is_filler": false},
+                {"text": "want",        "start": 11.55, "end": 11.80, "prob": 1.0, "is_filler": false},
+                {"text": "to",          "start": 11.80, "end": 11.95, "prob": 1.0, "is_filler": false},
+                {"text": "talk",        "start": 11.95, "end": 12.25, "prob": 1.0, "is_filler": false},
+                {"text": "about",       "start": 12.25, "end": 12.60, "prob": 1.0, "is_filler": false},
+                {"text": "something",   "start": 12.60, "end": 13.10, "prob": 1.0, "is_filler": false},
+                {"text": "interesting", "start": 13.10, "end": 13.90, "prob": 1.0, "is_filler": false},
+                {"text": "uh",          "start": 14.10, "end": 14.45, "prob": 1.0, "is_filler": true},
+                {"text": "something",   "start": 14.60, "end": 15.05, "prob": 1.0, "is_filler": false},
+                {"text": "that",        "start": 15.05, "end": 15.25, "prob": 1.0, "is_filler": false},
+                {"text": "I",           "start": 15.25, "end": 15.35, "prob": 1.0, "is_filler": false},
+                {"text": "think",       "start": 15.35, "end": 15.65, "prob": 1.0, "is_filler": false},
+                {"text": "you'll",      "start": 15.65, "end": 15.90, "prob": 1.0, "is_filler": false},
+                {"text": "find",        "start": 15.90, "end": 16.20, "prob": 1.0, "is_filler": false},
+                {"text": "fascinating", "start": 16.20, "end": 17.40, "prob": 1.0, "is_filler": false}
+            ]
+        },
+        {
+            "take_index": 2,
+            "source_start": 20.0,
+            "source_end": 31.5,
+            "text": "Welcome back to the channel. Today I want to discuss a fascinating topic that I think you'll really enjoy.",
+            "clean_text": "Welcome back to the channel. Today I want to discuss a fascinating topic that I think you'll really enjoy.",
+            "quality_intent": {
+                "filler_count": 0,
+                "filler_words": [],
+                "false_starts": 0,
+                "long_pauses": 0,
+                "completes_thought": true,
+                "expected_overall_score_range": [0.80, 0.95]
+            },
+            "words": [
+                {"text": "Welcome",     "start": 20.10, "end": 20.55, "prob": 1.0, "is_filler": false},
+                {"text": "back",        "start": 20.55, "end": 20.85, "prob": 1.0, "is_filler": false},
+                {"text": "to",          "start": 20.85, "end": 21.00, "prob": 1.0, "is_filler": false},
+                {"text": "the",         "start": 21.00, "end": 21.15, "prob": 1.0, "is_filler": false},
+                {"text": "channel",     "start": 21.15, "end": 21.75, "prob": 1.0, "is_filler": false},
+                {"text": "Today",       "start": 22.20, "end": 22.60, "prob": 1.0, "is_filler": false},
+                {"text": "I",           "start": 22.60, "end": 22.70, "prob": 1.0, "is_filler": false},
+                {"text": "want",        "start": 22.70, "end": 22.95, "prob": 1.0, "is_filler": false},
+                {"text": "to",          "start": 22.95, "end": 23.10, "prob": 1.0, "is_filler": false},
+                {"text": "discuss",     "start": 23.10, "end": 23.65, "prob": 1.0, "is_filler": false},
+                {"text": "a",           "start": 23.65, "end": 23.75, "prob": 1.0, "is_filler": false},
+                {"text": "fascinating", "start": 23.75, "end": 24.65, "prob": 1.0, "is_filler": false},
+                {"text": "topic",       "start": 24.65, "end": 25.10, "prob": 1.0, "is_filler": false},
+                {"text": "that",        "start": 25.40, "end": 25.65, "prob": 1.0, "is_filler": false},
+                {"text": "I",           "start": 25.65, "end": 25.75, "prob": 1.0, "is_filler": false},
+                {"text": "think",       "start": 25.75, "end": 26.05, "prob": 1.0, "is_filler": false},
+                {"text": "you'll",      "start": 26.05, "end": 26.35, "prob": 1.0, "is_filler": false},
+                {"text": "really",      "start": 26.35, "end": 26.80, "prob": 1.0, "is_filler": false},
+                {"text": "enjoy",       "start": 26.80, "end": 31.10, "prob": 1.0, "is_filler": false}
+            ]
+        }
+    ],
+    "vad_segments": [
+        {"kind": "silence", "source_start":  0.0,  "source_end":  2.0},
+        {"kind": "speech",  "source_start":  2.0,  "source_end":  9.0},
+        {"kind": "silence", "source_start":  9.0,  "source_end": 11.0},
+        {"kind": "speech",  "source_start": 11.0,  "source_end": 18.0},
+        {"kind": "silence", "source_start": 18.0,  "source_end": 20.0},
+        {"kind": "speech",  "source_start": 20.0,  "source_end": 31.5},
+        {"kind": "silence", "source_start": 31.5,  "source_end": 33.0}
+    ]
+}

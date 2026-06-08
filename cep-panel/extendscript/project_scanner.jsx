@@ -1,179 +1,195 @@
-/**
- * EditFlow AI - Project Scanner
- * Scans the Premiere Pro project for all media items.
+/*
+ * project_scanner.jsx - Scan the Premiere Pro project tree.
+ * Recursively walks bins, items, and sequences for full project context.
  */
-
-var projectScanner = (function() {
+projectScanner = (function() {
     "use strict";
 
-    /**
-     * Scan all project items recursively.
-     * @returns {Object} Scanned media info
-     */
     function scanAll() {
-        var result = {
-            success: true,
-            items: [],
-            sequences: [],
-            bins: []
-        };
-
         var project = app.project;
-        if (!project) {
-            result.success = false;
-            result.error = "No project open";
-            return result;
-        }
+        if (!project) return JSON.stringify({ error: "No project open" });
+
+        var result = {
+            name: project.name,
+            path: project.path,
+            bins: [],
+            items: [],
+            sequences: []
+        };
 
         var root = project.rootItem;
         scanBin(root, result, 0, "");
 
-        return result;
+        // Also collect sequence names
+        for (var i = 0; i < project.sequences.numSequences; i++) {
+            var seq = project.sequences[i];
+            result.sequences.push({
+                name: seq.name,
+                id: seq.sequenceID
+            });
+        }
+
+        return JSON.stringify(result);
     }
 
-    /**
-     * Recursively scan a bin (folder) for media items.
-     * @param {ProjectItem} bin - The bin to scan
-     * @param {Object} result - Result accumulator
-     * @param {number} depth - Current depth
-     * @param {string} binPath - Current bin path
-     */
     function scanBin(bin, result, depth, binPath) {
+        var currentPath = binPath ? (binPath + "/" + bin.name) : bin.name;
+
+        result.bins.push({
+            name: bin.name,
+            path: currentPath,
+            itemCount: bin.children.numItems,
+            depth: depth
+        });
+
         for (var i = 0; i < bin.children.numItems; i++) {
             var item = bin.children[i];
 
             if (item.type === ProjectItemType.BIN) {
-                var childPath = binPath ? (binPath + "/" + item.name) : item.name;
-                result.bins.push({
-                    name: item.name,
-                    itemId: item.nodeId,
-                    path: childPath,
-                    binPath: childPath,
-                    bin_path: childPath,
-                    parentPath: binPath || "",
-                    parent_path: binPath || "",
-                    childCount: item.children.numItems,
-                    depth: depth
-                });
-                scanBin(item, result, depth + 1, childPath);
-            }
-            else if (item.type === ProjectItemType.CLIP ||
-                     item.type === ProjectItemType.FILE) {
-                result.items.push(getItemInfo(item, binPath));
-            }
-            else if (item.type === ProjectItemType.SEQUENCE) {
-                result.sequences.push({
-                    name: item.name,
-                    itemId: item.nodeId,
-                    sequenceId: item.sequenceID,
-                    binPath: binPath,
-                    bin_path: binPath
-                });
+                scanBin(item, result, depth + 1, currentPath);
+            } else {
+                var itemInfo = getItemInfo(item, currentPath);
+                result.items.push(itemInfo);
             }
         }
     }
 
-    /**
-     * Get detailed info about a project item.
-     * @param {ProjectItem} item
-     * @param {string} binPath
-     * @returns {Object} Item info
-     */
     function getItemInfo(item, binPath) {
         var info = {
             name: item.name,
-            itemId: item.nodeId,
-            type: item.type,
+            binPath: binPath,
+            type: "unknown",
             mediaPath: "",
-            binPath: binPath || "",
-            bin_path: binPath || ""
+            hasVideo: false,
+            hasAudio: false,
+            duration: 0
         };
 
-        // Get media path
         try {
-            var mediaPath = item.getMediaPath();
-            info.mediaPath = mediaPath || "";
-        } catch(e) {
-            info.mediaPath = "";
-        }
-
-        try {
-            info.mediaType = item.mediaType || "";
-        } catch(e2) {
-            info.mediaType = "";
-        }
-
-        try {
-            info.has_video = (item.hasVideo && (item.hasVideo() === 1 || item.hasVideo() === true));
-            info.has_audio = (item.hasAudio && (item.hasAudio() === 1 || item.hasAudio() === true));
-            info.hasVideo = info.has_video;
-            info.hasAudio = info.has_audio;
-        } catch(e3) {}
-
-        // Get clip properties if available
-        try {
-            var xmp = item.getXMPMetadata();
-            if (xmp) {
-                info.hasXMP = true;
+            if (item.type === ProjectItemType.CLIP || item.type === ProjectItemType.FILE) {
+                info.type = "clip";
+            } else if (item.type === ProjectItemType.SEQUENCE) {
+                info.type = "sequence";
             }
-        } catch(e) {}
 
-        // Get duration from source
-        try {
-            if (item.getInPoint && item.getOutPoint) {
-                var inPoint = item.getInPoint();
-                var outPoint = item.getOutPoint();
-                info.inPoint = inPoint.seconds;
-                info.outPoint = outPoint.seconds;
-                info.duration = outPoint.seconds - inPoint.seconds;
+            info.mediaPath = editflowUtils.getMediaPath(item);
+            info.hasVideo = !!editflowUtils.hasVideo(item);
+            info.hasAudio = !!editflowUtils.hasAudio(item);
+
+            if (item.getDuration) {
+                info.duration = editflowUtils.ticksToSeconds({ ticks: String(item.getDuration()) });
             }
-        } catch(e) {}
-
+        } catch (e) {
+            info.error = e.toString();
+        }
 
         return info;
     }
 
-    /**
-     * Find project items that match a path.
-     * @param {string} path - File path to search for
-     * @returns {Array} Matching items
-     */
     function findByPath(path) {
-        var matches = [];
         var project = app.project;
-        if (!project) return matches;
+        if (!project) return JSON.stringify({ found: false });
 
-        searchByPath(project.rootItem, path, matches);
-        return matches;
+        var items = [];
+        var root = project.rootItem;
+        findItemsByPath(root, path, items);
+
+        return JSON.stringify({ found: items.length > 0, items: items });
     }
 
-    function searchByPath(bin, path, matches) {
+    function findItemsByPath(bin, path, results) {
         for (var i = 0; i < bin.children.numItems; i++) {
             var item = bin.children[i];
 
             if (item.type === ProjectItemType.BIN) {
-                searchByPath(item, path, matches);
-            }
-            else if (item.type === ProjectItemType.CLIP ||
-                     item.type === ProjectItemType.FILE) {
+                findItemsByPath(item, path, results);
+            } else {
                 try {
-                    var mediaPath = item.getMediaPath();
-                    if (mediaPath && mediaPath.toLowerCase() === path.toLowerCase()) {
-                        matches.push({
+                    var mediaPath = item.getMediaPath ? item.getMediaPath() : "";
+                    if (mediaPath === path || mediaPath.indexOf(path) >= 0) {
+                        results.push({
                             name: item.name,
-                            itemId: item.nodeId,
-                            mediaPath: mediaPath
+                            mediaPath: mediaPath,
+                            binPath: bin.name
                         });
                     }
-                } catch(e) {}
+                } catch (e) {}
             }
         }
     }
 
-    // Public API
     return {
         scanAll: scanAll,
         findByPath: findByPath,
         getItemInfo: getItemInfo
     };
 })();
+
+/**
+ * getSelectedProjectItems — Return the currently selected project items.
+ *
+ * Used by the CEP panel's drag-and-drop and selection-chip features.
+ * When the user drags from Premiere's project panel into the CEP panel,
+ * Premiere selects the items, so we can read the selection at drop time.
+ * This function does NOT modify scanProjectMedia or any existing code.
+ */
+function getSelectedProjectItems() {
+    if (!app || !app.project || !app.project.rootItem) {
+        return JSON.stringify({success: false, error: "No project open"});
+    }
+    var selection = (app.project.getSelection) ? app.project.getSelection() : [];
+    var items = [];
+    for (var i = 0; i < selection.length; i++) {
+        var item = selection[i];
+        // Use the same getItemInfo helper from projectScanner if available
+        if (typeof projectScanner !== 'undefined' && projectScanner.getItemInfo) {
+            var binPath = _getBinPath(item);
+            var itemInfo = projectScanner.getItemInfo(item, binPath);
+            itemInfo.isBin = (item.type === ProjectItemType.BIN);
+            items.push(itemInfo);
+        } else {
+            // Inline minimal description if helper not available
+            items.push(_describeItemMinimal(item));
+        }
+    }
+    return JSON.stringify({success: true, items: items, count: items.length});
+}
+
+function _getBinPath(item) {
+    // Walk up the parent chain to build a bin path
+    var parts = [];
+    var current = item.parent;
+    while (current) {
+        if (current.name) parts.unshift(current.name);
+        current = current.parent;
+    }
+    return parts.join("/");
+}
+
+function _describeItemMinimal(item) {
+    var info = {
+        name: item.name || "",
+        binPath: _getBinPath(item),
+        mediaPath: "",
+        hasAudio: false,
+        hasVideo: false,
+        duration: 0,
+        isBin: (item.type === ProjectItemType.BIN)
+    };
+    try {
+        info.mediaPath = item.getMediaPath ? item.getMediaPath() : "";
+        if (item.getDuration) {
+            var ticks = String(item.getDuration());
+            info.duration = parseFloat(ticks) / 254016000000; // Premiere ticks to seconds
+        }
+        // Check XMP for audio/video
+        if (item.xmpMetadata) {
+            var xmp = item.xmpMetadata;
+            info.hasAudio = xmp.indexOf("Audio") >= 0;
+            info.hasVideo = xmp.indexOf("Video") >= 0;
+        }
+    } catch(e) {
+        info.error = e.toString();
+    }
+    return info;
+}

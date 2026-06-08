@@ -1,259 +1,442 @@
-/**
- * EditFlow AI - ExtendScript Bridge Index
- * Main entry point for ExtendScript modules.
- * Called from CEP panel via CSInterface.evalScript()
+/*
+ * index.jsx - Main ExtendScript entry point for EditFlow AI v2.
+ * Loads all modules and provides the editflowDispatch() command router
+ * that the CEP panel calls via CSInterface.evalScript().
+ *
+ * This is the bridge between the HTML/JS panel and Premiere Pro's DOM.
  */
+// ── Load Dependencies ──
+var editflowLoadErrors = [];
+var editflowConfiguredScriptDir = "";
+var editflowModuleNames = [
+    "json2.jsx",
+    "utils.jsx",
+    "sequence_reader.jsx",
+    "project_scanner.jsx",
+    "clip_manager.jsx",
+    "audio_manager.jsx",
+    "marker_manager.jsx",
+    "track_manager.jsx",
+    "export_manager.jsx",
+    "effects_manager.jsx",
+    "capability_probe.jsx"
+];
 
-function editflowLoadModule(fileName) {
-    var base = new File($.fileName).parent;
-    var moduleFile = new File(base.fsName + "/" + fileName);
-    if (!moduleFile.exists) {
-        throw new Error("EditFlow module not found: " + moduleFile.fsName);
-    }
-    $.evalFile(moduleFile);
+function editflowEscapeJSON(value) {
+    return String(value)
+        .replace(/\\/g, "\\\\")
+        .replace(/"/g, "\\\"")
+        .replace(/\r/g, "\\r")
+        .replace(/\n/g, "\\n");
 }
 
-editflowLoadModule("json2.jsx");
-editflowLoadModule("utils.jsx");
-editflowLoadModule("project_scanner.jsx");
-editflowLoadModule("sequence_reader.jsx");
-editflowLoadModule("clip_manager.jsx");
-editflowLoadModule("effects_manager.jsx");
-editflowLoadModule("track_manager.jsx");
-editflowLoadModule("audio_manager.jsx");
-editflowLoadModule("export_manager.jsx");
-editflowLoadModule("marker_manager.jsx");
-/**
- * Stable command dispatcher for CEP calls.
- * Passing JSON strings avoids ExtendScript eval quirks with object literals.
- * @param {string} command
- * @param {string} payloadJson
- * @returns {string} JSON result
- */
-function editflowDispatch(command, payloadData) {
+function editflowErrorResult(error, command) {
+    var message = error && error.toString ? error.toString() : String(error);
+    var cmd = command || "";
     try {
-        var payload = {};
-        if (typeof payloadData === "string" && payloadData !== "") {
-            try { 
-                payload = JSON.parse(payloadData);
-            } catch(e1) {
-                try { payload = eval("(" + payloadData + ")"); } catch(e2){}
-            }
-        } else if (payloadData) {
-            payload = payloadData;
+        if (typeof editflowUtils !== "undefined" && editflowUtils.safeStringify) {
+            return editflowUtils.safeStringify({
+                success: false,
+                error: message,
+                command: cmd
+            });
         }
+    } catch (ignore) {}
 
-        if (command === "removeTimelineClips") {
-            return JSON.stringify(clipManager.removeTimelineClips(payload));
-        }
-        if (command === "clearTimelineLabels") {
-            return JSON.stringify(clipManager.clearTimelineLabels(payload));
-        }
-        if (command === "getProjectState") {
-            return JSON.stringify(projectScanner.scanAll());
-        }
-        if (command === "getSequenceState") {
-            return JSON.stringify(sequenceReader.readCurrentSequence());
-        }
-        if (command === "getSelectedClips") {
-            return JSON.stringify(sequenceReader.getSelectedClips());
-        }
-        if (command === "runTemplateScript") {
-            return JSON.stringify(runTemplateScript(payload));
-        }
-        if (command === "runGeneratedScript") {
-            return JSON.stringify(runGeneratedScript(payload));
-        }
-        if (command === "verifyTimelineChange") {
-            return JSON.stringify(sequenceReader.verifyTimelineChange(payload));
-        }
-        if (command === "undoLastEditFlowJob") {
-            return undoLastAction(payload);
-        }
-        if (command === "scanProject") return JSON.stringify(projectScanner.scanAll());
-        if (command === "addMediaToTimeline") return JSON.stringify(clipManager.addMediaToTimeline(payload));
-        if (command === "importFiles") return JSON.stringify(clipManager.importFilesFromPaths(payload));
-        if (command === "addAllBinClips") return JSON.stringify(clipManager.addAllBinClipsToSequence(payload));
-        if (command === "insertClipAtTime") return JSON.stringify(clipManager.insertClipAtTime(payload));
-        if (command === "moveClip") return JSON.stringify(clipManager.moveClipByOptions(payload));
-        if (command === "modifyClip") return JSON.stringify(clipManager.modifyClipByOptions(payload));
-        if (command === "createSequence") return JSON.stringify(clipManager.createNewSequence(payload));
-        if (command === "organizeBin") return JSON.stringify(clipManager.organizeIntoBins(payload));
-        if (command === "setClipLabel") return JSON.stringify(clipManager.setClipLabelColor(payload));
-        if (command === "manageTracks") return JSON.stringify(trackManager.manageTracks(payload));
-        if (command === "applyEffect") return JSON.stringify(effectsManager.applyEffectToClip(payload));
-        if (command === "applyTransitionToAll") return JSON.stringify(effectsManager.applyTransitionToAll(payload));
-        if (command === "setAudioLevel") return JSON.stringify(audioManager.setAudioLevelWrapper(payload));
-        if (command === "normalizeAudio") return JSON.stringify(audioManager.normalizeAudioWrapper(payload));
-        if (command === "audioFade") return JSON.stringify(audioManager.audioFadeWrapper(payload));
-        if (command === "exportSequence") return JSON.stringify(exportManager.exportCurrentSequence(payload));
-        if (command === "addMarker") return JSON.stringify(markerManager.addMarkerToSequence(payload));
-        if (command === "undoAction") return undoLastAction(payload);
+    return '{"success":false,"error":"' + editflowEscapeJSON(message) +
+        '","command":"' + editflowEscapeJSON(cmd) + '"}';
+}
 
-        return JSON.stringify({
-            success: false,
-            error: "Unknown EditFlow command: " + command
-        });
+function editflowSuccessResult(obj) {
+    try {
+        if (typeof editflowUtils !== "undefined" && editflowUtils.safeStringify) {
+            return editflowUtils.safeStringify(obj);
+        }
+    } catch (ignore) {}
+
+    var scriptDir = obj && obj.scriptDir ? obj.scriptDir : "";
+    return '{"success":true,"scriptDir":"' + editflowEscapeJSON(scriptDir) + '"}';
+}
+
+function editflowGetScriptDir(scriptFile) {
+    var slashIndex = scriptFile.lastIndexOf('/');
+    var backslashIndex = scriptFile.lastIndexOf('\\');
+    var separatorIndex = Math.max(slashIndex, backslashIndex);
+    if (separatorIndex >= 0) {
+        return scriptFile.substring(0, separatorIndex).replace(/\\/g, '/');
+    }
+
+    try {
+        return File(scriptFile).parent.fsName.replace(/\\/g, '/');
     } catch (e) {
-        var errInfo = {
-            success: false,
-            error: e.toString(),
-            line: e.line || "unknown"
-        };
-        try {
-            return JSON.stringify(errInfo);
-        } catch(e2) {
-            return '{"success":false,"error":"JSON stringify failed after error: ' + e.toString().replace(/"/g, "'") + '"}';
-        }
+        return "";
     }
-
 }
 
-function runTemplateScript(payload) {
+function editflowNormalizePath(path) {
+    return String(path || "").replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
+function editflowGetExtendScriptDir(extensionRoot) {
+    var root = editflowNormalizePath(extensionRoot);
+    if (!root) return "";
+    if (/\/extendscript$/i.test(root)) return root;
+    return root + '/extendscript';
+}
+
+function editflowLoadModule(path) {
     try {
-        payload = payload || {};
-        var templateCommand = payload.command || payload.templateCommand || "";
-        if (!templateCommand) {
-            return { success: false, error: "Template command is required" };
+        var file = new File(path);
+        if (file.exists) {
+            $.evalFile(file);
+        } else {
+            throw new Error("module not found: " + path);
         }
-
-        var raw = editflowDispatch(templateCommand, payload.parameters || {});
+    } catch (e) {
+        var message = "Failed to load module " + path + ": " + e.toString();
+        editflowLoadErrors.push(message);
         try {
-            return JSON.parse(raw);
-        } catch(e) {
-            return { success: false, error: "Template command returned invalid JSON", raw: raw };
+            $.writeln("EditFlow: " + message);
+        } catch (ignore) {}
+    }
+}
+
+function editflowLoadAllModules(baseDir) {
+    var normalizedBaseDir = editflowNormalizePath(baseDir);
+    editflowLoadErrors = [];
+    editflowConfiguredScriptDir = normalizedBaseDir;
+
+    for (var i = 0; i < editflowModuleNames.length; i++) {
+        editflowLoadModule(normalizedBaseDir + '/' + editflowModuleNames[i]);
+    }
+
+    return editflowLoadErrors.length === 0;
+}
+
+function editflowConfigureExtensionRoot(extensionRoot) {
+    var baseDir = editflowGetExtendScriptDir(extensionRoot);
+    if (!baseDir) {
+        editflowLoadErrors = ["CEP extension root was empty."];
+        return editflowErrorResult(new Error(editflowLoadErrors[0]), "configureExtensionRoot");
+    }
+
+    if (
+        baseDir === editflowConfiguredScriptDir &&
+        editflowLoadErrors.length === 0 &&
+        typeof projectScanner !== "undefined"
+    ) {
+        return editflowSuccessResult({ success: true, scriptDir: baseDir });
+    }
+
+    editflowLoadAllModules(baseDir);
+    if (editflowLoadErrors.length > 0) {
+        return editflowErrorResult(
+            new Error("ExtendScript modules failed to load from " + baseDir + ": " + editflowLoadErrors.join(" | ")),
+            "configureExtensionRoot"
+        );
+    }
+
+    return editflowSuccessResult({ success: true, scriptDir: baseDir });
+}
+
+// Load modules relative to this script's location
+var scriptFile = $.fileName;
+var scriptDir = editflowGetScriptDir(scriptFile);
+
+editflowLoadAllModules(scriptDir);
+
+
+// ── Command Dispatcher ──
+var _undoCounter = 0;
+
+function editflowAssertReady(command) {
+    if (editflowLoadErrors.length > 0) {
+        throw new Error(
+            "ExtendScript modules failed to load for " + (command || "command") +
+            ": " + editflowLoadErrors.join(" | ")
+        );
+    }
+}
+
+function editflowArrayContains(items, value) {
+    for (var i = 0; i < items.length; i++) {
+        if (items[i] === value) return true;
+    }
+    return false;
+}
+
+function editflowDispatch(command, payloadData) {
+    /*
+     * Main command router called from the CEP panel.
+     *
+     * @param {string} command - The action to perform
+     * @param {string} payloadData - JSON string with command parameters
+     * @returns {string} - JSON string with the result
+     */
+    try {
+        editflowAssertReady(command);
+
+        var options = {};
+        if (payloadData) {
+            try {
+                options = JSON.parse(payloadData);
+            } catch (e) {
+                options = {};
+            }
         }
-    } catch(e2) {
-        return { success: false, error: e2.toString(), line: e2.line || "unknown" };
+
+        var result;
+
+    switch (command) {
+        // ── Project Scanning ──
+        case "scanProject":
+        case "scanProjectMedia":
+        case "getProjectState":
+            result = projectScanner.scanAll();
+            break;
+
+        case "getSelectedProjectItems":
+            result = getSelectedProjectItems();
+            break;
+
+        // ── Sequence State ──
+        case "getSequenceState":
+            result = sequenceReader.readCurrentSequence();
+            break;
+
+        case "getSelectedClips":
+            result = sequenceReader.getSelectedClips();
+            break;
+
+        case "verifyTimelineChange":
+            result = sequenceReader.verifyTimelineChange(options);
+            break;
+
+        // ── Clip Operations ──
+        case "addMediaToTimeline":
+            result = clipManager.addMediaToTimeline(options);
+            break;
+
+        case "importFiles":
+            result = clipManager.importFilesFromPaths(options);
+            break;
+
+        case "insertClipAtTime":
+            result = clipManager.insertClipAtTime(options);
+            break;
+
+        case "moveClip":
+            result = clipManager.moveClipOnSequence(
+                app.project.activeSequence, options
+            );
+            result = editflowUtils.safeStringify(result);
+            break;
+
+        case "modifyClip":
+            result = clipManager.modifyClipOnSequence(
+                app.project.activeSequence, options
+            );
+            result = editflowUtils.safeStringify(result);
+            break;
+
+        case "createSequence":
+            result = clipManager.createNewSequence(options);
+            break;
+
+        case "organizeBin":
+            result = clipManager.organizeIntoBins(options);
+            break;
+
+        case "setClipLabel":
+            result = clipManager.setClipLabelColor(options);
+            break;
+
+        case "removeTimelineClips":
+            result = clipManager.removeTimelineClips(options);
+            break;
+
+        case "clearTimelineLabels":
+            result = clipManager.clearTimelineLabels(options);
+            break;
+
+        // ── Track Operations ──
+        case "manageTracks":
+            result = trackManager.manageTracks(options);
+            break;
+
+        // ── Audio Operations ──
+        case "setAudioLevel":
+            result = audioManager.setAudioLevelWrapper(options);
+            break;
+
+        case "normalizeAudio":
+            result = audioManager.normalizeAudioWrapper(options);
+            break;
+
+        case "audioFade":
+            result = audioManager.audioFadeWrapper(options);
+            break;
+
+        // ── Marker Operations ──
+        case "addMarker":
+            result = markerManager.addMarkerToSequence(options);
+            break;
+
+        case "addPhraseRangeMarkers":
+            result = markerManager.addPhraseRangeMarkers(options);
+            break;
+
+        case "getMarkers":
+            result = markerManager.getSequenceMarkers();
+            break;
+
+        // ── Active Sequence Phrase Removal ──
+        case "removeTimelineRanges":
+            result = clipManager.removeTimelineRanges(options);
+            break;
+
+        // ── Effects & Transitions ──
+        case "applyEffect":
+            result = effectsManager.applyEffectToClip(options);
+            break;
+
+        case "applyTransitionToAll":
+            result = effectsManager.applyTransitionToAll(options);
+            break;
+
+        // ── Export ──
+        case "exportSequence":
+            result = exportManager.exportCurrentSequence(options);
+            break;
+
+        // ── Capability Probe ──
+        case "probeCapabilities":
+            result = editflowUtils.safeStringify({
+                success: true,
+                capabilities: capabilityProbe.probe()
+            });
+            break;
+
+        // ── Undo ──
+        case "undoAction":
+            var steps = editflowUtils.getParam(options, 'steps') || 1;
+            var undone = 0;
+            try {
+                if (typeof qe !== 'undefined') {
+                    for (var i = 0; i < steps; i++) {
+                        qe.project.undoAction();
+                        undone++;
+                    }
+                }
+            } catch (e) {}
+            _undoCounter -= undone;
+            result = editflowUtils.safeStringify({ success: undone > 0, undoneSteps: undone });
+            break;
+
+        // ── Run Template Script ──
+        case "runTemplateScript":
+            var templateCommand = editflowUtils.getParam(options, 'command');
+            var templatePayload = editflowUtils.getParam(options, 'payload');
+            if (templateCommand) {
+                result = editflowDispatch(templateCommand, templatePayload);
+            } else {
+                result = editflowUtils.safeStringify({ success: false, error: "No template command specified" });
+            }
+            break;
+
+        // ── EDL Processing (inline ops from agent flow) ──
+        case "processEDL":
+            result = clipManager.processEDLOps(options);
+            break;
+
+        default:
+            result = editflowUtils.safeStringify({
+                success: false,
+                error: "Unknown command: " + command
+            });
+    }
+
+        // Track undo level for timeline-modifying operations
+        var modifyingCommands = [
+            "addMediaToTimeline", "insertClipAtTime", "moveClip", "modifyClip",
+            "removeTimelineClips", "removeTimelineRanges",
+            "clearTimelineLabels", "manageTracks",
+            "setAudioLevel", "normalizeAudio", "audioFade", "addMarker", "addPhraseRangeMarkers",
+            "applyEffect", "applyTransitionToAll", "setClipLabel", "processEDL"
+        ];
+        if (editflowArrayContains(modifyingCommands, command)) {
+            _undoCounter++;
+        }
+
+        return result;
+    } catch (e) {
+        return editflowErrorResult(e, command);
     }
 }
 
-function runGeneratedScript(payload) {
-    payload = payload || {};
-    if (payload.allowGeneratedJsx !== true) {
-        return {
-            success: false,
-            error: "Generated JSX execution is disabled until the backend validator marks the script as approved."
-        };
-    }
-    return {
-        success: false,
-        error: "Generated JSX approval was provided, but the runtime executor is intentionally not enabled in this bridge yet."
-    };
-}
 
-/**
- * Main bridge function - processes EDL instructions from the Python backend.
- * @param {string} edlJsonPath - Path to the EDL JSON file
- * @returns {string} JSON result
- */
+// ── Standalone Top-Level Functions ──
+// These can be called directly via CSInterface.evalScript()
+// for backward compatibility and convenience.
+
 function processEDL(edlJsonPath) {
     try {
-        var result = clipManager.processEDL(edlJsonPath);
-        return JSON.stringify(result);
+        editflowAssertReady("processEDL");
+        return clipManager.processEDL(edlJsonPath);
     } catch (e) {
-        return JSON.stringify({
-            success: false,
-            error: e.toString(),
-            line: e.line
-        });
+        return editflowErrorResult(e, "processEDL");
     }
 }
 
-/**
- * Get current sequence state for the backend.
- * @returns {string} JSON of sequence state
- */
 function getSequenceState() {
     try {
-        var state = sequenceReader.readCurrentSequence();
-        return JSON.stringify(state);
+        editflowAssertReady("getSequenceState");
+        return sequenceReader.readCurrentSequence();
     } catch (e) {
-        return JSON.stringify({
-            success: false,
-            error: e.toString()
-        });
+        return editflowErrorResult(e, "getSequenceState");
     }
 }
 
-/**
- * Scan project for all media files.
- * @returns {string} JSON of project media
- */
 function scanProjectMedia() {
     try {
-        var media = projectScanner.scanAll();
-        return JSON.stringify(media);
+        editflowAssertReady("scanProject");
+        return projectScanner.scanAll();
     } catch (e) {
-        return JSON.stringify({
-            success: false,
-            error: e.toString()
-        });
+        return editflowErrorResult(e, "scanProject");
     }
 }
 
-/**
- * Remove clips from the active sequence using a structured rule.
- * @param {Object|string} options - Removal options from the CEP panel
- * @returns {string} JSON result
- */
-function removeTimelineClips(options) {
+function removeTimelineClips() {
     try {
-        if (typeof options === "string") {
-            options = eval("(" + options + ")");
-        }
-        var result = clipManager.removeTimelineClips(options || {});
-        return JSON.stringify(result);
+        editflowAssertReady("removeTimelineClips");
+        return clipManager.removeTimelineClips({ mode: "broll" });
     } catch (e) {
-        return JSON.stringify({
-            success: false,
-            error: e.toString(),
-            line: e.line
-        });
+        return editflowErrorResult(e, "removeTimelineClips");
     }
 }
 
-/**
- * Clear/reset a label color from clips in the active sequence.
- * @param {Object|string} options
- * @returns {string} JSON result
- */
-function clearTimelineLabels(options) {
+function clearTimelineLabels() {
     try {
-        if (typeof options === "string") {
-            options = eval("(" + options + ")");
-        }
-        var result = clipManager.clearTimelineLabels(options || {});
-        return JSON.stringify(result);
+        editflowAssertReady("clearTimelineLabels");
+        return clipManager.clearTimelineLabels({ label: "Iris" });
     } catch (e) {
-        return JSON.stringify({
-            success: false,
-            error: e.toString(),
-            line: e.line
-        });
+        return editflowErrorResult(e, "clearTimelineLabels");
     }
 }
 
-/**
- * Undo the last EditFlow action group.
- * @param {string} undoGroup - Name of the undo group to revert
- * @returns {string} JSON result
- */
-function undoLastAction(options) {
+function undoLastAction() {
     try {
-        app.enableQE();
-        if (qe && qe.project) {
-            var count = options && typeof options.count === 'number' ? options.count : 1;
-            for (var i = 0; i < count; i++) {
-                qe.project.undo();
+        editflowAssertReady("undoAction");
+        var undone = 0;
+        try {
+            if (typeof qe !== 'undefined') {
+                qe.project.undoAction();
+                undone = 1;
             }
-            return JSON.stringify({ success: true, undid: count });
-        }
-        return JSON.stringify({ success: false, error: "QE DOM not available for Undo." });
+        } catch (e) {}
+        _undoCounter = Math.max(0, _undoCounter - 1);
+        return editflowUtils.safeStringify({ success: undone > 0 });
     } catch (e) {
-        return JSON.stringify({
-            success: false,
-            error: e.toString()
-        });
+        return editflowErrorResult(e, "undoAction");
     }
 }

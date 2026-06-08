@@ -1,194 +1,102 @@
-/**
- * JSON2.js Polyfill for ExtendScript
- * Provided by Douglas Crockford (Public Domain)
+/*
+ * json2.jsx - JSON polyfill for ExtendScript
+ * ExtendScript lacks native JSON support. This is a minimal implementation
+ * of JSON.parse and JSON.stringify based on Douglas Crockford's json2.js.
  */
-if (typeof JSON !== "object") {
+if (typeof JSON === 'undefined') {
     JSON = {};
 }
 
-(function () {
-    "use strict";
+if (typeof JSON.stringify !== 'function') {
+    JSON.stringify = function(value, replacer, space) {
+        var indent = '';
+        var rep;
 
-    var rx_one = /^[\],:{}\s]*$/;
-    var rx_two = /\\(?:["\\\/bfnrt]|u[0-9a-fA-F]{4})/g;
-    var rx_three = /"[^"\\\n\r]*"|true|false|null|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?/g;
-    var rx_four = /(?:^|:|,)(?:\s*\[)+/g;
-    var rx_escapable = /[\\"\u0000-\u001f\u007f-\u009f\u00ad\u0600-\u0604\u070f\u17b4\u17b5\u200c-\u200f\u2028-\u202f\u2060-\u206f\ufeff\ufff0-\uffff]/g;
-    var rx_dangerous = /[\u0000\u00ad\u0600-\u0604\u070f\u17b4\u17b5\u200c-\u200f\u2028-\u202f\u2060-\u206f\ufeff\ufff0-\uffff]/g;
-
-    function f(n) {
-        return (n < 10) ? "0" + n : n;
-    }
-
-    function this_value() {
-        return this.valueOf();
-    }
-
-    if (typeof Date.prototype.toJSON !== "function") {
-        Date.prototype.toJSON = function () {
-            return isFinite(this.valueOf())
-                ? (this.getUTCFullYear() + "-" +
-                        f(this.getUTCMonth() + 1) + "-" +
-                        f(this.getUTCDate()) + "T" +
-                        f(this.getUTCHours()) + ":" +
-                        f(this.getUTCMinutes()) + ":" +
-                        f(this.getUTCSeconds()) + "Z")
-                : null;
-        };
-        Boolean.prototype.toJSON = this_value;
-        Number.prototype.toJSON = this_value;
-        String.prototype.toJSON = this_value;
-    }
-
-    var gap;
-    var indent;
-    var meta;
-    var rep;
-
-    function quote(string) {
-        rx_escapable.lastIndex = 0;
-        return rx_escapable.test(string)
-            ? "\"" + string.replace(rx_escapable, function (a) {
-                var c = meta[a];
-                return (typeof c === "string")
-                    ? c
-                    : "\\u" + ("0000" + a.charCodeAt(0).toString(16)).slice(-4);
-            }) + "\""
-            : "\"" + string + "\"";
-    }
-
-    function str(key, holder) {
-        var i;
-        var k;
-        var v;
-        var length;
-        var mind = gap;
-        var partial;
-        var value = holder[key];
-
-        if (value && typeof value === "object" &&
-                typeof value.toJSON === "function") {
-            value = value.toJSON(key);
+        if (typeof space === 'number') {
+            for (var i = 0; i < space; i++) {
+                indent += ' ';
+            }
+        } else if (typeof space === 'string') {
+            indent = space;
         }
 
-        if (typeof rep === "function") {
-            value = rep.call(holder, key, value);
+        if (replacer && typeof replacer !== 'function' &&
+                (typeof replacer !== 'object' || typeof replacer.length !== 'number')) {
+            throw new Error('JSON.stringify');
         }
 
-        switch (typeof value) {
-        case "string":
-            return quote(value);
-        case "number":
-            return (isFinite(value)) ? String(value) : "null";
-        case "boolean":
-        case "null":
-            return String(value);
-        case "object":
-            if (!value) {
-                return "null";
-            }
-            gap += indent;
-            partial = [];
-            if (Object.prototype.toString.apply(value) === "[object Array]") {
-                length = value.length;
-                for (i = 0; i < length; i += 1) {
-                    partial[i] = str(i, value) || "null";
-                }
-                v = (partial.length === 0)
-                    ? "[]"
-                    : gap
-                        ? "[\n" + gap + partial.join(",\n" + gap) + "\n" + mind + "]"
-                        : "[" + partial.join(",") + "]";
-                gap = mind;
-                return v;
+        function str(key, holder) {
+            var value = holder[key];
+            var partial = [];
+
+            if (value && typeof value === 'object' && typeof value.toJSON === 'function') {
+                value = value.toJSON(key);
             }
 
-            if (rep && typeof rep === "object") {
-                length = rep.length;
-                for (i = 0; i < length; i += 1) {
-                    if (typeof rep[i] === "string") {
-                        k = rep[i];
-                        v = str(k, value);
-                        if (v) {
-                            partial.push(quote(k) + (
-                                (gap)
-                                    ? ": "
-                                    : ":"
-                            ) + v);
+            if (value === null) return 'null';
+            if (value === undefined) return undefined;
+
+            switch (typeof value) {
+                case 'string':
+                    return '"' + value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t') + '"';
+                case 'number':
+                    return isFinite(value) ? String(value) : 'null';
+                case 'boolean':
+                    return String(value);
+                case 'object':
+                    if (value === null) return 'null';
+
+                    if (value instanceof Array) {
+                        for (var i = 0; i < value.length; i++) {
+                            var v = str(i, value);
+                            partial[i] = v === undefined ? 'null' : v;
+                        }
+                        return partial.length === 0 ? '[]' :
+                            indent ? '[\n' + indent + partial.join(',\n' + indent) + '\n' + ']' :
+                            '[' + partial.join(',') + ']';
+                    }
+
+                    var keys = [];
+                    for (var k in value) {
+                        if (value.hasOwnProperty(k)) {
+                            keys.push(k);
                         }
                     }
-                }
-            } else {
-                for (k in value) {
-                    if (Object.prototype.hasOwnProperty.call(value, k)) {
-                        v = str(k, value);
-                        if (v) {
-                            partial.push(quote(k) + (
-                                (gap)
-                                    ? ": "
-                                    : ":"
-                            ) + v);
+
+                    for (var i = 0; i < keys.length; i++) {
+                        var k = keys[i];
+                        var v = str(k, value);
+                        if (v !== undefined) {
+                            partial.push(JSON.stringify(k) + (indent ? ': ' : ':') + v);
                         }
                     }
-                }
-            }
 
-            v = (partial.length === 0)
-                ? "{}"
-                : gap
-                    ? "{\n" + gap + partial.join(",\n" + gap) + "\n" + mind + "}"
-                    : "{" + partial.join(",") + "}";
-            gap = mind;
-            return v;
+                    return partial.length === 0 ? '{}' :
+                        indent ? '{\n' + indent + partial.join(',\n' + indent) + '\n' + '}' :
+                        '{' + partial.join(',') + '}';
+            }
         }
-    }
 
-    if (typeof JSON.stringify !== "function") {
-        meta = {
-            "\b": "\\b",
-            "\t": "\\t",
-            "\n": "\\n",
-            "\f": "\\f",
-            "\r": "\\r",
-            "\"": "\\\"",
-            "\\": "\\\\"
-        };
-        JSON.stringify = function (value, replacer, space) {
-            var i;
-            gap = "";
-            indent = "";
+        return str('', {'': value});
+    };
+}
 
-            if (typeof space === "number") {
-                for (i = 0; i < space; i += 1) {
-                    indent += " ";
-                }
-            } else if (typeof space === "string") {
-                indent = space;
-            }
+if (typeof JSON.parse !== 'function') {
+    JSON.parse = function(text, reviver) {
+        var j;
+        try {
+            j = eval('(' + text + ')');
+        } catch (e) {
+            throw new SyntaxError('JSON.parse');
+        }
 
-            rep = replacer;
-            if (replacer && typeof replacer !== "function" &&
-                    (typeof replacer !== "object" ||
-                    typeof replacer.length !== "number")) {
-                throw new Error("JSON.stringify");
-            }
-
-            return str("", {"": value});
-        };
-    }
-
-    if (typeof JSON.parse !== "function") {
-        JSON.parse = function (text, reviver) {
-            var j;
-
+        if (typeof reviver === 'function') {
             function walk(holder, key) {
-                var k;
-                var v;
                 var value = holder[key];
-                if (value && typeof value === "object") {
-                    for (k in value) {
-                        if (Object.prototype.hasOwnProperty.call(value, k)) {
-                            v = walk(value, k);
+                if (value && typeof value === 'object') {
+                    for (var k in value) {
+                        if (value.hasOwnProperty(k)) {
+                            var v = walk(value, k);
                             if (v !== undefined) {
                                 value[k] = v;
                             } else {
@@ -199,31 +107,9 @@ if (typeof JSON !== "object") {
                 }
                 return reviver.call(holder, key, value);
             }
+            return walk({'': j}, '');
+        }
 
-            text = String(text);
-            rx_dangerous.lastIndex = 0;
-            if (rx_dangerous.test(text)) {
-                text = text.replace(rx_dangerous, function (a) {
-                    return "\\u" + ("0000" + a.charCodeAt(0).toString(16)).slice(-4);
-                });
-            }
-
-            if (
-                rx_one.test(
-                    text
-                        .replace(rx_two, "@")
-                        .replace(rx_three, "]")
-                        .replace(rx_four, "")
-                )
-            ) {
-                j = eval("(" + text + ")");
-
-                return (typeof reviver === "function")
-                    ? walk({"": j}, "")
-                    : j;
-            }
-
-            throw new SyntaxError("JSON.parse");
-        };
-    }
-}());
+        return j;
+    };
+}

@@ -12,22 +12,63 @@ Key patterns:
 - Two-layer model cache (memory + disk)
 """
 import asyncio
+import base64
 import json
 import logging
+import os
+import re
 import time
 import uuid
-from datetime import datetime
-from enum import Enum
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import httpx
-import re
-from ..models.schemas import ProviderType, ProviderStatus
 
-from ..config import Settings
+from ..config import Settings, get_settings
+from ..models.schemas import ProviderStatus, ProviderType
 
 logger = logging.getLogger(__name__)
+
+
+# ── API key obfuscation ──
+# This is NOT crypto-strong — it stops casual reading of provider_config.json,
+# accidental git commits, and over-the-shoulder snooping. For real secret
+# management on a multi-user host, replace with `keyring` or a cloud KMS.
+
+_KEY_SECRET_ENV = "EDITFLOW_KEY_SECRET"
+_KEY_SECRET_DEFAULT = b"editflow-default-key-rotate-me"
+
+
+def _key_secret_bytes() -> bytes:
+    raw = os.environ.get(_KEY_SECRET_ENV, "").encode("utf-8")
+    return raw or _KEY_SECRET_DEFAULT
+
+
+def _encrypt_api_key(value: str) -> str:
+    """XOR-and-base64 an API key. Empty input returns ''."""
+    if not value:
+        return ""
+    secret = _key_secret_bytes()
+    raw = value.encode("utf-8")
+    cipher = bytes(b ^ secret[i % len(secret)] for i, b in enumerate(raw))
+    return base64.b64encode(cipher).decode("ascii")
+
+
+def _decrypt_api_key(value: str) -> str:
+    """Reverse of _encrypt_api_key. Returns '' on any decode failure."""
+    if not value:
+        return ""
+    try:
+        cipher = base64.b64decode(value.encode("ascii"))
+    except (ValueError, TypeError):
+        return ""
+    secret = _key_secret_bytes()
+    raw = bytes(b ^ secret[i % len(secret)] for i, b in enumerate(cipher))
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return ""
 
 
 # ── Provider Types ──
@@ -68,7 +109,7 @@ class ProviderService:
     """
 
     def __init__(self, settings: Optional[Settings] = None):
-        self.settings = settings or Settings()
+        self.settings = settings or get_settings()
         self._providers: Dict[str, Dict] = {}
         self._model_cache: Dict[str, List[Dict]] = {}  # provider_id -> list of model dicts
         self._cache_timestamps: Dict[str, float] = {}  # provider_id -> last refresh time
@@ -112,9 +153,16 @@ class ProviderService:
         """Load provider configuration from disk."""
         if self._config_path.exists():
             try:
-                with open(self._config_path, "r") as f:
+                with open(self._config_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                self._providers = data.get("providers", _default_providers())
+                providers = data.get("providers", _default_providers())
+                # Decrypt API keys that were persisted via api_key_encrypted.
+                # Plain api_key (from older configs) is migrated on next save.
+                for pid, p in providers.items():
+                    enc = p.pop("api_key_encrypted", "") if isinstance(p, dict) else ""
+                    if enc:
+                        p["api_key"] = _decrypt_api_key(enc)
+                self._providers = providers
                 self._active_chat_provider = data.get("active_chat_provider")
                 self._active_chat_model = data.get("active_chat_model")
                 self._active_vision_provider = data.get("active_vision_provider")
@@ -138,24 +186,45 @@ class ProviderService:
         self._active_vision_model = self.settings.DEFAULT_VISION_MODEL
 
     def _save_config(self):
-        """Persist provider configuration to disk."""
+        """Persist provider configuration to disk with API keys obfuscated."""
         try:
             self._config_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Serialise providers with api_key replaced by api_key_encrypted.
+            providers_to_persist: Dict[str, Dict] = {}
+            for pid, p in self._providers.items():
+                if not isinstance(p, dict):
+                    continue
+                copy = dict(p)
+                api_key = copy.pop("api_key", "")
+                copy.pop("api_key_encrypted", None)
+                if api_key:
+                    copy["api_key_encrypted"] = _encrypt_api_key(api_key)
+                providers_to_persist[pid] = copy
+
             data = {
-                "providers": self._providers,
+                "providers": providers_to_persist,
                 "active_chat_provider": self._active_chat_provider,
                 "active_chat_model": self._active_chat_model,
                 "active_vision_provider": self._active_vision_provider,
                 "active_vision_model": self._active_vision_model,
                 "model_cache": self._model_cache,
                 "cache_timestamps": self._cache_timestamps,
-                "saved_at": datetime.utcnow().isoformat(),
+                "saved_at": datetime.now(timezone.utc).isoformat(),
             }
-            # Atomic write
+            # Atomic write with a small retry — Windows can transiently deny
+            # the rename if another reader has the file open.
             tmp_path = self._config_path.with_suffix(".tmp")
-            with open(tmp_path, "w") as f:
+            with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
-            tmp_path.replace(self._config_path)
+            for attempt in range(3):
+                try:
+                    tmp_path.replace(self._config_path)
+                    break
+                except PermissionError:
+                    if attempt == 2:
+                        raise
+                    time.sleep(0.1)
         except Exception as e:
             logger.error(f"Failed to save provider config: {e}")
 
@@ -180,6 +249,25 @@ class ProviderService:
             if not base_url.endswith("/v1"):
                 base_url = base_url.rstrip("/") + "/v1"
             return base_url
+
+    async def _close_client(self, provider_id: str) -> None:
+        """Close and remove the cached HTTP client for a provider.
+
+        Forgetting to call aclose() leaves sockets and the connection pool
+        thread running. Use this anywhere a provider is replaced or removed.
+        """
+        client = self._http_clients.pop(provider_id, None)
+        if client is None:
+            return
+        try:
+            await client.aclose()
+        except Exception as e:
+            logger.warning(f"Failed closing HTTP client for {provider_id}: {e}")
+
+    async def shutdown(self) -> None:
+        """Close every cached HTTP client. Call from the FastAPI lifespan shutdown."""
+        for pid in list(self._http_clients.keys()):
+            await self._close_client(pid)
 
     def _get_http_client(self, provider_id: str) -> httpx.AsyncClient:
         """Get or create an HTTP client for a provider."""
@@ -280,9 +368,23 @@ class ProviderService:
         requested_model: Optional[str] = None,
         role: str = "chat",
     ) -> str:
-        """Resolve the best model for a provider and role."""
+        """Resolve the best model for a provider and role.
+
+        Selection order:
+        1. If requested_model is provided, return it (caller knows best).
+        2. Otherwise the provider's configured chat_model / vision_model.
+        3. Otherwise the first LOCALLY INSTALLED, non-:cloud model from the
+           provider's model cache (Ollama-style — has a size_bytes > 0).
+        4. Otherwise the first entry of any kind from the model cache.
+        5. Otherwise empty string.
+
+        Step 3 is the new behavior. Previously the first cache entry was
+        picked unconditionally, which sometimes returned a `:cloud` model
+        that needed Ollama-account auth or a model the user had uninstalled
+        (Ollama caches model metadata even after `ollama rm`).
+        """
         if requested_model:
-            return requested_model
+            return requested_model.strip()
 
         provider = self._providers.get(provider_id) or {}
         role_key = "vision_model" if role == "vision" else "chat_model"
@@ -292,7 +394,23 @@ class ProviderService:
 
         known = self.get_cached_or_configured_models(provider_id)
         if known:
-            return known[0].get("id") or known[0].get("name") or ""
+            # Prefer real local models (size_bytes > 0 and no ":cloud" suffix).
+            for m in known:
+                mid = (m.get("id") or m.get("name") or "").strip()
+                if not mid:
+                    continue
+                if ":cloud" in mid:
+                    continue
+                size = m.get("size_bytes", 0) or 0
+                if size > 0 or m.get("is_local"):
+                    return mid
+            # No "obviously local" entries — fall back to the first non-cloud.
+            for m in known:
+                mid = (m.get("id") or m.get("name") or "").strip()
+                if mid and ":cloud" not in mid:
+                    return mid
+            # Last resort: whatever the first cached entry is.
+            return (known[0].get("id") or known[0].get("name") or "").strip()
 
         return ""
 
@@ -361,8 +479,8 @@ class ProviderService:
             raise ValueError("base_url is required")
 
         self._providers[provider_id] = provider
-        # Clear any old HTTP client
-        self._http_clients.pop(provider_id, None)
+        # Clear any old HTTP client (paranoid — id collision was already rejected)
+        await self._close_client(provider_id)
         self._save_config()
 
         logger.info(f"Added provider: {provider_id} ({provider['name']})")
@@ -396,8 +514,8 @@ class ProviderService:
         provider["error"] = None
         provider["last_checked"] = None
 
-        # Clear cached HTTP client
-        self._http_clients.pop(provider_id, None)
+        # Close and discard cached HTTP client so it picks up the new config
+        await self._close_client(provider_id)
         # Invalidate model cache for this provider
         self._model_cache.pop(provider_id, None)
         self._cache_timestamps.pop(provider_id, None)
@@ -426,7 +544,7 @@ class ProviderService:
             self._active_vision_model = None
 
         del self._providers[provider_id]
-        self._http_clients.pop(provider_id, None)
+        await self._close_client(provider_id)
         self._model_cache.pop(provider_id, None)
         self._cache_timestamps.pop(provider_id, None)
         self._save_config()
@@ -487,7 +605,7 @@ class ProviderService:
                 if resp.status_code == 200:
                     provider["status"] = ProviderStatus.CONNECTED.value
                     provider["error"] = None
-                    provider["last_checked"] = datetime.utcnow().isoformat()
+                    provider["last_checked"] = datetime.now(timezone.utc).isoformat()
                     return {"connected": True, "error": None, "status": ProviderStatus.CONNECTED.value}
                 else:
                     provider["status"] = ProviderStatus.ERROR.value
@@ -500,7 +618,7 @@ class ProviderService:
                 if resp.status_code == 200:
                     provider["status"] = ProviderStatus.CONNECTED.value
                     provider["error"] = None
-                    provider["last_checked"] = datetime.utcnow().isoformat()
+                    provider["last_checked"] = datetime.now(timezone.utc).isoformat()
                     return {"connected": True, "error": None, "status": ProviderStatus.CONNECTED.value}
                 elif resp.status_code == 401:
                     provider["status"] = ProviderStatus.ERROR.value
@@ -727,8 +845,12 @@ class ProviderService:
                 if result:
                     return result
             except Exception as e:
-                errors.append(f"{try_pid}: {e}")
-                logger.warning(f"Chat failed with provider {try_pid}: {e}")
+                # Some httpx/asyncio exceptions have an empty str() (just the
+                # type name carries information). Fall back to repr / class
+                # name so the log line is never blank.
+                err_msg = str(e) or repr(e) or e.__class__.__name__
+                errors.append(f"{try_pid}: {err_msg}")
+                logger.warning(f"Chat failed with provider {try_pid}: {err_msg}")
                 continue
 
         # All providers failed - rule-based fallback
@@ -765,31 +887,106 @@ class ProviderService:
         self, client: httpx.AsyncClient, provider_id: str, model: str,
         messages: List[Dict], temperature: float, timeout: int
     ) -> Optional[Dict[str, Any]]:
-        """Chat via Ollama's /api/chat endpoint."""
-        payload = {
-            "model": model,
-            "messages": messages,
-            "stream": False,
-            "options": {"temperature": temperature},
-        }
+        """Chat via Ollama's /api/chat endpoint.
 
-        resp = await client.post(
-            "/api/chat",
-            json=payload,
-            timeout=httpx.Timeout(max(timeout * 3, 30), connect=5.0),
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        content = data.get("message", {}).get("content", "")
+        If the requested model returns 404 (not installed), auto-fall back to
+        the first locally-installed model from this provider's cache. The
+        active model is updated in memory so subsequent calls skip the retry.
+        """
+        models_tried: List[str] = []
+        last_error: Optional[Exception] = None
 
-        if content:
-            return {
-                "response": content,
-                "source": "ollama",
-                "provider_id": provider_id,
-                "error": None,
+        # Candidate models: requested first, then any local fallbacks.
+        candidates = [model] + self._local_ollama_fallbacks(provider_id, exclude=model)
+
+        for m in candidates:
+            if m in models_tried:
+                continue
+            models_tried.append(m)
+            payload = {
+                "model": m,
+                "messages": messages,
+                "stream": False,
+                # keep_alive: 30m keeps the model resident in Ollama after the
+                # response so subsequent calls skip the cold-load. Default is
+                # 5m which is fine for chat but means every >5min gap pays the
+                # full load cost again — for a 4B model on CPU that's 20-40s.
+                "keep_alive": "30m",
+                "options": {"temperature": temperature},
             }
+            try:
+                resp = await client.post(
+                    "/api/chat",
+                    json=payload,
+                    # 180s is long enough for a cold-load + first-token on a 4B
+                    # model on CPU. The provider's configured `timeout` (default 10)
+                    # was multiplied to 30s — far too short — and produced opaque
+                    # "Server disconnected" errors when httpx canceled the call
+                    # mid-load.
+                    timeout=httpx.Timeout(180.0, connect=5.0),
+                )
+                if resp.status_code == 404:
+                    # Model not installed — log once and try the next candidate.
+                    logger.warning(
+                        f"Ollama returned 404 for model '{m}'. Trying next local model."
+                    )
+                    last_error = httpx.HTTPStatusError(
+                        f"model '{m}' not installed", request=resp.request, response=resp
+                    )
+                    continue
+                resp.raise_for_status()
+                data = resp.json()
+                content = data.get("message", {}).get("content", "")
+                if content:
+                    # If we recovered with a fallback model, update the active
+                    # chat model so the rest of the session uses it directly.
+                    if m != model and provider_id == self._active_chat_provider:
+                        logger.info(
+                            f"Auto-switched active chat model: '{model}' -> '{m}' (original not installed)"
+                        )
+                        self._active_chat_model = m
+                        try:
+                            self._save_config()
+                        except Exception:
+                            pass
+                    return {
+                        "response": content,
+                        "source": "ollama",
+                        "provider_id": provider_id,
+                        "error": None,
+                    }
+            except httpx.HTTPStatusError as e:
+                last_error = e
+                if e.response.status_code != 404:
+                    # Non-404 errors are not "missing model" — bubble up.
+                    raise
+            except Exception as e:
+                last_error = e
+                raise
+
+        if last_error:
+            raise last_error
         return None
+
+    def _local_ollama_fallbacks(self, provider_id: str, exclude: str = "") -> List[str]:
+        """Return Ollama model IDs that are locally installed (not :cloud).
+
+        Cloud-suffixed models require an Ollama account; if the user is offline
+        or hasn't authenticated, they 404. Local models are the safest fallback.
+        """
+        cache = self._model_cache.get(provider_id, [])
+        names: List[str] = []
+        for entry in cache:
+            mid = entry.get("id") if isinstance(entry, dict) else None
+            if not mid or mid == exclude:
+                continue
+            if ":cloud" in mid:
+                continue
+            # Heuristic: real local models have non-zero size_bytes.
+            size = entry.get("size_bytes", 0) if isinstance(entry, dict) else 0
+            if size and size > 0:
+                names.append(mid)
+        return names
 
     async def _openai_chat(
         self, client: httpx.AsyncClient, provider_id: str, model: str,
@@ -995,7 +1192,19 @@ class ProviderService:
     # ── Active Model Management ──
 
     def set_active_chat(self, provider_id: str, model: str):
-        """Set the active chat provider and model."""
+        """Set the active chat provider and model.
+
+        Validates that `model` is a non-empty string. Empty values used to
+        silently clear the active model, causing every subsequent chat to
+        fall through to `_resolve_model_for_provider` which picked the first
+        cached entry (often a stale `gemma3:4b` that the user had uninstalled).
+        """
+        if not isinstance(model, str) or not model.strip():
+            logger.warning(
+                f"set_active_chat: refusing empty/invalid model name (provider={provider_id})"
+            )
+            return
+        model = model.strip()
         self._active_chat_provider = provider_id
         self._active_chat_model = model
         # Also update the provider's stored chat_model
@@ -1092,34 +1301,42 @@ class ProviderService:
 
     # ── Rule-Based Fallback ──
 
+    # Fallback responses surfaced when no LLM provider is connected.
+    # Keep endpoints current with the v2 pipeline (analyze → cut → visuals → premiere).
     _FALLBACK_PATTERNS = [
-        (r"\b(hello|hi|hey|greetings)\b",
-         "Hello! I'm EditFlow AI, your video editing assistant. "
-         "I can help with transcription, cataloging, and edit scripts. "
-         "Note: No LLM is currently connected - responses are limited."),
+        (r"\b(hello|hi|hey|greetings|salam|assalam)\b",
+         "Hello! I'm EditFlow AI. No LLM provider is connected, so I can only "
+         "answer with canned responses right now. Configure a provider in "
+         "Settings to unlock full AI replies."),
         (r"\b(help|what can you do|commands)\b",
-         "EditFlow AI commands:\n"
-         "- /transcribe <file> - Transcribe audio/video\n"
-         "- /catalog <dir> - Build B-roll catalog\n"
-         "- /generate - Generate edit script\n"
-         "- /analyze <file> - Analyze media file\n"
-         "- /models - List available models\n"
-         "Note: Configure an LLM provider for full AI capabilities."),
-        (r"\b(transcribe|transcription)\b",
-         "I can transcribe video and audio files using Whisper. "
-         "Use /transcribe <path> to start. "
-         "(Currently in rule-based fallback mode - no LLM connected.)"),
-        (r"\b(catalog|b-?roll)\b",
-         "I can build and update B-roll catalogs from your media directory. "
-         "Use /catalog <directory> to scan and catalog files."),
+         "EditFlow AI — core endpoints:\n"
+         "- POST /api/pipeline/analyze     – transcribe a folder of videos\n"
+         "- POST /api/pipeline/cut         – match a script and build a clean cut\n"
+         "- POST /api/pipeline/cut/execute – render the cut with FFmpeg\n"
+         "- POST /api/pipeline/visuals     – place visuals from a mapping doc\n"
+         "- POST /api/premiere/edl/from-cuts – push cuts to Premiere via EDL\n"
+         "- GET  /api/providers            – manage LLM providers\n"
+         "Configure a provider for natural-language replies."),
+        (r"\b(analy[sz]e|transcribe|transcription|scan)\b",
+         "To analyze a folder of videos, POST /api/pipeline/analyze with "
+         "{ folder_path, language }. Whisper runs locally — no LLM required."),
+        (r"\b(cut|script|clean|edit)\b",
+         "Provide an English script and POST /api/pipeline/cut. The cutter "
+         "matches each line to the best Urdu take and produces a cutting plan."),
+        (r"\b(visual|image|overlay|broll|b-?roll)\b",
+         "POST /api/pipeline/visuals with a mapping document (docx/txt) and "
+         "a visual_folder path. Each entry binds a script line to a visual file."),
+        (r"\b(premiere|timeline|sequence|edl)\b",
+         "Use the CEP panel's Sync / Scan buttons, or POST /api/premiere/edl/"
+         "from-cuts to push the latest cutting result to Premiere's timeline."),
+        (r"\b(provider|ollama|openai|model)\b",
+         "Manage providers under /api/providers. Use /api/models/list to "
+         "see configured chat/vision models across all providers."),
         (r"\b(status|health|system)\b",
-         "System Status:\n"
-         "- No LLM providers are currently connected\n"
-         "- Whisper: Available\n"
-         "- FFmpeg: Available\n"
-         "Configure a provider for full AI features."),
+         "System status: no LLM connected. Check /api/status for full health. "
+         "Whisper and FFmpeg are local — they work without a provider."),
         (r"\b(thank|thanks)\b",
-         "You're welcome! Let me know if you need anything else."),
+         "You're welcome — let me know what to cut next."),
     ]
 
     def _rule_based_response(self, messages: List[Dict[str, str]]) -> Dict[str, Any]:

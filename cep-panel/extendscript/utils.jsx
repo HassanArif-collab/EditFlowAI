@@ -1,102 +1,92 @@
-/**
- * EditFlow AI - Shared Utilities
- * Common functions for Premiere Pro scripting.
+/*
+ * utils.jsx - Common utility functions for EditFlow AI ExtendScript modules.
+ * Provides tick/time conversions and helpers for working with Premiere's DOM.
  */
-
-var editflowUtils = (function() {
+editflowUtils = (function() {
     "use strict";
 
+    // Premiere Pro uses ticks internally (254016000000 ticks per second)
     var TICKS_PER_SECOND = 254016000000;
 
-    /**
-     * Convert seconds to ticks as a string.
-     */
     function secondsToTicks(seconds) {
-        if (seconds === undefined || seconds === null || seconds === "") return "0";
-        var s = Number(seconds);
-        if (isNaN(s)) return "0";
-        return Math.round(s * TICKS_PER_SECOND).toString();
+        return Math.round(seconds * TICKS_PER_SECOND);
     }
 
-    /**
-     * Convert Premiere ticks to seconds.
-     */
+    function secondsToTicksString(seconds) {
+        /* String form of ticks for Premiere attribute setters
+         * (clip.inPoint, clip.outPoint, etc.) which require strings
+         * to avoid JS number precision loss at large tick values. */
+        return String(Math.round(seconds * TICKS_PER_SECOND));
+    }
+
     function ticksToSeconds(ticks) {
-        if (ticks === undefined || ticks === null || ticks === "") return 0;
-        var t = Number(ticks);
-        if (isNaN(t)) return 0;
+        if (!ticks) return 0;
+        // ticks may come as a string or as a .ticks property
+        var t = (typeof ticks === 'object' && ticks.ticks) ? parseFloat(ticks.ticks) : parseFloat(ticks);
         return t / TICKS_PER_SECOND;
     }
 
-    /**
-     * Add two tick strings/numbers safely.
-     */
     function addTicks(t1, t2) {
-        return (Number(t1 || 0) + Number(t2 || 0)).toString();
+        return { ticks: String(parseFloat(t1.ticks || t1) + parseFloat(t2.ticks || t2)) };
     }
 
-    /**
-     * Subtract two tick strings/numbers safely.
-     */
     function subTicks(t1, t2) {
-        return (Number(t1 || 0) - Number(t2 || 0)).toString();
+        return { ticks: String(parseFloat(t1.ticks || t1) - parseFloat(t2.ticks || t2)) };
     }
 
-    /**
-     * Safely get the end time of a sequence.
-     */
     function getSequenceEnd(seq) {
-        if (!seq) return "0";
+        if (!seq) return 0;
         try {
-            if (seq.getEnd) return seq.getEnd().ticks;
-            if (seq.end) return seq.end.ticks || seq.end;
-        } catch(e) {}
-        return "0";
+            // seq.end is a STRING (ticks), not a Time object — confirmed by
+            // ppro-scripting.docsforadobe.dev: "Type: String; read-only"
+            // Strings don't have .ticks, so the old seq.end.ticks check was
+            // always undefined and this function always returned 0.
+            if (seq.end) return ticksToSeconds(seq.end);
+        } catch (e) {}
+        return 0;
     }
 
-    /**
-     * Safely check if a project item has video.
-     */
+    function getMediaPath(item) {
+        try {
+            return item && item.getMediaPath ? String(item.getMediaPath() || "") : "";
+        } catch (e) {
+            return "";
+        }
+    }
+
     function hasVideo(item) {
-        if (!item) return false;
         try {
-            if (typeof item.hasVideo === 'function') return item.hasVideo() === 1 || item.hasVideo() === true;
-            if (item.hasVideo !== undefined) return item.hasVideo === true;
-        } catch(e) {}
-        return false;
+            if (item && typeof item.hasVideo === "function") {
+                return !!item.hasVideo();
+            }
+        } catch (e) {}
+
+        var path = getMediaPath(item).toLowerCase();
+        return /\.(mov|mp4|m4v|avi|mxf|mts|m2ts|mpg|mpeg|webm)$/i.test(path);
     }
 
-    /**
-     * Safely check if a project item has audio.
-     */
     function hasAudio(item) {
-        if (!item) return false;
         try {
-            if (typeof item.hasAudio === 'function') return item.hasAudio() === 1 || item.hasAudio() === true;
-            if (item.hasAudio !== undefined) return item.hasAudio === true;
-        } catch(e) {}
-        return false;
+            if (item && typeof item.hasAudio === "function") {
+                return !!item.hasAudio();
+            }
+        } catch (e) {}
+
+        var path = getMediaPath(item).toLowerCase();
+        return /\.(mov|mp4|m4v|avi|mxf|mts|m2ts|mpg|mpeg|webm|wav|mp3|aac|m4a|aif|aiff)$/i.test(path);
     }
 
-    /**
-     * Find a bin (folder) recursively by name.
-     */
     function findBin(parent, binName) {
-        if (!parent || !binName) return null;
+        if (!parent) return null;
         for (var i = 0; i < parent.children.numItems; i++) {
-            var item = parent.children[i];
-            if (item.type === ProjectItemType.BIN) {
-                if (item.name === binName) return item;
-                var found = findBin(item, binName);
-                if (found) return found;
+            var child = parent.children[i];
+            if (child.type === ProjectItemType.BIN && child.name === binName) {
+                return child;
             }
         }
         return null;
     }
 
-    /**
-     * Standardize property names from payload.
-     */
     function getParam(options, primaryKey, secondaryKey) {
         if (!options) return undefined;
         if (options[primaryKey] !== undefined) return options[primaryKey];
@@ -104,13 +94,23 @@ var editflowUtils = (function() {
         return undefined;
     }
 
+    function safeStringify(obj) {
+        try { return JSON.stringify(obj); } catch (e) { return '{}'; }
+    }
+
     return {
+        TICKS_PER_SECOND: TICKS_PER_SECOND,
         secondsToTicks: secondsToTicks,
+        secondsToTicksString: secondsToTicksString,
         ticksToSeconds: ticksToSeconds,
+        addTicks: addTicks,
+        subTicks: subTicks,
         getSequenceEnd: getSequenceEnd,
+        getMediaPath: getMediaPath,
         hasVideo: hasVideo,
         hasAudio: hasAudio,
         findBin: findBin,
-        getParam: getParam
+        getParam: getParam,
+        safeStringify: safeStringify
     };
 })();

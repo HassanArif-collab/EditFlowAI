@@ -18,12 +18,11 @@ node_modules/
 .DS_Store
 
 # Project specific
-data/media_cache/
-data/sequence_state.json
-data/sessions.json
-data/edl/
-data/catalogs/
+# Runtime data dir: HF model cache (GBs), bundled ffmpeg, media cache, sqlite,
+# logs, runtime plan output, proof/diagnostic scripts. Never committed.
+data/
 logs/
 *.log
 *.sqlite3-shm
 *.sqlite3-wal
+*.sqlite3

@@ -82,7 +82,7 @@ async def add_provider(config: ProviderConfig):
     - custom: Custom provider with manual configuration
     """
     try:
-        p = await provider_service.add_provider(config.dict())
+        p = await provider_service.add_provider(config.model_dump())
         return ProviderInfo(
             id=p["id"],
             name=p.get("name", ""),
@@ -111,7 +111,7 @@ async def update_provider(provider_id: str, config: ProviderConfig):
     The API key is never returned but can be updated.
     """
     try:
-        updates = config.dict(exclude_unset=True, exclude_none=True)
+        updates = config.model_dump(exclude_unset=True, exclude_none=True)
         # Don't clear api_key if not provided
         if "api_key" not in updates and config.api_key is not None:
             updates["api_key"] = config.api_key

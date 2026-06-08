@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EditFlow — editing interaction</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Arabic:wght@400;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#1e1e1e; --bg-surface:#252526; --bg-elevated:#2d2d30; --bg-hover:#34343a;
+    --border:#3e3e42; --text:#cccccc; --text-dim:#808080; --text-bright:#e8e8e8;
+    --accent:#0a84ff; --success:#4ec9b0; --warning:#e0b34a; --error:#f25b5b; --radius:8px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#141414;color:var(--text);font-family:'Inter',system-ui,sans-serif;padding:24px}
+  h1{font-size:19px;color:#fff;margin-bottom:4px}
+  .sub{color:var(--text-dim);font-size:13px;margin-bottom:18px;max-width:760px;line-height:1.6}
+  .wrap{display:flex;gap:28px;flex-wrap:wrap;align-items:flex-start}
+  .panel{width:380px;background:var(--bg);border:1px solid var(--border);border-radius:10px;overflow:hidden;box-shadow:0 8px 30px rgba(0,0,0,.4)}
+  .bar{height:40px;background:var(--bg-surface);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;padding:0 12px}
+  .pp{width:28px;height:28px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;cursor:pointer}
+  .time{font-size:11px;color:var(--text-dim);font-variant-numeric:tabular-nums}
+  .readout{margin-left:auto;font-size:12px;color:var(--success);font-weight:600}
+  .doc{padding:14px 16px;font-family:'Noto Sans Arabic',system-ui;font-size:17px;line-height:2.35;direction:rtl;text-align:right;user-select:text;-webkit-user-select:text;min-height:300px}
+  .doc ::selection{background:rgba(10,132,255,.45)}
+  .w{padding:3px 3px;border-radius:4px;cursor:pointer;transition:background .04s}
+  .w:hover{background:var(--bg-hover)}
+  .w.cut{color:var(--error);text-decoration:line-through;opacity:.5}
+  .w.sel{background:rgba(10,132,255,.35)}
+  .w.now{background:var(--warning);color:#1e1e1e}
+  .en{direction:ltr;unicode-bidi:isolate;display:inline-block}
+  .legend{margin-top:14px;font-size:12px;color:var(--text-dim);max-width:380px;line-height:1.8}
+  .legend b{color:var(--text-bright)}
+  .k{display:inline-block;background:var(--bg-elevated);border:1px solid var(--border);border-radius:4px;padding:0 6px;font-size:11px;color:var(--text)}
+  .tip{background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;padding:12px 14px;width:380px;font-size:13px;line-height:1.7;color:var(--text-dim)}
+  .tip h3{color:#fff;font-size:14px;margin-bottom:6px}
+  .tip .good{color:var(--success)}
+</style>
+</head>
+<body>
+  <h1>Try it: sweep to cut / restore</h1>
+  <p class="sub">Built on <b>real text selection</b>: start the drag <b>anywhere</b> — even in the gaps between words, just like selecting text — and release. The selected run becomes <b>cut</b> (or <b>restored</b> if it was already cut; the first word sets the direction). <b>Single tap = jump &amp; play</b> that word. To cut one word, just sweep over it. No second step, no buttons.</p>
+
+  <div class="wrap">
+    <div>
+      <div class="panel">
+        <div class="bar"><div class="pp" id="pp">❚❚</div><span class="time">0:42 / 5:23</span>
+          <span class="readout" id="readout">— words kept</span></div>
+        <div class="doc" id="doc"></div>
+      </div>
+      <div class="legend">
+        <b>Now-playing</b> word is yellow · <b>cut</b> words are struck red.
+        Keyboard: <span class="k">Space</span> play/pause · <span class="k">Ctrl</span>+<span class="k">Z</span> undo · <span class="k">Esc</span> clear.
+      </div>
+    </div>
+
+    <div class="tip">
+      <h3>Fixed: selection like the real thing</h3>
+      <p>The old panel only started a sweep if you pressed <b>exactly on a word</b>, and made you move to a Cut/Keep button afterward.</p>
+      <p style="margin-top:8px">Now it's <span class="good">native text selection</span> — start anywhere (gaps included), release, done. Sweep = cut · sweep over a cut run = restore · <b>tap = jump &amp; play</b>.</p>
+      <p style="margin-top:8px">Try starting your drag in the <b>empty space beside a word</b> — it still selects, just like a normal text field.</p>
+    </div>
+  </div>
+
+<script>
+const WORDS = [
+  ["میں",0],["ہوں",0],["جاوید۔",0],["میں",0],["نے",0],["چودہ",0],["کروڑ",0],["invest",1],["کیے",0],
+  ["ہم--",2],["ایک",0],["tech",1],["startup",1],["کے",0],["اندر",0],["[بچے کی آواز]",2],["جو",0],["چلا",0],["اور",0],
+  ["ہاں",2],["اب",0],["میرے",0],["پاس",0],["ہیں",0],["دس",0],["ہزار",0],["کروڑ",0],["روپے۔",0],
+  ["وہی",0],["same",1],["trick",1],["کھیلوں",0],["گا",0],["loan",1],["لینے",0],["والی",0]
+];
+// state: keep=true/false ; pre-cut some junk (the "--", brackets, haan) to show a mid-edit doc
+const state = WORDS.map(w => w[1] !== 2);
+const doc = document.getElementById('doc');
+const readout = document.getElementById('readout');
+let nowIdx = 2;
+const undo = [];
+
+function render(){
+  doc.innerHTML = WORDS.map((w,i)=>{
+    const cls = ['w', state[i]?'':'cut', i===nowIdx?'now':'', w[1]===1?'en':''].join(' ').trim();
+    return `<span class="${cls}" data-i="${i}">${w[0]}</span>`;
+  }).join(' ');
+  const kept = state.filter(Boolean).length;
+  readout.textContent = `${kept}/${WORDS.length} words kept`;
+}
+function snapshot(){ undo.push(state.slice()); if(undo.length>50) undo.shift(); }
+
+// Native text selection drives the edit. Start the drag anywhere (gaps too);
+// on release, every word the selection touched flips. First touched word sets
+// the direction (cut vs restore). A plain click (collapsed selection) = play.
+const spans = () => [...doc.querySelectorAll('.w')];
+doc.addEventListener('mouseup', (e)=>{
+  const sel = window.getSelection();
+  if (sel && sel.rangeCount && !sel.isCollapsed){
+    const range = sel.getRangeAt(0);
+    const covered = spans().filter(s => range.intersectsNode(s)).map(s => +s.dataset.i);
+    if (covered.length){
+      snapshot();
+      const mode = state[covered[0]] ? 'cut' : 'restore';   // first word sets direction
+      covered.forEach(i => state[i] = (mode === 'restore'));
+      render();
+    }
+    sel.removeAllRanges();
+  } else {
+    const el = e.target.closest('.w');           // plain tap → jump & play
+    if (el){ nowIdx = +el.dataset.i; render(); }
+  }
+});
+document.getElementById('pp').onclick=()=>{ nowIdx=(nowIdx+1)%WORDS.length; render(); };
+window.addEventListener('keydown', e=>{
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'){ e.preventDefault(); if(undo.length){ state.splice(0,state.length,...undo.pop()); render(); } }
+});
+render();
+</script>
+</body>
+</html>

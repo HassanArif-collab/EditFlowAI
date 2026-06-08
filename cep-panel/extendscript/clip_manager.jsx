@@ -1,1070 +1,857 @@
-/**
- * EditFlow AI - Clip Manager
- * Creates, moves, removes clips on the Premiere Pro timeline.
- * This is the main module that executes EDL instructions.
+/*
+ * clip_manager.jsx - Manage clips on the Premiere Pro timeline.
+ * Handles adding, removing, moving, and organizing clips.
+ * Also processes EDL (Edit Decision List) JSON files for batch operations.
  */
-
-var clipManager = (function() {
+clipManager = (function() {
     "use strict";
 
-    /**
-     * Process a complete EDL instruction file.
-     * @param {string} edlJsonPath - Path to the EDL JSON file
-     * @returns {Object} Execution result
-     */
+    // ── EDL Processing ──
+
     function processEDL(edlJsonPath) {
-        var result = {
-            success: true,
-            edlId: "",
-            processed: 0,
-            failed: 0,
-            errors: [],
-            undoGroup: "EditFlow AI"
-        };
+        /*
+         * Reads an EDL JSON file from disk and applies the clip operations
+         * to the active sequence. This is the primary way the Python backend
+         * communicates timeline changes to Premiere.
+         *
+         * EDL format:
+         * {
+         *   "sequence_name": "Cut Sequence",
+         *   "operations": [
+         *     { "action": "add", "mediaPath": "C:/video.mp4", "trackIndex": 0, "startTime": 0, "inPoint": 0, "outPoint": 10 },
+         *     { "action": "remove", "trackIndex": 0, "clipIndex": 1 },
+         *     { "action": "move", "trackIndex": 0, "clipIndex": 0, "newStartTime": 15.5 }
+         *   ]
+         * }
+         */
+        var seq = app.project.activeSequence;
+        if (!seq) return editflowUtils.safeStringify({ success: false, error: "No active sequence" });
+
+        var results = [];
 
         try {
-            // Read EDL JSON file
             var edlFile = new File(edlJsonPath);
-            if (!edlFile.exists) {
-                result.success = false;
-                result.error = "EDL file not found: " + edlJsonPath;
-                return result;
-            }
-
-            edlFile.open("r");
-            var edlText = edlFile.read();
+            edlFile.open('r');
+            var content = edlFile.read();
             edlFile.close();
 
-            var edl = JSON.parse(edlText); // Parse JSON
+            var edl = JSON.parse(content);
+            var operations = edl.operations || [];
 
-            result.edlId = edl.id || "";
-            result.undoGroup = edl.undo_group || "EditFlow AI";
+            for (var i = 0; i < operations.length; i++) {
+                var op = operations[i];
+                var action = op.action || "";
+                var result;
 
-            // Begin undo group
-            app.enableQE();
-
-            var seq = resolveSequenceForEDL(edl);
-            if (!seq) {
-                result.success = false;
-                result.error = "No target sequence could be created or found";
-                return result;
-            }
-
-            // Process each clip instruction
-            for (var i = 0; i < edl.clips.length; i++) {
-                var clipInstruction = edl.clips[i];
-                try {
-                    processClipInstruction(seq, clipInstruction);
-                    result.processed++;
-                } catch (e) {
-                    result.failed++;
-                    result.errors.push({
-                        clipId: clipInstruction.id,
-                        error: e.toString()
-                    });
+                switch (action) {
+                    case "add":
+                        result = addClipToSequence(seq, op);
+                        break;
+                    case "remove":
+                        result = removeClipFromSequence(seq, op);
+                        break;
+                    case "move":
+                        result = moveClipOnSequence(seq, op);
+                        break;
+                    case "modify":
+                        result = modifyClipOnSequence(seq, op);
+                        break;
+                    case "ensure_bin":
+                        result = ensureBin(op);
+                        break;
+                    case "create_sequence":
+                        result = createSequenceFromOps(op);
+                        seq = app.project.activeSequence;
+                        break;
+                    case "add_marker":
+                        result = addMarkerToSequence(seq, op);
+                        break;
+                    default:
+                        result = { success: false, error: "Unknown action: " + action };
                 }
+
+                result.operation = i;
+                result.action = action;
+                results.push(result);
             }
 
-            if (result.failed > 0) {
-                result.success = false;
-                result.error = result.failed + " clip(s) failed to process";
+            // If EDL specifies a sequence name, rename
+            if (edl.sequence_name && seq.name !== edl.sequence_name) {
+                try { seq.name = edl.sequence_name; } catch (e) {}
             }
 
         } catch (e) {
-            result.success = false;
-            result.error = e.toString();
+            return editflowUtils.safeStringify({ success: false, error: e.toString(), results: results });
         }
 
-        return result;
+        return editflowUtils.safeStringify({ success: true, totalOperations: operations.length, results: results });
     }
 
-    /**
-     * Process a single clip instruction.
-     * @param {Sequence} seq - Target sequence
-     * @param {Object} instruction - Clip instruction
-     */
-    function processClipInstruction(seq, instruction) {
-        switch (instruction.action) {
-            case "add":
-                addClipToSequence(seq, instruction);
-                break;
-            case "remove":
-                removeClipFromSequence(seq, instruction);
-                break;
-            case "move":
-                moveClipOnSequence(seq, instruction);
-                break;
-            case "modify":
-                modifyClipOnSequence(seq, instruction);
-                break;
-            default:
-                throw new Error("Unknown action: " + instruction.action);
+    // ── Individual Operations ──
+
+    function addClipToSequence(seq, options) {
+        var mediaPath = editflowUtils.getParam(options, 'mediaPath', 'path');
+        var startTime = editflowUtils.getParam(options, 'startTime', 'time') || 0;
+        var inPoint = editflowUtils.getParam(options, 'inPoint', 'in') || 0;
+        var outPoint = editflowUtils.getParam(options, 'outPoint', 'out') || 0;
+
+        // Track indices for insertClip's 4-arg form
+        var videoTrackIndex = editflowUtils.getParam(options, 'video_track_index', 'videoTrackIndex');
+        var audioTrackIndex = editflowUtils.getParam(options, 'audio_track_index', 'audioTrackIndex');
+
+        // Backward-compat: legacy callers pass trackIndex only (defaults to V1/A1)
+        if (videoTrackIndex === undefined) {
+            var legacyTrack = editflowUtils.getParam(options, 'trackIndex', 'track');
+            videoTrackIndex = (legacyTrack !== undefined) ? legacyTrack : 0;
         }
-    }
-
-    /**
-     * Add a clip to the sequence.
-     * @param {Sequence} seq
-     * @param {Object} instruction
-     */
-    function addClipToSequence(seq, instruction) {
-        // Find the project item by path
-        var projectItem = ensureProjectItemForPath(instruction.source_path);
-        if (!projectItem) {
-            throw new Error("Project item not found: " + instruction.source_path);
+        if (audioTrackIndex === undefined) {
+            audioTrackIndex = 0;
         }
-
-        // Calculate time codes (ticks)
-        var timebase = seq.timebase;
-        var startTicks = secondsToTicks(instruction.start_time, timebase);
-        var inTicks = secondsToTicks(instruction.in_point, timebase);
-        var outTicks = secondsToTicks(instruction.out_point, timebase);
-
-        // Determine target track
-        var clipType = instruction.clip_type || instruction.clipType || "b_roll";
-        var trackIndex = instruction.track_index;
-        if (trackIndex === undefined) trackIndex = instruction.trackIndex;
-        trackIndex = Number(trackIndex || 0);
-        var isAudio = clipType === "a_audio" || clipType === "audio";
-        ensureTrackCount(seq, isAudio ? "audio" : "video", trackIndex);
-        var targetTrack = isAudio ? seq.audioTracks[trackIndex] : seq.videoTracks[trackIndex];
-
-        if (!targetTrack) {
-            throw new Error("Track not found: index " + trackIndex);
-        }
-
-        // Insert clip
-        // Set in/out points on source first
-        projectItem.setInPoint(inTicks);
-        projectItem.setOutPoint(outTicks);
-        
-        // Overwrite at destination
-        targetTrack.overwriteClip(projectItem, startTicks);
-
-
-        // Apply scale if needed
-        if (instruction.scale && instruction.scale !== 100) {
-            applyScaleToLastClip(seq, targetTrack, instruction.scale);
-        }
-    }
-
-    /**
-     * Remove a clip from the sequence.
-     * @param {Sequence} seq
-     * @param {Object} instruction
-     */
-    function removeClipFromSequence(seq, instruction) {
-        var startTime = secondsToTicks(instruction.start_time, seq.timebase);
-        var track = getTrack(seq, instruction);
-
-        if (track) {
-            // Find clip at the specified time
-            for (var c = 0; c < track.clips.numItems; c++) {
-                var clip = track.clips[c];
-                if (Math.abs(clip.start.ticks - startTime) < 10) {
-                    clip.remove(true, true); // ripple, align to video
-                    break;
-                }
-            }
-        }
-    }
-
-    /**
-     * Move a clip on the sequence.
-     * @param {Sequence} seq
-     * @param {Object} instruction
-     */
-    function moveClipOnSequence(seq, instruction) {
-        // Premiere Pro doesn't have a direct "move" API
-        // We need to remove and re-add
-        removeClipFromSequence(seq, instruction);
-        instruction.action = "add";
-        addClipToSequence(seq, instruction);
-    }
-
-    /**
-     * Modify a clip's properties.
-     * @param {Sequence} seq
-     * @param {Object} instruction
-     */
-    function modifyClipOnSequence(seq, instruction) {
-        var startTime = secondsToTicks(instruction.start_time, seq.timebase);
-        var track = getTrack(seq, instruction);
-
-        if (track) {
-            for (var c = 0; c < track.clips.numItems; c++) {
-                var clip = track.clips[c];
-                if (Math.abs(clip.start.ticks - startTime) < 10) {
-                    // Apply scale
-                    if (instruction.scale) {
-                        applyScale(clip, instruction.scale);
-                    }
-                    // Apply speed
-                    if (instruction.speed && instruction.speed !== 1.0) {
-                        clip.setSpeed(instruction.speed);
-                    }
-                    break;
-                }
-            }
-        }
-    }
-
-    /**
-     * Find a project item by its media path.
-     * @param {string} path - Media file path
-     * @returns {ProjectItem|null}
-     */
-    function findProjectItem(path) {
-        var project = app.project;
-        if (!project) return null;
-
-        return searchForItem(project.rootItem, path);
-    }
-
-    function ensureProjectItemForPath(path) {
-        if (!path) return null;
-
-        var existing = findProjectItem(path);
-        if (existing) return existing;
 
         try {
-            var file = new File(path);
-            if (!file.exists) return null;
+            var projectItem = findProjectItem(mediaPath);
+            if (!projectItem) {
+                projectItem = ensureProjectItemForPath(mediaPath);
+                if (!projectItem) {
+                    return { success: false, error: "Could not find or import: " + mediaPath };
+                }
+            }
 
-            var targetBin = getOrCreateBin("EditFlow Imports");
-            app.project.importFiles([file.fsName], true, targetBin, false);
-            return findProjectItem(file.fsName) || findProjectItem(path);
-        } catch(e) {
-            return null;
+            // ── FIX-A: Pre-trim via projectItem.setInPoint/setOutPoint ─────
+            // PPro's insertClip captures the projectItem's current in/out at
+            // placement time, so setting them before insertClip causes the
+            // placed TrackItem to inherit those values.  Each loop iteration
+            // sets fresh values, so previously-placed clips are unaffected.
+            // setInPoint/setOutPoint signature: (timeValue, mediaType)
+            //   timeValue: string (parsed as ticks), number (seconds), or Time object
+            //   mediaType: 1=video, 2=audio, 4=all media types
+            if (inPoint > 0 || outPoint > 0) {
+                try {
+                    if (inPoint > 0 && typeof projectItem.setInPoint === 'function') {
+                        projectItem.setInPoint(editflowUtils.secondsToTicksString(inPoint), 4);
+                    }
+                    if (outPoint > 0 && typeof projectItem.setOutPoint === 'function') {
+                        projectItem.setOutPoint(editflowUtils.secondsToTicksString(outPoint), 4);
+                    }
+                } catch (e) {
+                    // Diagnostic only — non-fatal; FIX-B may still trim
+                    try { $.writeln("FIX-A setInPoint/setOutPoint failed: " + e.toString()); } catch (_) {}
+                }
+            }
+
+            // Pass startTime as a tick STRING (not a seconds number) so video and audio
+            // both anchor on the exact same integer tick — eliminates frame-rounding
+            // drift that surfaced as PPro's red sync-offset badge between V and A.
+            // Safe now that FIX-A pre-trims in/out via projectItem.setInPoint/setOutPoint.
+            var startTicksStr = editflowUtils.secondsToTicksString(startTime);
+            seq.insertClip(projectItem, startTicksStr, videoTrackIndex, audioTrackIndex);
+
+            // ── FIX-B: Post-placement direct string assignment ───────────
+            // Belt-and-suspenders with FIX-A.  The premiere-pro-mcp reference
+            // repo uses direct string assignment (no .ticks).  We try both
+            // strategies and capture before/after diagnostics so the panel can
+            // prove which one actually trims the clip.
+            var placedClip = _findClipAtTime(seq.videoTracks[videoTrackIndex], startTime);
+            var diag = {
+                found: !!placedClip,
+                requested_in: inPoint,
+                requested_out: outPoint
+            };
+            if (placedClip) {
+                try {
+                    // Capture BEFORE state
+                    diag.before_in_ticks    = String(placedClip.inPoint.ticks || "");
+                    diag.before_out_ticks   = String(placedClip.outPoint.ticks || "");
+                    diag.before_start_ticks = String(placedClip.start.ticks || "");
+                    diag.before_end_ticks   = String(placedClip.end.ticks || "");
+                } catch (e) {}
+
+                if (inPoint > 0) {
+                    try { placedClip.inPoint = editflowUtils.secondsToTicksString(inPoint); } catch (e) { diag.in_err = e.toString(); }
+                }
+                if (outPoint > 0) {
+                    try { placedClip.outPoint = editflowUtils.secondsToTicksString(outPoint); } catch (e) { diag.out_err = e.toString(); }
+                }
+
+                try {
+                    // Capture AFTER state — proof of whether trim stuck
+                    diag.after_in_ticks    = String(placedClip.inPoint.ticks || "");
+                    diag.after_out_ticks   = String(placedClip.outPoint.ticks || "");
+                    diag.after_start_ticks = String(placedClip.start.ticks || "");
+                    diag.after_end_ticks   = String(placedClip.end.ticks || "");
+                } catch (e) {}
+            }
+
+            // ── Phase 2 (M13): Audio fade support ────────────────────────
+            // NOTE: setAudioFadeIn/setAudioFadeOut do NOT exist in the official
+            // PPro TrackItem API. Audio fades must be set via keyframes on the
+            // Volume component (see audio_manager.jsx applyAudioFade()). The
+            // audio_manager is the correct path for fades; this placeholder is
+            // kept for forward-compat if Adobe adds these methods later.
+            try {
+                var lastClip = seq.videoTracks[videoTrackIndex].clips[seq.videoTracks[videoTrackIndex].clips.numItems - 1];
+                if (lastClip && options.audio_fade_in_ms) {
+                    if (typeof lastClip.setAudioFadeIn === 'function') {
+                        var fadeInTicks = editflowUtils.secondsToTicksString(options.audio_fade_in_ms / 1000);
+                        lastClip.setAudioFadeIn(fadeInTicks);
+                    }
+                }
+                if (lastClip && options.audio_fade_out_ms) {
+                    if (typeof lastClip.setAudioFadeOut === 'function') {
+                        var fadeOutTicks = editflowUtils.secondsToTicksString(options.audio_fade_out_ms / 1000);
+                        lastClip.setAudioFadeOut(fadeOutTicks);
+                    }
+                }
+            } catch (e) {
+                // Audio fade API not available in this PPro version — non-critical
+            }
+
+            return { success: true, name: projectItem.name, startTime: startTime, trim_diag: diag };
+
+        } catch (e) {
+            return { success: false, error: e.toString() };
         }
     }
 
-    function searchForItem(bin, path) {
-        for (var i = 0; i < bin.children.numItems; i++) {
-            var item = bin.children[i];
-
-            if (item.type === ProjectItemType.BIN) {
-                var found = searchForItem(item, path);
-                if (found) return found;
+    function _findClipAtTime(track, startTimeSeconds) {
+        /* Find the clip on a track whose start matches startTimeSeconds.
+         * Used after insertClip to locate the placed clip for in/out trimming.
+         * Compares within ±0.05s tolerance to handle frame snapping. */
+        if (!track) return null;
+        var targetTicks = editflowUtils.secondsToTicks(startTimeSeconds);
+        var tolerance = editflowUtils.secondsToTicks(0.05);
+        for (var c = 0; c < track.clips.numItems; c++) {
+            var clip = track.clips[c];
+            var clipStart = parseFloat(clip.start.ticks);
+            if (Math.abs(clipStart - targetTicks) <= tolerance) {
+                return clip;
             }
-            else if (item.type === ProjectItemType.CLIP ||
-                     item.type === ProjectItemType.FILE) {
-                try {
-                    var mediaPath = item.getMediaPath();
-                    if (mediaPath && mediaPath.toLowerCase() === path.toLowerCase()) {
-                        return item;
-                    }
-                } catch(e) {}
-            }
+        }
+        // Fallback: if there's only one clip on the track, it must be
+        // the one we just placed — return it.
+        if (track.clips.numItems === 1) {
+            return track.clips[0];
         }
         return null;
     }
 
-    function secondsToTicks(seconds) {
-        return editflowUtils.secondsToTicks(seconds);
-    }
-
-    function resolveSequenceForEDL(edl) {
-        var project = app.project;
-        if (!project) return null;
-
-        var target = edl.target || "";
-        if (target && target !== "@new_sequence") {
-            var named = getTargetSequence(target);
-            if (named && named.name === target) return named;
-        }
-
-        if (target === "@new_sequence" || !project.activeSequence) {
-            var created = createSequenceFromEDL(edl);
-            if (created) return created;
-        }
-
-        return project.activeSequence;
-    }
-
-    function createSequenceFromEDL(edl) {
-        try {
-            var firstItem = null;
-            for (var i = 0; i < edl.clips.length; i++) {
-                firstItem = ensureProjectItemForPath(edl.clips[i].source_path);
-                if (firstItem) break;
-            }
-            if (!firstItem) return null;
-
-            var name = edl.sequence_name || edl.sequenceName || ("EditFlow " + (edl.id || "Sequence"));
-            var seq = app.project.createNewSequenceFromClips(name, [firstItem], app.project.rootItem);
-            if (!seq) return app.project.activeSequence;
-
-            clearSequenceTracks(seq);
-            ensureTrackCount(seq, "video", 1);
-            ensureTrackCount(seq, "audio", 0);
-            return seq;
-        } catch(e) {
-            return null;
-        }
-    }
-
-    function clearSequenceTracks(seq) {
-        try {
-            for (var vt = 0; vt < seq.videoTracks.numTracks; vt++) {
-                var vtrack = seq.videoTracks[vt];
-                for (var vc = vtrack.clips.numItems - 1; vc >= 0; vc--) {
-                    vtrack.clips[vc].remove(false, false);
-                }
-            }
-            for (var at = 0; at < seq.audioTracks.numTracks; at++) {
-                var atrack = seq.audioTracks[at];
-                for (var ac = atrack.clips.numItems - 1; ac >= 0; ac--) {
-                    atrack.clips[ac].remove(false, false);
-                }
-            }
-        } catch(e) {}
-    }
-
-    function ensureTrackCount(seq, trackType, trackIndex) {
-        try {
-            if (trackType === "audio") {
-                while (seq.audioTracks.numTracks <= trackIndex && seq.audioTracks.createAudioTrack) {
-                    seq.audioTracks.createAudioTrack("Audio " + (seq.audioTracks.numTracks + 1));
-                }
-            } else {
-                while (seq.videoTracks.numTracks <= trackIndex && seq.videoTracks.createVideoTrack) {
-                    seq.videoTracks.createVideoTrack("Video " + (seq.videoTracks.numTracks + 1));
-                }
-            }
-        } catch(e) {}
-    }
-
-    /**
-     * Get a track from the sequence.
-     * @param {Sequence} seq
-     * @param {Object} instruction
-     * @returns {Track|null}
-     */
-
-    /**
-     * Get a track from the sequence.
-     * @param {Sequence} seq
-     * @param {Object} instruction
-     * @returns {Track|null}
-     */
-    function getTrack(seq, instruction) {
-        var isVideo = (instruction.clip_type !== "a_audio");
-        var tracks = isVideo ? seq.videoTracks : seq.audioTracks;
-        var idx = instruction.track_index || 0;
-        return (idx < tracks.numTracks) ? tracks[idx] : null;
-    }
-
-    /**
-     * Remove clips from the current/target sequence by rule.
-     * Supported options:
-     * - mode: "broll" removes video clips on V2 and above
-     * - mode: "label" removes clips whose project item label matches label_name
-     * @param {Object} options
-     * @returns {Object}
-     */
-    function removeTimelineClips(options) {
-        options = options || {};
-        var result = {
-            success: true,
-            mode: options.mode || "",
-            labelName: options.label_name || options.labelName || "",
-            sequenceName: "",
-            scanned: 0,
-            removed: 0,
-            errors: []
-        };
+    function removeClipFromSequence(seq, options) {
+        var trackIndex = editflowUtils.getParam(options, 'trackIndex', 'track') || 0;
+        var clipIndex = editflowUtils.getParam(options, 'clipIndex', 'index');
 
         try {
-            var requestedSequence = options.sequence_name || options.sequenceName || "";
-            var seq = getTargetSequence(requestedSequence);
-            if (!seq) {
-                result.success = false;
-                result.error = "Target sequence not found or no active sequence";
-                return result;
-            }
-            result.sequenceName = seq.name || "";
-
-            if (requestedSequence && seq.name !== requestedSequence) {
-                result.success = false;
-                result.error = "Active sequence is '" + seq.name + "', not '" + requestedSequence + "'";
-                return result;
+            var track = seq.videoTracks[trackIndex];
+            if (!track || clipIndex >= track.clips.numItems) {
+                return { success: false, error: "Clip not found at track " + trackIndex + ", index " + clipIndex };
             }
 
-            if (result.mode === "label") {
-                removeByLabel(seq, result.labelName, result);
-            } else if (result.mode === "broll") {
-                removeBroll(seq, result);
-            } else {
-                result.success = false;
-                result.error = "Unsupported removal mode: " + result.mode;
-            }
+            var clip = track.clips[clipIndex];
+            clip.remove(true, true); // ripple, align
+            return { success: true, removedClip: clip.name };
+
         } catch (e) {
-            result.success = false;
-            result.error = e.toString();
-            result.line = e.line;
+            return { success: false, error: e.toString() };
         }
-
-        return result;
     }
 
-    /**
-     * Clear/reset matching timeline clip labels without deleting clips.
-     * @param {Object} options
-     * @returns {Object}
-     */
-    function clearTimelineLabels(options) {
-        options = options || {};
-        var result = {
-            success: true,
-            mode: "label",
-            labelName: options.label_name || options.labelName || "",
-            sequenceName: "",
-            scanned: 0,
-            changed: 0,
-            errors: []
-        };
+    function moveClipOnSequence(seq, options) {
+        var trackIndex = editflowUtils.getParam(options, 'trackIndex', 'track') || 0;
+        var clipIndex = editflowUtils.getParam(options, 'clipIndex', 'index');
+        var newStartTime = editflowUtils.getParam(options, 'newStartTime', 'startTime') || 0;
 
         try {
-            var requestedSequence = options.sequence_name || options.sequenceName || "";
-            var seq = getTargetSequence(requestedSequence);
-            if (!seq) {
-                result.success = false;
-                result.error = "Target sequence not found or no active sequence";
-                return result;
-            }
-            result.sequenceName = seq.name || "";
-
-            if (requestedSequence && seq.name !== requestedSequence) {
-                result.success = false;
-                result.error = "Active sequence is '" + seq.name + "', not '" + requestedSequence + "'";
-                return result;
+            var track = seq.videoTracks[trackIndex];
+            if (!track || clipIndex >= track.clips.numItems) {
+                return { success: false, error: "Clip not found" };
             }
 
-            clearLabelOnTracks(seq.videoTracks, result);
-            clearLabelOnTracks(seq.audioTracks, result);
+            var clip = track.clips[clipIndex];
+            // clip.start expects a tick STRING, not a raw number — matching the
+            // premiere-pro-mcp reference and PPro's Time-object property setter.
+            clip.start = editflowUtils.secondsToTicksString(newStartTime);
+            return { success: true, name: clip.name, newStartTime: newStartTime };
+
         } catch (e) {
-            result.success = false;
-            result.error = e.toString();
-            result.line = e.line;
+            return { success: false, error: e.toString() };
         }
-
-        return result;
     }
 
-    function getTargetSequence(sequenceName) {
-        var seq = app.project.activeSequence;
-        if (!sequenceName || (seq && seq.name === sequenceName)) {
-            return seq;
-        }
+    function modifyClipOnSequence(seq, options) {
+        var trackIndex = editflowUtils.getParam(options, 'trackIndex', 'track') || 0;
+        var clipIndex = editflowUtils.getParam(options, 'clipIndex', 'index');
 
         try {
-            var sequences = app.project.sequences;
-            for (var i = 0; i < sequences.numSequences; i++) {
-                var candidate = sequences[i];
-                if (candidate && candidate.name === sequenceName) {
-                    return candidate;
-                }
+            var track = seq.videoTracks[trackIndex];
+            if (!track || clipIndex >= track.clips.numItems) {
+                return { success: false, error: "Clip not found" };
             }
-        } catch (e) {}
 
-        return seq;
-    }
+            var clip = track.clips[clipIndex];
+            var modified = [];
 
-    function removeBroll(seq, result) {
-        for (var t = seq.videoTracks.numTracks - 1; t >= 1; t--) {
-            var track = seq.videoTracks[t];
-            for (var c = track.clips.numItems - 1; c >= 0; c--) {
-                result.scanned++;
-                removeClipSafely(track.clips[c], result);
+            // Speed — NOTE: There is NO official ExtendScript API to set clip
+            // speed. Only getSpeed() (getter) exists. Speed must be changed
+            // manually or via the QE DOM (unsupported). Log the request but
+            // do not attempt to call a non-existent setter.
+            var speed = editflowUtils.getParam(options, 'speed');
+            if (speed !== undefined) {
+                // No-op: clip speed cannot be set via ExtendScript API
+                modified.push("speed=" + speed + " (unsupported)");
             }
-        }
-    }
 
-    function removeByLabel(seq, labelName, result) {
-        var expected = normalizeText(labelName);
-        if (!expected) {
-            result.success = false;
-            result.error = "No label name provided";
-            return;
-        }
-
-        for (var t = seq.videoTracks.numTracks - 1; t >= 0; t--) {
-            var track = seq.videoTracks[t];
-            for (var c = track.clips.numItems - 1; c >= 0; c--) {
-                var clip = track.clips[c];
-                result.scanned++;
-                var label = getClipLabelName(clip);
-                if (normalizeText(label) === expected) {
-                    removeClipSafely(clip, result);
-                }
-            }
-        }
-
-        for (var at = seq.audioTracks.numTracks - 1; at >= 0; at--) {
-            var audioTrack = seq.audioTracks[at];
-            for (var ac = audioTrack.clips.numItems - 1; ac >= 0; ac--) {
-                var audioClip = audioTrack.clips[ac];
-                result.scanned++;
-                var audioLabel = getClipLabelName(audioClip);
-                if (normalizeText(audioLabel) === expected) {
-                    removeClipSafely(audioClip, result);
-                }
-            }
-        }
-    }
-
-    function clearLabelOnTracks(tracks, result) {
-        var expected = normalizeText(result.labelName);
-        if (!expected) {
-            result.success = false;
-            result.error = "No label name provided";
-            return;
-        }
-
-        for (var t = tracks.numTracks - 1; t >= 0; t--) {
-            var track = tracks[t];
-            for (var c = track.clips.numItems - 1; c >= 0; c--) {
-                var clip = track.clips[c];
-                result.scanned++;
-                var label = getClipLabelName(clip);
-                if (normalizeText(label) === expected) {
-                    clearClipLabelSafely(clip, result);
-                }
-            }
-        }
-    }
-
-    function removeClipSafely(clip, result) {
-        try {
-            clip.remove(false, true);
-            result.removed++;
-        } catch (e) {
-            result.errors.push(e.toString());
-        }
-    }
-
-    function clearClipLabelSafely(clip, result) {
-        try {
-            if (clip.setColorLabel) {
-                clip.setColorLabel(0);
-                result.changed++;
-                return;
-            }
-        } catch (e1) {
-            result.errors.push(e1.toString());
-        }
-
-        try {
-            if (clip.projectItem && clip.projectItem.setColorLabel) {
-                clip.projectItem.setColorLabel(0);
-                result.changed++;
-                return;
-            }
-        } catch (e2) {
-            result.errors.push(e2.toString());
-        }
-
-        try {
-            if (clip.projectItem && clip.projectItem.label !== undefined) {
-                clip.projectItem.label = 0;
-                result.changed++;
-                return;
-            }
-        } catch (e3) {
-            result.errors.push(e3.toString());
-        }
-
-        result.errors.push("Could not clear label for clip: " + (clip.name || "unknown"));
-    }
-
-    function getClipLabelName(clip) {
-        try {
-            if (clip.getColorLabel) {
-                return labelValueToName(clip.getColorLabel());
-            }
-        } catch (e1) {}
-
-        try {
-            if (clip.projectItem && clip.projectItem.getColorLabel) {
-                return labelValueToName(clip.projectItem.getColorLabel());
-            }
-        } catch (e2) {}
-
-        try {
-            if (clip.projectItem && clip.projectItem.label) {
-                return labelValueToName(clip.projectItem.label);
-            }
-        } catch (e3) {}
-
-        return "";
-    }
-
-    function labelValueToName(value) {
-        if (value === undefined || value === null) return "";
-        if (typeof value === "string") return value;
-
-        var labels = [
-            "Violet", "Iris", "Caribbean", "Lavender",
-            "Cerulean", "Forest", "Rose", "Mango"
-        ];
-        var idx = Number(value);
-        if (!isNaN(idx) && idx >= 0 && idx < labels.length) {
-            return labels[idx];
-        }
-
-        return String(value);
-    }
-
-    function normalizeText(value) {
-        return String(value || "").replace(/^\s+|\s+$/g, "").toLowerCase();
-    }
-
-    /**
-     * Apply scale effect to a clip.
-     * @param {TrackItem} clip
-     * @param {number} scalePercent
-     */
-    function applyScale(clip, scalePercent) {
-        try {
-            var components = clip.components;
-            for (var i = 0; i < components.numItems; i++) {
-                var comp = components[i];
-                if (comp.displayName === "Motion" || comp.matchName === "motion") {
-                    var props = comp.properties;
-                    for (var p = 0; p < props.numItems; p++) {
-                        var prop = props[p];
-                        if (prop.displayName === "Scale") {
-                            prop.setValue(scalePercent);
+            // Scale
+            var scaleX = editflowUtils.getParam(options, 'scaleX', 'scale');
+            var scaleY = editflowUtils.getParam(options, 'scaleY');
+            if (scaleX !== undefined) {
+                try {
+                    var comp = clip.components;
+                    for (var ci = 0; ci < comp.numItems; ci++) {
+                        if (comp[ci].displayName === "Motion") {
+                            var props = comp[ci].properties;
+                            for (var pi = 0; pi < props.numItems; pi++) {
+                                if (props[pi].displayName === "Scale") {
+                                    props[pi].setValue(scaleX, true);
+                                    modified.push("scale=" + scaleX);
+                                    break;
+                                }
+                            }
                             break;
                         }
                     }
-                    break;
-                }
+                } catch (e) {}
             }
-        } catch(e) {
-            // Scale application failed, log but don't throw
-            $.writeln("Scale apply failed: " + e.toString());
+
+            return { success: true, name: clip.name, modified: modified };
+
+        } catch (e) {
+            return { success: false, error: e.toString() };
         }
     }
 
-    /**
-     * Apply scale to the last clip on a track.
-     * @param {Sequence} seq
-     * @param {Track} track
-     * @param {number} scalePercent
-     */
-    function applyScaleToLastClip(seq, track, scalePercent) {
-        try {
-            var lastClip = track.clips[track.clips.numItems - 1];
-            if (lastClip) {
-                applyScale(lastClip, scalePercent);
-            }
-        } catch(e) {}
-    }
+    // ── Helper Functions ──
 
-    /**
-     * Add media file to timeline.
-     * @param {Object} options - {media_type, filename, track_index, start_time}
-     * @returns {Object} Result
-     */
-    function addMediaToTimeline(options) {
-        var result = { success: false };
-        var mediaType = options.mediaType || options.media_type || 'audio';
-        var filename = options.filename || options.clipName || options.clip_name || '';
-        var trackIndex = options.trackIndex || options.track_index || 0;
-        var startTime = options.startTime || options.start_time || 0;
-
-        try {
-            var proj = app.project;
-            if (!proj) {
-                result.error = "No active project";
-                return result;
-            }
-
-            // Get or create the sequence
-            var seq = proj.activeSequence;
-            if (!seq) {
-                result.error = "No active sequence";
-                return result;
-            }
-
-            // Find the media in project - search by filename
-            var projectItem = findProjectItemByName(filename);
-            if (!projectItem) {
-                result.error = "Media file not found in project: " + filename;
-                return result;
-            }
-
-            // Determine track type
-            var isAudio = (mediaType === 'music' || mediaType === 'audio');
-            var trackName = "";
-            
-            // Create track if needed
-            if (isAudio) {
-                if (trackIndex >= seq.audioTracks.numTracks) {
-                    for (var i = seq.audioTracks.numTracks; i <= trackIndex; i++) {
-                        seq.audioTracks.createAudioTrack("Music " + (i + 1));
-                    }
-                }
-                var targetTrack = seq.audioTracks[trackIndex];
-                trackName = targetTrack.name;
-                
-                // Insert media on audio track using insertMedia
-                var inserted = targetTrack.insertMedia(projectItem, false);
-                
-                if (inserted && inserted.length > 0) {
-                    result.success = true;
-                } else {
-                    result.error = "Failed to insert media on track";
-                }
-            } else {
-                // Video track
-                if (trackIndex >= seq.videoTracks.numTracks) {
-                    for (var i = seq.videoTracks.numTracks; i <= trackIndex; i++) {
-                        seq.videoTracks.createVideoTrack("Video " + (i + 1));
-                    }
-                }
-                var targetTrack = seq.videoTracks[trackIndex];
-                trackName = targetTrack.name;
-                
-                var inserted = targetTrack.insertMedia(projectItem, false);
-                
-                if (inserted && inserted.length > 0) {
-                    result.success = true;
-                } else {
-                    result.error = "Failed to insert media on track";
-                }
-            }
-            
-            result.trackName = trackName;
-            result.clipName = projectItem.name;
-            
-        } catch(e) {
-            result.error = e.toString() + " (line " + e.line + ")";
-        }
-        
-        return result;
-    }
-
-    /**
-     * Find project item by filename (partial match).
-     * @param {string} filename - Filename to search for
-     * @returns {ProjectItem|null}
-     */
-    function findProjectItemByName(filename) {
+    function findProjectItem(mediaPath) {
         var project = app.project;
         if (!project) return null;
 
-        var searchName = filename.toLowerCase().replace(/[\[\]]/g, '');
-        
-        return searchForItemByName(project.rootItem, searchName);
+        var root = project.rootItem;
+        return findItemInBin(root, mediaPath);
     }
 
-    function searchForItemByName(bin, searchName) {
+    function findItemInBin(bin, mediaPath) {
         for (var i = 0; i < bin.children.numItems; i++) {
             var item = bin.children[i];
-
             if (item.type === ProjectItemType.BIN) {
-                var found = searchForItemByName(item, searchName);
+                var found = findItemInBin(item, mediaPath);
                 if (found) return found;
-            }
-            else if (item.type === ProjectItemType.CLIP ||
-                     item.type === ProjectItemType.FILE) {
+            } else {
                 try {
-                    var itemName = item.name.toLowerCase();
-                    if (itemName.indexOf(searchName) !== -1) {
-                        return item;
-                    }
-                } catch(e) {}
+                    var itemPath = item.getMediaPath ? item.getMediaPath() : "";
+                    if (itemPath === mediaPath) return item;
+                } catch (e) {}
             }
         }
         return null;
+    }
+
+    function ensureProjectItemForPath(mediaPath) {
+        /* Import file into project if it's not already there */
+        var existing = findProjectItem(mediaPath);
+        if (existing) return existing;
+
+        try {
+            var project = app.project;
+            var root = project.rootItem;
+
+            // Create an "EditFlow Imports" bin
+            var importBin = editflowUtils.findBin(root, "EditFlow Imports");
+            if (!importBin) {
+                root.createBin("EditFlow Imports");
+                importBin = editflowUtils.findBin(root, "EditFlow Imports");
+            }
+            if (!importBin) importBin = root;
+
+            // Import the file
+            project.importFiles([mediaPath], true, importBin, false);
+
+            // Wait briefly and search again
+            $.sleep(500);
+            return findProjectItem(mediaPath);
+
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function removeTimelineClips(options) {
+        var seq = app.project.activeSequence;
+        if (!seq) return editflowUtils.safeStringify({ success: false, error: "No active sequence" });
+
+        var mode = editflowUtils.getParam(options, 'mode', 'type') || "broll";
+        var removed = 0;
+
+        for (var vt = 0; vt < seq.videoTracks.numTracks; vt++) {
+            var track = seq.videoTracks[vt];
+            // Collect clips to remove (iterate in reverse to avoid index shifting)
+            var toRemove = [];
+            for (var c = 0; c < track.clips.numItems; c++) {
+                var clip = track.clips[c];
+                if (mode === "broll" && vt > 0) {
+                    toRemove.push(c);
+                } else if (mode === "all") {
+                    toRemove.push(c);
+                }
+            }
+            for (var i = toRemove.length - 1; i >= 0; i--) {
+                track.clips[toRemove[i]].remove(true, true);
+                removed++;
+            }
+        }
+
+        return editflowUtils.safeStringify({ success: true, removed: removed });
+    }
+
+    function clearTimelineLabels(options) {
+        var seq = app.project.activeSequence;
+        if (!seq) return editflowUtils.safeStringify({ success: false, error: "No active sequence" });
+
+        var labelName = editflowUtils.getParam(options, 'label', 'color') || "Iris";
+        var cleared = 0;
+
+        for (var vt = 0; vt < seq.videoTracks.numTracks; vt++) {
+            var track = seq.videoTracks[vt];
+            for (var c = 0; c < track.clips.numItems; c++) {
+                var clip = track.clips[c];
+                try {
+                    var currentLabel = sequenceReader.getClipLabelName(clip);
+                    if (currentLabel === labelName) {
+                        // setColorLabel is a ProjectItem method, not TrackItem
+                        try { clip.projectItem.setColorLabel(0); } catch (e) {} // Reset to Violet/Default
+                        cleared++;
+                    }
+                } catch (e) {}
+            }
+        }
+
+        return editflowUtils.safeStringify({ success: true, cleared: cleared });
+    }
+
+    function addMediaToTimeline(options) {
+        var seq = app.project.activeSequence;
+        if (!seq) return editflowUtils.safeStringify({ success: false, error: "No active sequence" });
+
+        var mediaPath = editflowUtils.getParam(options, 'mediaPath', 'path');
+        var trackIndex = editflowUtils.getParam(options, 'trackIndex', 'track') || 0;
+        var startTime = editflowUtils.getParam(options, 'startTime', 'time') || 0;
+
+        var result = addClipToSequence(seq, {
+            mediaPath: mediaPath,
+            trackIndex: trackIndex,
+            startTime: startTime
+        });
+
+        return editflowUtils.safeStringify(result);
     }
 
     function importFilesFromPaths(options) {
-        try {
-            var paths = options.paths || [];
-            if (paths.length === 0) return { success: false, error: "No paths provided" };
-            var suppressUI = true;
-            var targetBin = app.project.rootItem;
-            if (options.targetBin || options.target_bin) {
-                targetBin = getOrCreateBin(options.targetBin || options.target_bin);
-            }
-            app.project.importFiles(paths, suppressUI, targetBin, false);
-            return { success: true, imported: paths.length };
-        } catch(e) { return { success: false, error: e.toString() }; }
-    }
+        var paths = editflowUtils.getParam(options, 'paths', 'files');
+        if (!paths || !paths.length) {
+            return editflowUtils.safeStringify({ success: false, error: "No file paths provided" });
+        }
 
-    function getOrCreateBin(binName) {
-        var found = editflowUtils.findBin(app.project.rootItem, binName);
-        if (found) return found;
-        return app.project.rootItem.createBin(binName);
-    }
-
-    function addAllBinClipsToSequence(options) {
         try {
-            var seq = app.project.activeSequence;
-            if (!seq && (options.sequenceName || options.sequence_name)) seq = getTargetSequence(options.sequenceName || options.sequence_name);
-            if (!seq) return { success: false, error: "No active sequence" };
-            
-            var binName = options.source || "all";
-            var itemsToInsert = [];
-            
-            function collectClips(bin) {
-                for (var i = 0; i < bin.children.numItems; i++) {
-                    var item = bin.children[i];
-                    if (item.type === ProjectItemType.BIN) {
-                        collectClips(item);
-                    } else if (item.type === ProjectItemType.CLIP || item.type === ProjectItemType.FILE) {
-                        var isVideo = typeof item.hasVideo === 'function' ? (item.hasVideo() === 1 || item.hasVideo() === true) : true;
-                        var isAudio = typeof item.hasAudio === 'function' ? (item.hasAudio() === 1 || item.hasAudio() === true) : true;
-                        
-                        if (options.filter === "video" && !isVideo) continue;
-                        if (options.filter === "audio") {
-                            if (!isAudio) continue;
-                            if (isVideo) continue; // Exclude clips that have video if we specifically want audio/music
-                        }
-                        
-                        itemsToInsert.push(item);
-                    }
-                }
+            var project = app.project;
+            var root = project.rootItem;
+
+            var importBin = editflowUtils.findBin(root, "EditFlow Imports");
+            if (!importBin) {
+                root.createBin("EditFlow Imports");
+                importBin = editflowUtils.findBin(root, "EditFlow Imports");
             }
-            
-            if (binName === "all") collectClips(app.project.rootItem);
-            else collectClips(getOrCreateBin(binName));
-            
-            var trackIndex = options.trackIndex || options.track_index || 0;
-            if (itemsToInsert.length > 0) {
-                var targetTrack;
-                if (options.filter === "audio") {
-                    targetTrack = seq.audioTracks[trackIndex] || seq.audioTracks[0];
-                } else {
-                    targetTrack = seq.videoTracks[trackIndex] || seq.videoTracks[0];
-                }
-                
-                var time = editflowUtils.getSequenceEnd(seq);
-                for (var j = 0; j < itemsToInsert.length; j++) {
-                    targetTrack.insertClip(itemsToInsert[j], time);
-                    time = editflowUtils.getSequenceEnd(seq);
-                }
-                return { success: true, count: itemsToInsert.length };
-            }
-            return { success: true, count: 0, message: "No clips found" };
-        } catch(e) { return { success: false, error: e.toString() }; }
+            if (!importBin) importBin = root;
+
+            project.importFiles(paths, true, importBin, false);
+
+            return editflowUtils.safeStringify({ success: true, imported: paths.length });
+
+        } catch (e) {
+            return editflowUtils.safeStringify({ success: false, error: e.toString() });
+        }
     }
 
     function insertClipAtTime(options) {
-        try {
-            var seq = app.project.activeSequence;
-            if (!seq) return { success: false, error: "No active sequence" };
-            var item = findProjectItemByName(options.clipName || options.clip_name);
-            if (!item) return { success: false, error: "Clip not found" };
-            var trackIdx = options.trackIndex || options.track_index || 0;
-            var timeTicks = secondsToTicks(options.startTime || options.start_time || 0);
-            var trackType = options.trackType || options.track_type || "video";
-            var track = trackType === "audio" ? seq.audioTracks[trackIdx] : seq.videoTracks[trackIdx];
-            if (!track) return { success: false, error: "Track not found" };
-            track.insertClip(item, timeTicks);
-            return { success: true };
-        } catch(e) { return { success: false, error: e.toString() }; }
-    }
+        var seq = app.project.activeSequence;
+        if (!seq) return editflowUtils.safeStringify({ success: false, error: "No active sequence" });
 
-    function findTimelineClip(seq, options) {
-        var trackType = options.trackType || options.track_type || "video";
-        var trackIdx = options.trackIndex || options.track_index || 0;
-        var clipName = normalizeText(options.clipName || options.clip_name || "");
-        var startTime = options.startTime;
-        if (startTime === undefined) startTime = options.start_time;
-        var tracks = trackType === "audio" ? seq.audioTracks : seq.videoTracks;
-        if (trackIdx >= tracks.numTracks) return null;
-        var track = tracks[trackIdx];
-        for (var c = 0; c < track.clips.numItems; c++) {
-            var clip = track.clips[c];
-            var nameMatches = !clipName || normalizeText(clip.name).indexOf(clipName) !== -1;
-            var timeMatches = true;
-            if (startTime !== undefined && startTime !== null && startTime !== "") {
-                timeMatches = Math.abs(clip.start.seconds - Number(startTime)) < 0.05;
-            }
-            if (nameMatches && timeMatches) return clip;
-        }
-        return null;
-    }
-
-    function modifyClipByOptions(options) {
-        options = options || {};
-        try {
-            var seq = getTargetSequence(options.sequenceName || options.sequence_name || "");
-            if (!seq) return { success: false, error: "No active sequence" };
-            var clip = findTimelineClip(seq, options);
-            if (!clip) return { success: false, error: "Matching timeline clip not found" };
-            var changed = 0;
-            if (options.scale !== undefined && options.scale !== null) {
-                applyScale(clip, Number(options.scale));
-                changed++;
-            }
-            if (options.speed !== undefined && options.speed !== null) {
-                if (!clip.setSpeed) return { success: false, error: "Speed changes are not available in this Premiere scripting API" };
-                clip.setSpeed(Number(options.speed));
-                changed++;
-            }
-            if (!changed) return { success: false, error: "No supported clip property was provided" };
-            return { success: true, changed: changed, clipName: clip.name };
-        } catch(e) {
-            return { success: false, error: e.toString(), line: e.line };
-        }
-    }
-
-    function moveClipByOptions(options) {
-        options = options || {};
-        try {
-            var seq = getTargetSequence(options.sequenceName || options.sequence_name || "");
-            if (!seq) return { success: false, error: "No active sequence" };
-            var clip = findTimelineClip(seq, options);
-            if (!clip) return { success: false, error: "Matching timeline clip not found" };
-            var newStart = options.newStartTime;
-            if (newStart === undefined) newStart = options.new_start_time;
-            if (newStart === undefined || newStart === null || newStart === "") {
-                return { success: false, error: "newStartTime is required to move a clip" };
-            }
-            if (!clip.move) return { success: false, error: "Clip move is not available in this Premiere scripting API" };
-            clip.move(secondsToTicks(Number(newStart)));
-            return { success: true, clipName: clip.name, startTime: Number(newStart) };
-        } catch(e) {
-            return { success: false, error: e.toString(), line: e.line };
-        }
+        var result = addClipToSequence(seq, options);
+        return editflowUtils.safeStringify(result);
     }
 
     function createNewSequence(options) {
+        var name = editflowUtils.getParam(options, 'name') || "EditFlow Cut";
         try {
-            var name = options.name || "New Sequence";
-            var firstMedia = null;
-            function findFirst(bin) {
-                if (firstMedia) return;
-                for (var i = 0; i < bin.children.numItems; i++) {
-                    var item = bin.children[i];
-                    if (item.type === ProjectItemType.BIN) findFirst(item);
-                    else {
-                        var hasV = typeof item.hasVideo === 'function' ? item.hasVideo() : true;
-                        var hasA = typeof item.hasAudio === 'function' ? item.hasAudio() : true;
-                        if (hasV || hasA) { firstMedia = item; return; }
-                    }
-                }
-            }
-            findFirst(app.project.rootItem);
-            if (!firstMedia) return { success: false, error: "No media to base sequence on" };
-            var seq = app.project.createNewSequenceFromClips(name, [firstMedia], app.project.rootItem);
-            if (seq) {
-                for (var t = 0; t < seq.videoTracks.numTracks; t++) {
-                    for(var c = seq.videoTracks[t].clips.numItems-1; c>=0; c--) {
-                        seq.videoTracks[t].clips[c].remove(false, false);
-                    }
-                }
-                for (var t = 0; t < seq.audioTracks.numTracks; t++) {
-                    for(var c = seq.audioTracks[t].clips.numItems-1; c>=0; c--) {
-                        seq.audioTracks[t].clips[c].remove(false, false);
-                    }
-                }
-                return { success: true, name: seq.name };
-            }
-            return { success: false, error: "Failed to create" };
-        } catch(e) { return { success: false, error: e.toString() }; }
+            var seqID = name + '-' + new Date().getTime();
+            var seq = app.project.createNewSequence(name, seqID);
+            return editflowUtils.safeStringify({ success: true, name: name, id: seq.sequenceID });
+        } catch (e) {
+            return editflowUtils.safeStringify({ success: false, error: e.toString() });
+        }
     }
 
     function organizeIntoBins(options) {
-        options = options || {};
-        try {
-            var rules = options.rules || [];
-            if (!rules.length && (options.binName || options.bin_name)) {
-                rules = [{ binName: options.binName || options.bin_name, filter: options.filter || "all" }];
-            }
-            if (!rules.length) return { success: false, error: "No organization rules provided" };
-            var moved = 0;
-            for (var r = 0; r < rules.length; r++) {
-                var rule = rules[r] || {};
-                var binName = rule.binName || rule.bin_name;
-                if (!binName) continue;
-                moved += moveMatchingItemsToBin(app.project.rootItem, getOrCreateBin(binName), rule);
-            }
-            return { success: true, moved: moved };
-        } catch(e) {
-            return { success: false, error: e.toString(), line: e.line };
+        var rules = editflowUtils.getParam(options, 'rules');
+        if (!rules || !rules.length) {
+            return editflowUtils.safeStringify({ success: false, error: "No organization rules provided" });
         }
-    }
 
-    function moveMatchingItemsToBin(bin, targetBin, rule) {
-        var moved = 0;
-        var filter = normalizeText(rule.filter || "all");
-        var keyword = normalizeText(rule.keyword || rule.nameContains || "");
-        for (var i = bin.children.numItems - 1; i >= 0; i--) {
-            var item = bin.children[i];
-            if (item === targetBin) continue;
-            if (item.type === ProjectItemType.BIN) {
-                moved += moveMatchingItemsToBin(item, targetBin, rule);
-            } else if (item.type === ProjectItemType.CLIP || item.type === ProjectItemType.FILE) {
-                if (!projectItemMatchesRule(item, filter, keyword)) continue;
-                try {
-                    if (item.moveBin) {
-                        item.moveBin(targetBin);
-                        moved++;
+        var project = app.project;
+        var root = project.rootItem;
+        var organized = 0;
+
+        for (var r = 0; r < rules.length; r++) {
+            var rule = rules[r];
+            var binName = rule.binName || rule.name;
+            var bin = editflowUtils.findBin(root, binName);
+            if (!bin) {
+                root.createBin(binName);
+                bin = editflowUtils.findBin(root, binName);
+            }
+
+            if (bin && rule.extensions) {
+                for (var i = 0; i < root.children.numItems; i++) {
+                    var item = root.children[i];
+                    if (item.type !== ProjectItemType.BIN) {
+                        var mediaPath = item.getMediaPath ? item.getMediaPath() : "";
+                        var ext = mediaPath.split('.').pop().toLowerCase();
+                        if (rule.extensions.indexOf(ext) >= 0) {
+                            try {
+                                item.moveBin(bin);
+                                organized++;
+                            } catch (e) {}
+                        }
                     }
-                } catch(e) {}
+                }
             }
         }
-        return moved;
-    }
 
-    function projectItemMatchesRule(item, filter, keyword) {
-        if (keyword && normalizeText(item.name).indexOf(keyword) === -1) return false;
-        var hasV = editflowUtils.hasVideo(item);
-        var hasA = editflowUtils.hasAudio(item);
-        if (filter === "video") return hasV;
-        if (filter === "audio") return hasA && !hasV;
-        return true;
+        return editflowUtils.safeStringify({ success: true, organized: organized });
     }
 
     function setClipLabelColor(options) {
+        var seq = app.project.activeSequence;
+        if (!seq) return editflowUtils.safeStringify({ success: false, error: "No active sequence" });
+
+        var trackIndex = editflowUtils.getParam(options, 'trackIndex', 'track') || 0;
+        var clipIndex = editflowUtils.getParam(options, 'clipIndex', 'index') || 0;
+        var labelIndex = editflowUtils.getParam(options, 'labelIndex', 'label') || 0;
+
         try {
-            var seq = getTargetSequence(options.sequenceName || options.sequence_name || "");
-            if (!seq) return { success: false, error: "No active sequence" };
-            var labelName = options.label || options.labelName || options.label_name || "";
-            var labels = ["Violet", "Iris", "Caribbean", "Lavender", "Cerulean", "Forest", "Rose", "Mango"];
-            var colorIdx = labels.indexOf(labelName);
-            if (colorIdx === -1) colorIdx = 0;
-            var changed = 0;
-            for (var t = 0; t < seq.videoTracks.numTracks; t++) {
-                var track = seq.videoTracks[t];
-                for (var c = 0; c < track.clips.numItems; c++) {
-                    var clip = track.clips[c];
-                    try {
-                        if (clip.projectItem) {
-                            clip.projectItem.setColorLabel(colorIdx);
-                            changed++;
-                        }
-                    } catch(e){}
-                }
+            var track = seq.videoTracks[trackIndex];
+            if (!track || clipIndex >= track.clips.numItems) {
+                return editflowUtils.safeStringify({ success: false, error: "Clip not found" });
             }
-            return { success: true, changed: changed };
-        } catch(e) { return { success: false, error: e.toString() }; }
+            var clip = track.clips[clipIndex];
+            // setColorLabel is a ProjectItem method, not TrackItem
+            clip.projectItem.setColorLabel(labelIndex);
+            return editflowUtils.safeStringify({ success: true });
+        } catch (e) {
+            return editflowUtils.safeStringify({ success: false, error: e.toString() });
+        }
     }
 
-    // Public API
+    function removeTimelineRanges(options) {
+        /*
+         * Remove or "ripple delete" arbitrary timeline ranges (in seconds).
+         * Used by the spoken-phrase removal workflow.
+         *
+         * GUARDED: This first version refuses to actually cut the timeline
+         * unless Premiere's QE razor() and lift()/extract() APIs are available
+         * AND the caller explicitly opts in. Otherwise it returns a diagnostic
+         * so the panel can surface exactly what's missing before destroying
+         * user work.
+         */
+        var seq = app.project.activeSequence;
+        if (!seq) {
+            return editflowUtils.safeStringify({ success: false, error: "No active sequence" });
+        }
+
+        var ranges = editflowUtils.getParam(options, "ranges") || [];
+        if (!ranges.length) {
+            return editflowUtils.safeStringify({ success: false, error: "No ranges provided" });
+        }
+
+        var confirmed = editflowUtils.getParam(options, "confirmed") === true;
+
+        try {
+            app.enableQE();
+        } catch (e) {
+            return editflowUtils.safeStringify({
+                success: false,
+                error: "QE not available: " + e.toString(),
+                ranges: ranges
+            });
+        }
+
+        var qeSeq;
+        try {
+            qeSeq = qe.project.getActiveSequence();
+        } catch (e) {
+            return editflowUtils.safeStringify({
+                success: false,
+                error: "Cannot read QE sequence: " + e.toString()
+            });
+        }
+        if (!qeSeq) {
+            return editflowUtils.safeStringify({ success: false, error: "No active QE sequence" });
+        }
+        if (typeof qeSeq.razor !== "function") {
+            return editflowUtils.safeStringify({
+                success: false,
+                error: "QE razor() is not available in this Premiere build",
+                ranges: ranges
+            });
+        }
+
+        if (!confirmed) {
+            // Sentinel: caller saw the preview but hasn't actually confirmed yet.
+            return editflowUtils.safeStringify({
+                success: false,
+                error: "Range removal needs Premiere QE razor verification before destructive editing.",
+                ranges: ranges,
+                requires_confirmation: true
+            });
+        }
+
+        // Destructive path — implemented in a follow-up once QE is verified
+        // by hand on the user's machine.
+        return editflowUtils.safeStringify({
+            success: false,
+            error: "Destructive removal path not yet enabled. Use Preview to inspect ranges.",
+            ranges: ranges
+        });
+    }
+
+    // ── EditFlow Script Cut Operations ──
+
+    function ensureBin(options) {
+        var binName = editflowUtils.getParam(options, 'bin_name', 'name') || "EditFlow Output";
+        var project = app.project;
+        if (!project) return { success: false, error: "No project open" };
+
+        var root = project.rootItem;
+        var existing = editflowUtils.findBin(root, binName);
+        if (existing) return { success: true, name: binName, existed: true };
+
+        try {
+            root.createBin(binName);
+            return { success: true, name: binName, existed: false };
+        } catch (e) {
+            return { success: false, error: e.toString() };
+        }
+    }
+
+    function createSequenceFromOps(options) {
+        var name = editflowUtils.getParam(options, 'name') || "EditFlow Cut";
+        // The source clip path lets us build a sequence whose settings MATCH the
+        // footage, so the "New Sequence" preset dialog never has to pop (spec §8.4).
+        var clipPath = editflowUtils.getParam(options, 'preset_from_clip_path', 'presetFromClipPath');
+        var presetPath = editflowUtils.getParam(options, 'presetPath', 'preset');
+        var seqID = name + '-' + new Date().getTime();
+        var newSeq = null;
+
+        // Pre-import the source clip so Premiere can match its format (and so the
+        // clip is already in the project before we add cuts).
+        var clipItem = null;
+        if (clipPath) { try { clipItem = ensureProjectItemForPath(clipPath); } catch (e) {} }
+
+        // 1) Explicit .sqpreset path → 3-arg createNewSequence, no dialog.
+        if (presetPath) {
+            try { newSeq = app.project.createNewSequence(name, seqID, presetPath); } catch (e) { newSeq = null; }
+        }
+        // 2) Build a sequence directly from the source clip — matches its settings
+        //    and skips the dialog. API name varies by build, so feature-detect.
+        if (!newSeq && clipItem) {
+            try {
+                if (typeof app.project.createNewSequenceFromClips === 'function') {
+                    newSeq = app.project.createNewSequenceFromClips(name, [clipItem]);
+                }
+            } catch (e) { newSeq = null; }
+        }
+        // 3) Fallback: default 2-arg create (may show the preset dialog on builds
+        //    without the APIs above).
+        if (!newSeq) {
+            try { newSeq = app.project.createNewSequence(name, seqID); }
+            catch (e) { return { success: false, error: e.toString() }; }
+        }
+
+        try { return { success: true, name: name, id: newSeq.sequenceID }; }
+        catch (e) { return { success: true, name: name }; }
+    }
+
+    function addMarkerToSequence(seq, options) {
+        if (!seq) return { success: false, error: "No active sequence" };
+
+        var time = editflowUtils.getParam(options, 'time', 'position') || 0;
+        var markerName = editflowUtils.getParam(options, 'name', 'label') || "EditFlow Marker";
+        var color = editflowUtils.getParam(options, 'color') || 0;
+
+        try {
+            var markers = seq.markers;
+            if (markers && markers.createMarker) {
+                // createMarker takes seconds (number) in modern Premiere Pro (>= v11).
+                // Earlier "fix" to tick string caused 'Illegal Parameter type' rejections.
+                var marker = markers.createMarker(time);
+                if (marker) {
+                    marker.name = markerName;
+                    try { marker.comments = "EditFlow auto-marker"; } catch (e) {}
+                    try {
+                        // Color index: 0=Green, 1=Red, 2=Purple, 3=Orange, 4=Yellow, etc.
+                        if (typeof marker.setColorByIndex === 'function') {
+                            marker.setColorByIndex(color);
+                        }
+                    } catch (e) {}
+                }
+                return { success: true, name: markerName, time: time };
+            }
+            return { success: false, error: "Markers API not available" };
+        } catch (e) {
+            return { success: false, error: e.toString() };
+        }
+    }
+
+    // ── Inline EDL Processing (no file on disk) ──
+
+    function processEDLOps(options) {
+        /*
+         * Processes EDL operations passed as inline JSON (not from a file).
+         * This is the path used by the agent flow: the backend generates
+         * extendscript_ops and the panel sends them directly via
+         * editflowDispatch("processEDL", ...).
+         *
+         * Supports the action types produced by plan_to_edl_ops():
+         *   beginUndoGroup, endUndoGroup, ensure_bin, import_file,
+         *   create_sequence, add, add_marker
+         */
+        var seq = app.project.activeSequence;
+        var results = [];
+        var undoGroupName = "EditFlow";
+
+        try {
+            // The panel sends { ops: [...] }, the old file format uses
+            // { operations: [...] }.  Accept both keys.
+            var operations = options.ops || options.operations || [];
+
+            for (var i = 0; i < operations.length; i++) {
+                var op = operations[i];
+                var action = op.action || "";
+                var result;
+
+                switch (action) {
+                    case "beginUndoGroup":
+                        undoGroupName = op.name || "EditFlow";
+                        // Premiere doesn't have a beginUndoGroup JS API —
+                        // we record the name for diagnostics only.
+                        result = { success: true, action: "beginUndoGroup" };
+                        break;
+
+                    case "endUndoGroup":
+                        result = { success: true, action: "endUndoGroup" };
+                        break;
+
+                    case "import_file":
+                        var importedItem = ensureProjectItemForPath(op.mediaPath || op.path);
+                        result = importedItem
+                            ? { success: true, path: op.mediaPath || op.path }
+                            : { success: false, error: "Import failed: " + (op.mediaPath || op.path) };
+                        break;
+
+                    case "add":
+                        // Ensure we have an active sequence
+                        if (!seq) {
+                            result = { success: false, error: "No active sequence" };
+                        } else {
+                            result = addClipToSequence(seq, op);
+                        }
+                        break;
+
+                    case "ensure_bin":
+                        result = ensureBin(op);
+                        break;
+
+                    case "create_sequence":
+                        result = createSequenceFromOps(op);
+                        // After creating a sequence, it becomes the active one
+                        seq = app.project.activeSequence;
+                        break;
+
+                    case "add_marker":
+                        if (!seq) {
+                            result = { success: false, error: "No active sequence" };
+                        } else {
+                            result = addMarkerToSequence(seq, op);
+                        }
+                        break;
+
+                    case "remove":
+                        if (!seq) {
+                            result = { success: false, error: "No active sequence" };
+                        } else {
+                            result = removeClipFromSequence(seq, op);
+                        }
+                        break;
+
+                    case "move":
+                        if (!seq) {
+                            result = { success: false, error: "No active sequence" };
+                        } else {
+                            result = moveClipOnSequence(seq, op);
+                        }
+                        break;
+
+                    case "modify":
+                        if (!seq) {
+                            result = { success: false, error: "No active sequence" };
+                        } else {
+                            result = modifyClipOnSequence(seq, op);
+                        }
+                        break;
+
+                    default:
+                        result = { success: false, error: "Unknown action: " + action };
+                }
+
+                result.operation = i;
+                result.action = action;
+                results.push(result);
+            }
+
+            // If options specify a sequence name, rename the active sequence
+            if (options.sequence_name && seq && seq.name !== options.sequence_name) {
+                try { seq.name = options.sequence_name; } catch (e) {}
+            }
+
+        } catch (e) {
+            return editflowUtils.safeStringify({ success: false, error: e.toString(), results: results });
+        }
+
+        return editflowUtils.safeStringify({ success: true, totalOperations: operations.length, results: results });
+    }
+
     return {
         processEDL: processEDL,
+        processEDLOps: processEDLOps,
         addClipToSequence: addClipToSequence,
         removeClipFromSequence: removeClipFromSequence,
         moveClipOnSequence: moveClipOnSequence,
         modifyClipOnSequence: modifyClipOnSequence,
         findProjectItem: findProjectItem,
+        ensureProjectItemForPath: ensureProjectItemForPath,
         removeTimelineClips: removeTimelineClips,
+        removeTimelineRanges: removeTimelineRanges,
         clearTimelineLabels: clearTimelineLabels,
-        applyScale: applyScale,
         addMediaToTimeline: addMediaToTimeline,
         importFilesFromPaths: importFilesFromPaths,
-        addAllBinClipsToSequence: addAllBinClipsToSequence,
         insertClipAtTime: insertClipAtTime,
-        moveClipByOptions: moveClipByOptions,
-        modifyClipByOptions: modifyClipByOptions,
         createNewSequence: createNewSequence,
         organizeIntoBins: organizeIntoBins,
         setClipLabelColor: setClipLabelColor

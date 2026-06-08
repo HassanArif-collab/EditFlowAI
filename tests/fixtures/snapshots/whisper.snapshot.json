@@ -1,0 +1,316 @@
+{
+  "engine": "faster-whisper",
+  "model": "base",
+  "device": "cpu",
+  "language": "en",
+  "elapsed_s": 3.84,
+  "words": [
+    {
+      "text": "Hello,",
+      "start": 1.87,
+      "end": 2.47,
+      "prob": 0.861
+    },
+    {
+      "text": "and",
+      "start": 2.73,
+      "end": 2.83,
+      "prob": 0.968
+    },
+    {
+      "text": "welcome",
+      "start": 2.83,
+      "end": 3.09,
+      "prob": 0.99
+    },
+    {
+      "text": "back",
+      "start": 3.09,
+      "end": 3.37,
+      "prob": 0.998
+    },
+    {
+      "text": "to",
+      "start": 3.37,
+      "end": 3.57,
+      "prob": 0.998
+    },
+    {
+      "text": "my",
+      "start": 3.57,
+      "end": 3.69,
+      "prob": 0.998
+    },
+    {
+      "text": "channel.",
+      "start": 3.69,
+      "end": 4.07,
+      "prob": 0.977
+    },
+    {
+      "text": "Today",
+      "start": 4.93,
+      "end": 5.37,
+      "prob": 0.988
+    },
+    {
+      "text": "I",
+      "start": 5.37,
+      "end": 5.57,
+      "prob": 0.766
+    },
+    {
+      "text": "want",
+      "start": 5.57,
+      "end": 5.73,
+      "prob": 0.999
+    },
+    {
+      "text": "to",
+      "start": 5.73,
+      "end": 6.01,
+      "prob": 0.996
+    },
+    {
+      "text": "talk",
+      "start": 6.01,
+      "end": 6.89,
+      "prob": 0.486
+    },
+    {
+      "text": "about",
+      "start": 6.89,
+      "end": 7.17,
+      "prob": 0.998
+    },
+    {
+      "text": "something",
+      "start": 7.17,
+      "end": 7.55,
+      "prob": 0.997
+    },
+    {
+      "text": "really",
+      "start": 7.55,
+      "end": 7.83,
+      "prob": 0.997
+    },
+    {
+      "text": "cool.",
+      "start": 7.83,
+      "end": 8.15,
+      "prob": 0.999
+    },
+    {
+      "text": "Today",
+      "start": 11.26,
+      "end": 11.58,
+      "prob": 0.994
+    },
+    {
+      "text": "I",
+      "start": 11.58,
+      "end": 11.8,
+      "prob": 0.985
+    },
+    {
+      "text": "want",
+      "start": 11.8,
+      "end": 11.96,
+      "prob": 0.995
+    },
+    {
+      "text": "to",
+      "start": 11.96,
+      "end": 12.12,
+      "prob": 0.996
+    },
+    {
+      "text": "talk",
+      "start": 12.12,
+      "end": 12.32,
+      "prob": 0.998
+    },
+    {
+      "text": "about",
+      "start": 12.32,
+      "end": 12.56,
+      "prob": 0.999
+    },
+    {
+      "text": "something",
+      "start": 12.56,
+      "end": 12.94,
+      "prob": 0.997
+    },
+    {
+      "text": "interesting,",
+      "start": 12.94,
+      "end": 13.48,
+      "prob": 0.998
+    },
+    {
+      "text": "uh,",
+      "start": 13.98,
+      "end": 14.1,
+      "prob": 0.521
+    },
+    {
+      "text": "something",
+      "start": 14.44,
+      "end": 14.76,
+      "prob": 0.992
+    },
+    {
+      "text": "that",
+      "start": 14.76,
+      "end": 14.98,
+      "prob": 0.99
+    },
+    {
+      "text": "I",
+      "start": 14.98,
+      "end": 15.08,
+      "prob": 0.988
+    },
+    {
+      "text": "think",
+      "start": 15.08,
+      "end": 15.28,
+      "prob": 0.999
+    },
+    {
+      "text": "you'll",
+      "start": 15.28,
+      "end": 15.5,
+      "prob": 0.993
+    },
+    {
+      "text": "find",
+      "start": 15.5,
+      "end": 15.7,
+      "prob": 0.998
+    },
+    {
+      "text": "fascinating.",
+      "start": 15.7,
+      "end": 16.3,
+      "prob": 0.997
+    },
+    {
+      "text": "Welcome",
+      "start": 19.3,
+      "end": 19.82,
+      "prob": 0.981
+    },
+    {
+      "text": "back",
+      "start": 19.82,
+      "end": 20.1,
+      "prob": 0.997
+    },
+    {
+      "text": "to",
+      "start": 20.1,
+      "end": 20.3,
+      "prob": 0.999
+    },
+    {
+      "text": "the",
+      "start": 20.3,
+      "end": 20.4,
+      "prob": 0.997
+    },
+    {
+      "text": "channel.",
+      "start": 20.4,
+      "end": 20.76,
+      "prob": 0.988
+    },
+    {
+      "text": "Today",
+      "start": 21.56,
+      "end": 22.04,
+      "prob": 0.994
+    },
+    {
+      "text": "I",
+      "start": 22.04,
+      "end": 22.28,
+      "prob": 0.981
+    },
+    {
+      "text": "want",
+      "start": 22.28,
+      "end": 22.48,
+      "prob": 0.998
+    },
+    {
+      "text": "to",
+      "start": 22.48,
+      "end": 22.64,
+      "prob": 0.999
+    },
+    {
+      "text": "discuss",
+      "start": 22.64,
+      "end": 22.92,
+      "prob": 0.999
+    },
+    {
+      "text": "a",
+      "start": 22.92,
+      "end": 23.14,
+      "prob": 0.997
+    },
+    {
+      "text": "fascinating",
+      "start": 23.14,
+      "end": 23.66,
+      "prob": 0.997
+    },
+    {
+      "text": "topic",
+      "start": 23.66,
+      "end": 24.12,
+      "prob": 0.999
+    },
+    {
+      "text": "that",
+      "start": 24.12,
+      "end": 24.42,
+      "prob": 0.969
+    },
+    {
+      "text": "I",
+      "start": 24.42,
+      "end": 24.52,
+      "prob": 0.997
+    },
+    {
+      "text": "think",
+      "start": 24.52,
+      "end": 24.72,
+      "prob": 0.999
+    },
+    {
+      "text": "you'll",
+      "start": 24.72,
+      "end": 24.96,
+      "prob": 0.998
+    },
+    {
+      "text": "really",
+      "start": 24.96,
+      "end": 25.22,
+      "prob": 0.998
+    },
+    {
+      "text": "enjoy.",
+      "start": 25.22,
+      "end": 25.68,
+      "prob": 0.998
+    }
+  ],
+  "engine_version": "1.2.1"
+}

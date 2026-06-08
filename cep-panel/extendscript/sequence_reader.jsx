@@ -1,167 +1,130 @@
-/**
- * EditFlow AI - Sequence Reader
- * Reads the current state of the active Premiere Pro sequence.
+/*
+ * sequence_reader.jsx - Read sequence state from the active Premiere Pro sequence.
+ * Provides full state: name, dimensions, fps, tracks, all clips with timing.
  */
-
-var sequenceReader = (function() {
+sequenceReader = (function() {
     "use strict";
 
-    /**
-     * Read the current active sequence.
-     * @returns {Object} Sequence state
-     */
+    var LABEL_COLORS = {
+        0: "Violet", 1: "Iris", 2: "Carnation", 3: "Lavender",
+        4: "Columbine", 5: "Daffodil", 6: "Forest", 7: "Rose",
+        8: "Slate", 9: "Fern", 10: "Caribbean", 11: "Lemon",
+        12: "Sand", 13: "Mocha", 14: "Tangerine", 15: "Turquoise"
+    };
+
     function readCurrentSequence() {
-        var project = app.project;
-        if (!project) {
-            return { success: false, error: "No project open" };
-        }
-
-        var seq = project.activeSequence;
+        var seq = app.project.activeSequence;
         if (!seq) {
-            return { success: false, error: "No active sequence" };
+            return JSON.stringify({ error: "No active sequence" });
         }
 
-        var state = {
-            success: true,
+        var result = {
             name: seq.name,
             id: seq.sequenceID,
             width: seq.frameSizeHorizontal,
             height: seq.frameSizeVertical,
-            fps: seq.timebase,
-            duration: getSeqDuration(seq),
-            videoTracks: seq.videoTracks.numTracks,
-            audioTracks: seq.audioTracks.numTracks,
-            clips: []
+            fps: seq.timebase ? (1 / editflowUtils.ticksToSeconds(seq.timebase)) : 0,
+            duration: editflowUtils.getSequenceEnd(seq),
+            videoTracks: [],
+            audioTracks: []
         };
 
-        // Read all video track clips
-        for (var t = 0; t < seq.videoTracks.numTracks; t++) {
-            var track = seq.videoTracks[t];
+        // Read video tracks
+        for (var vt = 0; vt < seq.videoTracks.numTracks; vt++) {
+            var track = seq.videoTracks[vt];
+            var trackData = {
+                index: vt,
+                name: track.name || ("Video " + (vt + 1)),
+                muted: track.isMuted(),
+                clips: []
+            };
+
             for (var c = 0; c < track.clips.numItems; c++) {
                 var clip = track.clips[c];
-                state.clips.push(readClip(clip, t, "video"));
+                trackData.clips.push(readClip(clip, vt, "video"));
             }
+            result.videoTracks.push(trackData);
         }
 
-        // Read all audio track clips
-        for (var t = 0; t < seq.audioTracks.numTracks; t++) {
-            var track = seq.audioTracks[t];
+        // Read audio tracks
+        for (var at = 0; at < seq.audioTracks.numTracks; at++) {
+            var track = seq.audioTracks[at];
+            var trackData = {
+                index: at,
+                name: track.name || ("Audio " + (at + 1)),
+                muted: track.isMuted(),
+                clips: []
+            };
+
             for (var c = 0; c < track.clips.numItems; c++) {
                 var clip = track.clips[c];
-                state.clips.push(readClip(clip, t, "audio"));
+                trackData.clips.push(readClip(clip, at, "audio"));
             }
+            result.audioTracks.push(trackData);
         }
 
-        return state;
+        return JSON.stringify(result);
     }
 
-    /**
-     * Read a single clip's info.
-     * @param {TrackItem} clip
-     * @param {number} trackIndex
-     * @param {string} trackType
-     * @returns {Object} Clip info
-     */
     function readClip(clip, trackIndex, trackType) {
-        var info = {
+        var startTime = editflowUtils.ticksToSeconds(clip.start);
+        var endTime = editflowUtils.ticksToSeconds(clip.end);
+        var inPoint = editflowUtils.ticksToSeconds(clip.inPoint);
+        var outPoint = editflowUtils.ticksToSeconds(clip.outPoint);
+
+        var mediaPath = "";
+        try {
+            if (clip.projectItem && clip.projectItem.getMediaPath) {
+                mediaPath = clip.projectItem.getMediaPath();
+            }
+        } catch (e) {}
+
+        var speed = 1.0;
+        try {
+            if (clip.getSpeed) speed = clip.getSpeed();
+        } catch (e) {}
+
+        return {
             name: clip.name,
             trackIndex: trackIndex,
             trackType: trackType,
-            startTime: clip.start.seconds,
-            endTime: clip.end.seconds,
-            inPoint: clip.inPoint.seconds,
-            outPoint: clip.outPoint.seconds,
-            duration: clip.duration.seconds,
-            type: clip.type
+            startTime: startTime,
+            endTime: endTime,
+            duration: endTime - startTime,
+            inPoint: inPoint,
+            outPoint: outPoint,
+            mediaPath: mediaPath,
+            label: getClipLabelName(clip),
+            speed: speed
         };
-
-        // Get media path if available
-        try {
-            var projectItem = clip.projectItem;
-            if (projectItem) {
-                info.mediaPath = projectItem.getMediaPath() || "";
-                info.projectItemId = projectItem.nodeId;
-                info.label = getClipLabelName(clip);
-            }
-        } catch(e) {
-            info.mediaPath = "";
-            info.label = "";
-        }
-
-        // Get speed
-        try {
-            info.speed = clip.getSpeed();
-        } catch(e) {
-            info.speed = 1.0;
-        }
-
-        return info;
     }
 
     function getClipLabelName(clip) {
         try {
-            if (clip.getColorLabel) {
-                return labelValueToName(clip.getColorLabel());
-            }
-        } catch (e1) {}
-
-        try {
+            // getColorLabel is a ProjectItem method, not TrackItem.
+            // Must access via clip.projectItem.getColorLabel().
             if (clip.projectItem && clip.projectItem.getColorLabel) {
-                return labelValueToName(clip.projectItem.getColorLabel());
+                var labelIndex = clip.projectItem.getColorLabel();
+                return LABEL_COLORS[labelIndex] || "Default";
             }
-        } catch (e2) {}
-
-        try {
-            if (clip.projectItem && clip.projectItem.label) {
-                return labelValueToName(clip.projectItem.label);
-            }
-        } catch (e3) {}
-
-        return "";
+        } catch (e) {}
+        return "Default";
     }
 
-    function labelValueToName(value) {
-        if (value === undefined || value === null) return "";
-        if (typeof value === "string") return value;
-
-        var labels = [
-            "Violet", "Iris", "Caribbean", "Lavender",
-            "Cerulean", "Forest", "Rose", "Mango"
-        ];
-        var idx = Number(value);
-        if (!isNaN(idx) && idx >= 0 && idx < labels.length) {
-            return labels[idx];
-        }
-
-        return String(value);
-    }
-
-    /**
-     * Get total sequence duration in seconds.
-     * @param {Sequence} seq
-     * @returns {number} Duration in seconds
-     */
     function getSeqDuration(seq) {
+        if (!seq) return 0;
         var maxEnd = 0;
-        for (var t = 0; t < seq.videoTracks.numTracks; t++) {
-            var track = seq.videoTracks[t];
-            for (var c = 0; c < track.clips.numItems; c++) {
-                var end = track.clips[c].end.seconds;
+        for (var vt = 0; vt < seq.videoTracks.numTracks; vt++) {
+            var track = seq.videoTracks[vt];
+            if (track.clips.numItems > 0) {
+                var lastClip = track.clips[track.clips.numItems - 1];
+                var end = editflowUtils.ticksToSeconds(lastClip.end);
                 if (end > maxEnd) maxEnd = end;
             }
         }
         return maxEnd;
     }
 
-    /**
-     * Check if a time range on a track is free (no clips).
-     * @param {Sequence} seq
-     * @param {number} trackIndex
-     * @param {string} trackType - "video" or "audio"
-     * @param {number} startTime
-     * @param {number} endTime
-     * @returns {boolean} True if range is free
-     */
     function isTimeRangeFree(seq, trackIndex, trackType, startTime, endTime) {
         var tracks = (trackType === "video") ? seq.videoTracks : seq.audioTracks;
         if (trackIndex >= tracks.numTracks) return true;
@@ -169,106 +132,69 @@ var sequenceReader = (function() {
         var track = tracks[trackIndex];
         for (var c = 0; c < track.clips.numItems; c++) {
             var clip = track.clips[c];
-            var clipStart = clip.start.seconds;
-            var clipEnd = clip.end.seconds;
-
-            // Check for overlap
+            var clipStart = editflowUtils.ticksToSeconds(clip.start);
+            var clipEnd = editflowUtils.ticksToSeconds(clip.end);
             if (startTime < clipEnd && endTime > clipStart) {
-                return false; // Overlap detected
+                return false; // Overlap found
             }
         }
         return true;
     }
 
     function getSelectedClips() {
-        var project = app.project;
-        if (!project) {
-            return { success: false, error: "No project open", clips: [] };
-        }
+        var seq = app.project.activeSequence;
+        if (!seq) return JSON.stringify({ clips: [] });
 
-        var seq = project.activeSequence;
-        if (!seq) {
-            return { success: false, error: "No active sequence", clips: [] };
-        }
-
-        if (!seq.getSelection) {
-            return {
-                success: true,
-                clips: [],
-                warning: "This Premiere scripting API does not expose selected timeline clips."
-            };
-        }
-
-        var selected = seq.getSelection();
-        var clips = [];
-        var count = selected && selected.length !== undefined ? selected.length : 0;
-        for (var i = 0; i < count; i++) {
-            clips.push(readSelectedClip(selected[i]));
-        }
-        return { success: true, sequenceName: seq.name, clips: clips, count: clips.length };
-    }
-
-    function readSelectedClip(clip) {
-        var info = {
-            name: clip && clip.name ? clip.name : "",
-            startTime: 0,
-            endTime: 0,
-            inPoint: 0,
-            outPoint: 0,
-            duration: 0,
-            mediaPath: "",
-            label: ""
-        };
-
-        try { info.startTime = clip.start.seconds; } catch(e1) {}
-        try { info.endTime = clip.end.seconds; } catch(e2) {}
-        try { info.inPoint = clip.inPoint.seconds; } catch(e3) {}
-        try { info.outPoint = clip.outPoint.seconds; } catch(e4) {}
-        try { info.duration = clip.duration.seconds; } catch(e5) {}
-        try {
-            if (clip.projectItem) {
-                info.mediaPath = clip.projectItem.getMediaPath() || "";
-                info.projectItemId = clip.projectItem.nodeId;
-                info.label = getClipLabelName(clip);
+        var selected = [];
+        // Check video tracks
+        for (var vt = 0; vt < seq.videoTracks.numTracks; vt++) {
+            var track = seq.videoTracks[vt];
+            for (var c = 0; c < track.clips.numItems; c++) {
+                var clip = track.clips[c];
+                try {
+                    if (clip.isSelected && clip.isSelected()) {
+                        selected.push(readClip(clip, vt, "video"));
+                    }
+                } catch (e) {}
             }
-        } catch(e6) {}
-        return info;
+        }
+        // Check audio tracks
+        for (var at = 0; at < seq.audioTracks.numTracks; at++) {
+            var track = seq.audioTracks[at];
+            for (var c = 0; c < track.clips.numItems; c++) {
+                var clip = track.clips[c];
+                try {
+                    if (clip.isSelected && clip.isSelected()) {
+                        selected.push(readClip(clip, at, "audio"));
+                    }
+                } catch (e) {}
+            }
+        }
+
+        return JSON.stringify({ clips: selected });
     }
 
     function verifyTimelineChange(options) {
-        options = options || {};
-        var state = readCurrentSequence();
-        if (!state || state.success === false) {
-            return {
-                success: false,
-                verified: false,
-                error: state && state.error ? state.error : "Could not read sequence"
-            };
+        var seq = app.project.activeSequence;
+        if (!seq) return JSON.stringify({ verified: false, error: "No active sequence" });
+
+        var expectedCount = editflowUtils.getParam(options, 'expectedClipCount', 'clipCount');
+        var actualCount = 0;
+
+        for (var vt = 0; vt < seq.videoTracks.numTracks; vt++) {
+            actualCount += seq.videoTracks[vt].clips.numItems;
+        }
+        for (var at = 0; at < seq.audioTracks.numTracks; at++) {
+            actualCount += seq.audioTracks[at].clips.numItems;
         }
 
-        var expectedMinClips = Number(options.expectedMinClips);
-        var expectedClipCount = Number(options.expectedClipCount);
-        var clipCount = state.clips ? state.clips.length : 0;
-        var warnings = [];
-
-        if (!isNaN(expectedMinClips) && clipCount < expectedMinClips) {
-            warnings.push("Clip count is lower than expected minimum");
-        }
-        if (!isNaN(expectedClipCount) && clipCount !== expectedClipCount) {
-            warnings.push("Clip count does not match expected count");
-        }
-
-        return {
-            success: true,
-            verified: warnings.length === 0,
-            sequenceName: state.name,
-            clipCount: clipCount,
-            warnings: warnings,
-            state: state
-        };
+        return JSON.stringify({
+            verified: expectedCount === undefined || actualCount === expectedCount,
+            expectedCount: expectedCount,
+            actualCount: actualCount
+        });
     }
 
-    // Public API
     return {
         readCurrentSequence: readCurrentSequence,
         readClip: readClip,
