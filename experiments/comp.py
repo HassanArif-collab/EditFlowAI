@@ -107,34 +107,25 @@ def locate(phrase, seg_id):
     return sw[first]["start"], sw[last]["end"]
 
 
-def main():
-    os.makedirs(OUT, exist_ok=True)
-    cache = os.path.join(OUT, "_comp_raw.txt")
-    if os.environ.get("COMP_CACHE") and os.path.exists(cache):
-        text = open(cache, encoding="utf-8").read()
-    else:
-        text = ollama_chat(build_prompt())
-        open(cache, "w", encoding="utf-8").write(text)
-    data = extract_json(text)
-    pieces = (data.get("cut", []) if data else [])
-
+def render_pieces(pieces, name="comp", title="COMP"):
+    """pieces: list of {seg,text} dicts or (seg, text) tuples. Locates each phrase
+    in its segment's words, writes <name>_plan.txt and renders <name>_cut.mp4."""
     ranges, plan = [], []
     for p in pieces:
-        sid, ph = p.get("seg"), (p.get("text") or "").strip()
+        sid = p.get("seg") if isinstance(p, dict) else p[0]
+        ph = ((p.get("text") if isinstance(p, dict) else p[1]) or "").strip()
         if sid is None or not ph:
             continue
         loc = locate(ph, sid)
         if loc and loc[1] > loc[0]:
             ranges.append((loc[0] - 0.04, loc[1] + 0.04))
             plan.append((loc[0], int(sid), ph))
-
     os.makedirs(OUT, exist_ok=True)
-    lines = [f"=== COMP — {len(plan)} phrases, runtime "
-             f"{int(sum(b-a for a,b in ranges)//60)}:{int(sum(b-a for a,b in ranges)%60):02d} ==="]
+    rt = sum(b - a for a, b in ranges)
+    lines = [f"=== {title} — {len(plan)} phrases, runtime {int(rt//60)}:{int(rt%60):02d} ==="]
     for st, sid, ph in plan:
         lines.append(f"{int(st//60)}:{int(st%60):02d} | seg{sid:>2} | {ph}")
-    open(os.path.join(OUT, "comp_plan.txt"), "w", encoding="utf-8").write("\n".join(lines))
-
+    open(os.path.join(OUT, f"{name}_plan.txt"), "w", encoding="utf-8").write("\n".join(lines))
     if not os.path.exists(PROXY):
         print("proxy missing"); return
     tmp = tempfile.mkdtemp(); parts = []
@@ -148,8 +139,21 @@ def main():
     listf = os.path.join(tmp, "l.txt")
     open(listf, "w", encoding="utf-8").write("\n".join(f"file '{p}'" for p in parts))
     subprocess.run([FF, "-y", "-f", "concat", "-safe", "0", "-i", listf, "-c", "copy",
-                    os.path.join(OUT, "comp_cut.mp4")], check=True, capture_output=True)
-    print(f"PLAN: {OUT}/comp_plan.txt  VIDEO: {OUT}/comp_cut.mp4  phrases={len(plan)}  model={MODEL}")
+                    os.path.join(OUT, f"{name}_cut.mp4")], check=True, capture_output=True)
+    print(f"PLAN: {OUT}/{name}_plan.txt  VIDEO: {OUT}/{name}_cut.mp4  phrases={len(plan)}")
+
+
+def main():
+    os.makedirs(OUT, exist_ok=True)
+    cache = os.path.join(OUT, "_comp_raw.txt")
+    if os.environ.get("COMP_CACHE") and os.path.exists(cache):
+        text = open(cache, encoding="utf-8").read()
+    else:
+        text = ollama_chat(build_prompt())
+        open(cache, "w", encoding="utf-8").write(text)
+    data = extract_json(text)
+    pieces = (data.get("cut", []) if data else [])
+    render_pieces(pieces, "comp", f"COMP ({MODEL})")
 
 
 if __name__ == "__main__":
