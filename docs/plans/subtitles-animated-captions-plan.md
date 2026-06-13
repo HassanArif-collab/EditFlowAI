@@ -1,10 +1,25 @@
-# Plan — Subtitles & Animated Captions for EditFlow AI
+# 🎬 Subtitles & Animated Captions — Implementation Plan
 
-> **Status:** Approved design, ready to implement. Written for a step-by-step
-> implementer. Each phase is independently shippable. **Do the phases in order.**
-> Read `ARCHITECTURE.md` once before starting — this plan assumes its invariants
-> (the cut-apply backbone, the ExtendScript dispatch router, the dynamic-import +
-> `BUILD_TAG` view pattern, `ProgressReporter`, the no-store static mounts).
+| | |
+|---|---|
+| **Status** | ✅ Approved design · **v3** (API-fact-checked) · ready to implement |
+| **Branch** | `feat/animated-captions` |
+| **Audience** | A step-by-step implementer with no prior context. Phases are independently shippable — **do them in order.** |
+| **Read first** | `ARCHITECTURE.md` (once per session) — this plan assumes its invariants: the cut-apply backbone, the ExtendScript dispatch router, the dynamic-import + `BUILD_TAG` view pattern, `ProgressReporter`, the no-store static mounts. |
+
+> **v3 review notes (fact-checked against current Adobe docs):**
+> 1. `Sequence.createCaptionTrack(projectItem, startAtTime, captionFormat)` **exists** in
+>    ExtendScript — earlier drafts claimed caption tracks were unscriptable (stale 2021 info). §7 updated.
+> 2. Component keyframes (`addKey` / `setValueAtKey`) take **Time objects (seconds)**, NOT ticks —
+>    ticks are only for `importMGT` placement. §8 updated; clip-relative vs sequence-relative is a spike check.
+> 3. `setInterpolationTypeAtKey(time, type)` exists (`5 = Bezier`, `4 = Hold`) — built-ins use it for smooth pops. §8.
+
+### Table of contents
+§0 Context & locked decisions · §1 Architecture · §2 Cue model · §3 Final-cut remap ·
+§4 Standalone source · §4.1 Whisper/Scribe toggle · §5 cue_builder · §6 Styling ·
+§7 Caption-track engine · §8 Built-in animation engine · §9 MOGRT text API ·
+§10 MOGRT presets + authoring spec · §11 ExtendScript module · §12 Backend ·
+§13 Frontend view · §14 Phases · §15 Risks · §16 Verification · §17 Touch-points
 
 ---
 
@@ -17,13 +32,16 @@ that. It adds a **subtitle output path**: group transcribed words into cues, the
 put them on the Premiere timeline as either a **native caption track** (plain,
 editable) or **animated native text** (text-animator + animated background box).
 
-**Hard platform fact (do not fight it):** Premiere Pro has **no ExtendScript API
-to create a text graphic from scratch.** The only way to put native, editable
-text on the timeline by script is `sequence.importMGT(...)` (import a Motion
-Graphics Template) and then edit its **Source Text** parameter. Native caption
-*tracks* also have **no scripting API** in ExtendScript. Both facts shape the
-engines below. (Confirmed: Adobe forums + PProPanel sample + Captioneer/AutoSubs
-behavior.)
+**Hard platform facts (do not fight them):**
+1. Premiere Pro has **no ExtendScript API to create a text graphic from scratch.**
+   The only way to put native, editable text on the timeline by script is
+   `sequence.importMGT(...)` (import a Motion Graphics Template) and then edit its
+   **Source Text** parameter. (Confirmed: Adobe forums + PProPanel sample +
+   Captioneer/AutoSubs behavior.)
+2. Native caption *tracks* **are scriptable** via
+   `sequence.createCaptionTrack(projectItem, startAtTimeSeconds, captionFormat)` —
+   documented in the current scripting guide. Behavior on the user's exact PPro
+   version still gets a Phase 1 spike before we build on it (§7).
 
 ### Locked decisions (already agreed — do not re-litigate)
 | Topic | Decision |
@@ -40,18 +58,21 @@ behavior.)
 
 ## 1. Architecture & data flow
 
-```
-WORDS[]  ──►  cue_builder  ──►  CUES[]  ──►  style + preset  ──►  render engine  ──►  ExtendScript placement
-(source)     (grouping)       (interchange)   (user, in view)     (routed by preset)   (subtitle_manager.jsx)
-
-source of WORDS[]:
-  • FINAL CUT  → Review session kept words, REMAPPED to output-sequence time (§3)
-  • STANDALONE → fresh transcribe via Whisper OR Scribe (§4, §4.1)
-
-render engines (routed by the chosen preset's "engine" field):
-  • caption  → write .srt → ExtendScript places a caption track (or SRT-import fallback)
-  • builtin  → per cue: importMGT(base_text.mogrt) → set Source Text → keyframe Motion (Scale/Opacity/Position)
-  • mogrt    → per cue: importMGT(<preset>.mogrt) → set Source Text (+ colors); animation is baked in the template
+```mermaid
+flowchart LR
+    subgraph SRC["WORDS[] source"]
+        A1["FINAL CUT<br/>Review kept words<br/>remapped to output time (§3)"]
+        A2["STANDALONE<br/>fresh transcribe:<br/>Whisper or Scribe (§4, §4.1)"]
+    end
+    SRC --> CB["cue_builder (§5)<br/>grouping"]
+    CB --> CUES["CUES[] (§2)<br/>the one interchange"]
+    CUES --> SP["style + preset (§6)<br/>user picks, live CSS preview"]
+    SP -->|"preset.engine = caption"| E1["write .srt →<br/>createCaptionTrack (§7)"]
+    SP -->|"preset.engine = builtin"| E2["per cue: importMGT(base_text.mogrt)<br/>→ set Source Text<br/>→ keyframe Motion/Opacity (§8)"]
+    SP -->|"preset.engine = mogrt"| E3["per cue: importMGT(preset.mogrt)<br/>→ set Source Text + colors<br/>animation baked in template (§10)"]
+    E1 --> ES["subtitle_manager.jsx (§11)<br/>ExtendScript placement"]
+    E2 --> ES
+    E3 --> ES
 ```
 
 Everything is **additive**, like `review.py`. A failure in subtitles must never
@@ -278,16 +299,21 @@ text + a box div with `background: rgba(bg_color, bg_opacity)`, outline via
    Reuse the existing Review SRT logic if present (`tests/unit/test_review_srt.py`
    exists — find and reuse the producer it tests). Format: `idx\nHH:MM:SS,mmm --> HH:MM:SS,mmm\ntext\n\n`.
 2. Write the SRT to a temp path (under `data/output/subtitles/<id>.srt`).
-3. **ExtendScript placement — CAPABILITY SPIKE FIRST** (Phase 1). Native caption
-   *track* creation via ExtendScript is historically unreliable. Spike using the
-   existing `capability_probe.jsx` pattern. Two outcomes:
-   - **If scriptable:** `subtitle_manager.placeCaptionTrack(srtPath)` imports the
-     SRT as a caption project item (`app.project.importFiles([srtPath])`) and adds
-     it to a caption track on the active sequence.
-   - **If not reliable (likely):** **fallback** — return the SRT path to the panel
-     and show a one-click "Import this SRT" handoff (open the folder / copy path),
-     OR route plain captions through the **built-in engine** with the `none`
-     animation preset (static text clips). Pick the fallback the spike proves works.
+3. **ExtendScript placement — the documented API** (verify with a quick spike first):
+   ```javascript
+   // subtitle_manager.placeCaptionTrack({srtPath})
+   var ok = app.project.importFiles([srtPath]);            // SRT → caption ProjectItem
+   var item = _findImportedItem(srtPath);                  // by name in root bin
+   var seq = app.project.activeSequence;
+   seq.createCaptionTrack(item, 0, 0);                     // 0 s offset; 0 = CAPTION_FORMAT_SUBTITLE
+   ```
+   `createCaptionTrack(projectItem, startAtTimeSeconds, captionFormat)` is in the
+   current scripting guide. The Phase 1 spike (via the `capability_probe.jsx`
+   pattern) only confirms it behaves on the user's PPro version — check: the SRT
+   imports as a caption item, the track appears, cues land at the right times.
+   - **Fallback (only if the spike fails):** return the SRT path to the panel and
+     show a one-click "Import this SRT" handoff (open folder / copy path), OR route
+     plain captions through the **built-in engine** with the `none` preset.
 
 > Be honest in the UI about which path is active. Do not claim caption-track
 > scripting works until the spike proves it on the target PPro version.
@@ -304,7 +330,8 @@ approach.
 **Per cue:**
 1. `clip = seq.importMGT(baseMogrtPath, startTicks, vidTrackOffset, audTrackOffset)`
 2. Set Source Text (and Text/BG color params) — see §9 for the exact JSON dance.
-3. Fit duration: trim the clip so `clip.end == cueEndTicks` (set out point / end).
+3. Fit duration: `clip.end` is a **Time object** — build one (`var t = new Time();
+   t.seconds = cue.end;`) and assign `clip.end = t` so the clip spans the cue.
 4. Apply the chosen built-in animation by keyframing the clip's **Motion** /
    **Opacity** components.
 
@@ -321,18 +348,28 @@ approach.
 
 **Exact keyframing pattern (ExtendScript):**
 ```javascript
-// motionComp is the "Motion" component; find Scale/Position/Opacity props by display name.
-function addScaleKeyframes(clip, startTicks, popTicks, endScale) {
-    var motion = _findComponent(clip, "Motion");           // see §11 helper
+// ⚠ UNITS: addKey/setValueAtKey take a Time object (seconds) — NOT ticks.
+// Ticks (254016000000/sec) are only for importMGT's placement argument.
+function _t(seconds) { var t = new Time(); t.seconds = seconds; return t; }
+
+function addScaleKeyframes(clip, startSec, popSec, midScale, endScale) {
+    var motion = _findComponent(clip, "Motion");            // see §11 helper
     var scale = motion.properties.getParamForDisplayName("Scale");
     scale.setTimeVarying(true);
-    scale.addKey(startTicks);  scale.setValueAtKey(startTicks, 0, true);
-    scale.addKey(popTicks);    scale.setValueAtKey(popTicks, endScale, true);
+    scale.addKey(_t(startSec));  scale.setValueAtKey(_t(startSec), 0, true);
+    scale.addKey(_t(popSec));    scale.setValueAtKey(_t(popSec), midScale, true);   // 110
+    scale.addKey(_t(popSec + 0.08));
+    scale.setValueAtKey(_t(popSec + 0.08), endScale, true);                          // 100
+    // Smooth it: 5 = KF_Interp_Mode_Bezier (4 = Hold, 0 = Linear)
+    try { scale.setInterpolationTypeAtKey(_t(popSec), 5, true); } catch (e) {}
 }
 ```
 Opacity lives on the **Opacity** component; Position on **Motion → Position**.
-Convert seconds→ticks with `254016000000 ticks per second` (Premiere's tick rate).
-Keyframe times are **absolute sequence ticks**, not clip-relative.
+
+> **SPIKE CHECK (Phase 2, before bulk placement):** the docs don't say whether
+> keyframe Time is relative to the **clip start** or the **sequence start**. Place
+> ONE clip at a non-zero time, keyframe it both ways, and see which lands right.
+> Write the answer into `_t()`'s doc comment and build everything on the helper.
 
 > Performance: built-ins place 1 clip per cue (a few hundred for a long video).
 > `importMGT` + JSON set is ~seconds each → show a `ProgressReporter`
@@ -540,17 +577,17 @@ the scan/cut flow). Use `ProgressReporter(task_type="subtitles", client_id=...)`
 ## 14. Phasing (do in order; each ships value)
 
 ### Phase 0 — Foundation (no timeline writes; zero PPro risk)
-- `cue_builder.py` (+ remap) + unit tests.
-- `style.py`, `srt_export.py` (+ reuse Review SRT) + tests.
-- `subtitles.py` route: `/cues`, `/srt`.
-- `subtitles-view.js` shell + live CSS preview + cue list edit + **Export SRT**.
-- Wire the view into `main.js` (BUILD_TAG bump) + header button + "Subtitle this cut".
+- [ ] `cue_builder.py` (+ remap) + unit tests.
+- [ ] `style.py`, `srt_export.py` (+ reuse Review SRT) + tests.
+- [ ] `subtitles.py` route: `/cues`, `/srt`.
+- [ ] `subtitles-view.js` shell + live CSS preview + cue list edit + **Export SRT**.
+- [ ] Wire the view into `main.js` (BUILD_TAG bump) + header button + "Subtitle this cut".
 - **Success:** from a Review session OR a standalone transcribe, generate cues,
   edit/style them, see a live preview, export a correct SRT. No Premiere writes.
 
 ### Phase 0.5 — Whisper/Scribe engine toggle (§4.1)  ← small, do early
-- Backend `engine` param on `/api/review/transcribe` + Whisper→editor adapter + test.
-- Frontend engine toggle in the Review setup screen and the Subtitles view.
+- [ ] Backend `engine` param on `/api/review/transcribe` + Whisper→editor adapter + test.
+- [ ] Frontend engine toggle in the Review setup screen and the Subtitles view.
 - **Success:** user picks Whisper or Scribe in the panel; either lands words in the editor.
 
 ### Phase 1 — Caption track
@@ -583,8 +620,8 @@ the scan/cut flow). Use `ProgressReporter(task_type="subtitles", client_id=...)`
 ---
 
 ## 15. Risks & open questions (flag, don't paper over)
-- **Caption-track scripting** may be unreliable → Phase 1 spike + fallback. Don't
-  claim it works until proven on the user's PPro version.
+- **Caption-track scripting:** `createCaptionTrack` is documented, but verify on the
+  user's PPro version (Phase 1 spike) before building on it; fallback in §7.
 - **MOGRT text-set requires AE-authored templates** (Premiere-authored often fail
   to expose the param). Base + rich templates must be AE-built.
 - **Preview render cost:** AE-MOGRT animated captions make PPro render the graphics
@@ -594,7 +631,8 @@ the scan/cut flow). Use `ProgressReporter(task_type="subtitles", client_id=...)`
 - **Per-cue placement speed:** `importMGT` is ~seconds/clip → progress + cap warning.
 - **Whisper on CPU is slow** (no NVIDIA GPU): the toggle must warn + recommend a
   smaller model; the Scribe path stays the fast default.
-- **Tick math:** 254016000000 ticks/sec; keyframe times are absolute sequence ticks.
+- **Units:** ticks (254016000000/sec) ONLY for `importMGT` placement; keyframes use
+  Time objects in seconds (§8) — clip-relative vs sequence-relative is a spike check.
 - **Open:** does the target PPro version expose `Text Color` on AE MOGRTs reliably?
   Verify during Phase 2 template authoring; if not, drop color params to "set via
   template default" and restyle by swapping presets.
