@@ -84,6 +84,15 @@ async function _loadOrchestrator() {
   } catch (e) {
     console.error('[EditFlow] Failed to load review-view:', e);
   }
+
+  // Subtitles & animated captions view — same dynamic-import + buster pattern so
+  // edits land on reload, exposed for the Review editor's "Subtitles" button.
+  try {
+    const subsMod = await import('./subtitles-view.js' + bust);
+    window.__editflowOpenSubtitles = subsMod.openSubtitles;
+  } catch (e) {
+    console.error('[EditFlow] Failed to load subtitles-view:', e);
+  }
 }
 
 const $ = (sel) => document.querySelector(sel);

@@ -1,0 +1,44 @@
+/* subtitles-view — matches the Review editor's dark glass look (rv-*). */
+.subtitles-view { position: absolute; inset: 0; display: flex; flex-direction: column;
+  background: #0d0d12; color: #e8e8ee; z-index: 30; font-size: 13px; }
+.subtitles-view.hidden { display: none; }
+
+.sv-bar { display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+  border-bottom: 1px solid rgba(255,255,255,.08); }
+.sv-title { font-weight: 700; }
+.sv-spacer { flex: 1; }
+.sv-dim { color: #9a9aa8; font-size: 12px; }
+
+.sv-body { display: flex; gap: 12px; flex: 1; min-height: 0; padding: 10px 12px; }
+.sv-left { flex: 1.1; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.sv-right { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+
+.sv-section { background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.07);
+  border-radius: 8px; padding: 8px 10px; }
+.sv-grow { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.sv-subhead { font-weight: 600; margin-bottom: 6px; }
+.sv-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; color: #c9c9d4; }
+.sv-num { width: auto; background: #1a1a22; color: #e8e8ee; border: 1px solid rgba(255,255,255,.12);
+  border-radius: 6px; padding: 3px 6px; }
+
+.sv-btn { background: #1a1a22; color: #e8e8ee; border: 1px solid rgba(255,255,255,.14);
+  border-radius: 6px; padding: 5px 12px; cursor: pointer; }
+.sv-btn:hover { background: #23232e; }
+.sv-primary { background: #2563eb; border-color: #2563eb; }
+.sv-primary:hover { background: #1d4ed8; }
+.sv-ghost { background: transparent; }
+.sv-status { display: block; margin-top: 6px; color: #9a9aa8; font-size: 12px; word-break: break-all; }
+.sv-err { color: #f87171; }
+
+.sv-cues { overflow-y: auto; flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
+.sv-cue { display: flex; gap: 8px; align-items: flex-start; }
+.sv-cue-time { color: #8b8b9a; font-size: 11px; white-space: nowrap; padding-top: 6px; min-width: 72px; }
+.sv-cue-text { flex: 1; background: #14141b; color: #e8e8ee; border: 1px solid rgba(255,255,255,.1);
+  border-radius: 6px; padding: 4px 8px; resize: vertical; font: inherit; unicode-bidi: plaintext; }
+
+.sv-frame { aspect-ratio: 16 / 9; background: #000 linear-gradient(135deg, #16161e 0%, #000 100%);
+  border: 1px solid rgba(255,255,255,.1); border-radius: 8px; display: flex;
+  justify-content: center; padding: 4%; }
+.sv-caption { align-self: flex-end; max-width: 90%; text-align: center; padding: .3em .7em;
+  border-radius: .25em; font-weight: 700; line-height: 1.25; white-space: pre-wrap;
+  unicode-bidi: plaintext; }

@@ -203,6 +203,17 @@ async function _transcribe() {
   } catch (e) { _setStatus(status, `${label} failed: ` + (e.message || e), true); _refreshEngineUI(); }
 }
 
+// Hand the LIVE words (with their client-side keep flags) to the Subtitles view.
+// "Final cut" there remaps the kept words to output time; "All" uses them raw.
+function _openSubtitles() {
+  if (typeof window.__editflowOpenSubtitles !== 'function') {
+    _setStatus($('#rv-status'), 'Subtitles view not loaded yet — try again in a moment.', true);
+    return;
+  }
+  const words = S.words.map(w => ({ text: w.text, start: w.start, end: w.end, keep: w.keep !== false }));
+  window.__editflowOpenSubtitles({ words, sourceName: S.sourceName, reviewId: S.reviewId });
+}
+
 // ── Master render (tabs + layout) ────────────────────────────
 function _render(mediaError) {
   const v = _ensureContainer();
@@ -219,6 +230,7 @@ function _render(mediaError) {
         <span class="${S.layout === 'workspace' ? 'on' : ''}" data-layout="workspace" title="Workspace (wide)">⛶</span>
       </div>
       <button class="rv-btn rv-ghost rv-tiny ${S.debug ? 'rv-on' : ''}" data-act="debugtoggle" title="Pipeline debug trace">🐞</button>
+      <button class="rv-btn rv-ghost rv-tiny" data-act="subtitles" title="Subtitles &amp; animated captions">💬 Subtitles</button>
       <button class="rv-btn rv-ghost rv-tiny" data-act="reload">New</button>
       <button class="rv-btn rv-ghost rv-tiny" data-act="close">Close</button>
     </div>
@@ -232,6 +244,7 @@ function _render(mediaError) {
   v.querySelectorAll('[data-layout]').forEach(t => t.onclick = () => { S.layout = t.dataset.layout; _render(); });
   v.querySelector('[data-act="close"]').onclick = closeReview;
   v.querySelector('[data-act="reload"]').onclick = () => { S.reviewId = null; S.words = []; _renderSetup({}); };
+  v.querySelector('[data-act="subtitles"]').onclick = _openSubtitles;
   v.querySelector('[data-act="debugtoggle"]').onclick = () => { S.debug = !S.debug; _render(); };
   const dbgClose = v.querySelector('[data-act="debugclose"]'); if (dbgClose) dbgClose.onclick = () => { S.debug = false; _render(); };
   _wireControls();
