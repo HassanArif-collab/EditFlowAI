@@ -63,13 +63,31 @@ subtitleManager = (function() {
         } catch (e) { return _err(e); }
     }
 
+    // A "Source Text" param is any param whose value parses to JSON carrying a
+    // textEditValue field — true regardless of its display name. Premiere-made
+    // MOGRTs expose it under the LAYER name, not "Source Text", so probe by shape.
+    function _isTextParam(p) {
+        try { var o = JSON.parse(p.getValue()); return !!(o && o.textEditValue !== undefined); }
+        catch (e) { return false; }
+    }
+    function _findSourceTextParam(comp, preferredName) {
+        var p = _param(comp, preferredName || "Source Text");
+        if (p && _isTextParam(p)) return p;
+        try {
+            var props = comp.properties;
+            for (var i = 0; i < props.numItems; i++) {
+                if (_isTextParam(props[i])) return props[i];
+            }
+        } catch (e) {}
+        return null;
+    }
+
     // ── Set the Source Text (+ optional colors) on a placed graphic ──
     function _setText(clip, text, opts) {
         var comp = clip.getMGTComponent();
-        if (!comp) throw new Error("Clip has no MOGRT component (base graphic must be AE/Premiere-authored with an exposed 'Source Text').");
-        var srcName = (opts && opts.textParam) || "Source Text";
-        var p = _param(comp, srcName);
-        if (!p) throw new Error("Base graphic does not expose '" + srcName + "'.");
+        if (!comp) throw new Error("Clip has no MOGRT component (base graphic must expose an editable text param).");
+        var p = _findSourceTextParam(comp, opts && opts.textParam);
+        if (!p) throw new Error("Base graphic exposes no editable text param (textEditValue).");
         var v = JSON.parse(p.getValue());
         v.textEditValue = text;
         v.fontTextRunLength = [text.length];
