@@ -30,6 +30,7 @@ behavior.)
 |---|---|
 | Output | Caption track (default) **and** animated native text (on demand) |
 | Source | **Both** — subtitle the *final cut* (Review kept words) **and** *standalone* (any sequence/file, fresh transcribe) |
+| Transcription | **Both Whisper (local) and Scribe (cloud) selectable in the panel** — see §4.1 |
 | Animation depth | Cue-level **and** word-level (word-by-word; karaoke highlight is a stretch) |
 | Animation engines | (a) **Built-in** code-keyframed presets I ship + (b) **Imported** rich AE-authored `.mogrt` presets |
 | UI | A **dedicated Subtitles view**, sibling to the Review editor |
@@ -45,7 +46,7 @@ WORDS[]  ──►  cue_builder  ──►  CUES[]  ──►  style + preset  �
 
 source of WORDS[]:
   • FINAL CUT  → Review session kept words, REMAPPED to output-sequence time (§3)
-  • STANDALONE → reuse POST /api/review/transcribe (Scribe) or whisper engines (§4)
+  • STANDALONE → fresh transcribe via Whisper OR Scribe (§4, §4.1)
 
 render engines (routed by the chosen preset's "engine" field):
   • caption  → write .srt → ExtendScript places a caption track (or SRT-import fallback)
@@ -111,13 +112,90 @@ final-cut remap when wiring the "Subtitle this cut" button.
 
 ## 4. Source B — standalone (any sequence/file)
 
-Reuse what exists; do **not** add a transcription engine.
+Reuse what exists; do **not** add a new transcription engine — just expose the two
+that exist (§4.1).
 - **Scribe:** `POST /api/review/transcribe` already returns `{words[], media_url, ...}`.
-- **Whisper:** the whisper engines under `backend/services/transcribe/` + `whisper_service.transcribe_fingerprinted`.
+- **Whisper:** `whisper_service.transcribe_fingerprinted(...)` (faster-whisper) → adapt to the same `words[]` shape (§4.1).
 
-The Subtitles view's "Transcribe a sequence/file" action calls the existing
-endpoint, gets `words[]`, then runs the cue builder. Source resolution reuses
-`review.py::_resolve_source` (basename / path / bin / project scan).
+The Subtitles view's "Transcribe a sequence/file" action calls the transcribe
+endpoint with the chosen engine, gets `words[]`, then runs the cue builder. Source
+resolution reuses `review.py::_resolve_source` (basename / path / bin / project scan).
+
+---
+
+## 4.1 Transcription engine choice — Whisper (local) **and** Scribe (cloud) in the panel
+
+**Goal:** the panel lets the user pick the engine for the no-paste transcribe.
+Today the no-paste path (`POST /api/review/transcribe`) is **Scribe-only**;
+Whisper exists in the backend but isn't offered in that UI. Add Whisper as a
+sibling option, in **both** the existing Review setup screen and the new Subtitles
+view.
+
+### Backend — one endpoint, an `engine` switch
+Edit `backend/routes/review.py`:
+1. `TranscribeReq`: add `engine: Optional[str] = "scribe"  # "scribe" | "whisper"`.
+2. In `transcribe_clip()`, branch on `req.engine`:
+   - `"scribe"` → existing path (`scribe_service.transcribe` → `build_segments_and_words`).
+   - `"whisper"` → call the Whisper service and adapt its result (below). No API
+     key, no cost estimate. Set `rev["transcript_source"] = "whisper"`.
+3. Keep the **identical return shape** (`review_id, words, segments, summary,
+   word_summary, media_url, …`) so the frontend is engine-agnostic after the call.
+
+**Whisper → editor adapter** (add to `review_service.py` or a small helper):
+```python
+from .review_service import Segment, Word, words_from_segments
+
+def build_segments_and_words_from_whisper(result) -> tuple[list[Segment], list[Word]]:
+    """TranscriptResult (faster-whisper) → editor Segment/Word, matching Scribe's shape.
+    result.segments[i] = TranscriptSegment(start, end, text, words=[TranscriptWord(word,start,end)])"""
+    segments, words, wid = [], [], 0
+    for i, seg in enumerate(result.segments):
+        s, e = round(seg.start, 3), round(seg.end, 3)
+        segments.append(Segment(id=i, start=s, end=e, text=(seg.text or "").strip(),
+                                tight_in=s, tight_out=e))
+        for w in (seg.words or []):
+            words.append(Word(id=wid, text=(w.word or "").strip(),
+                              start=round(w.start, 3), end=round(w.end, 3), segment_id=i))
+            wid += 1
+    if not words:                       # word_timestamps missing → interpolate
+        words = words_from_segments(segments)
+    return segments, words
+```
+Call site (whisper branch in `transcribe_clip`):
+```python
+from ..services.whisper_service import whisper_service          # process-global singleton
+reporter = ProgressReporter(task_type="transcribe", client_id=req.client_id)
+result = await whisper_service.transcribe_fingerprinted(
+    source_path, language=(req.language_code or None),
+    word_timestamps=True, progress=reporter)
+segments, words = build_segments_and_words_from_whisper(result)
+```
+(Confirm the exact singleton import name used elsewhere — `grep -n "whisper_service" backend/services/agent/tools.py`. Model selection already lives in Settings / `whisper_admin`; don't add a second model picker here.)
+
+### Frontend — an engine toggle in the setup screen
+Edit `cep-panel/client/src/review-view.js` setup screen (`_renderSetup`, ~line 90):
+- Add `S._engine = 'scribe'` to state (default).
+- Add a small segmented toggle above the transcribe button:
+  `[ Scribe (cloud · exact) ] [ Whisper (local · free) ]` (reuse `rv-btn`/`rv-tab` styling).
+- The **API-key row + cost estimate/confirm are Scribe-only** — hide them when
+  Whisper is selected.
+- Generalize `_transcribeScribe()` → `_transcribe(engine)`:
+  - **Scribe:** keep the estimate → confirm → POST flow (unchanged).
+  - **Whisper:** skip estimate/key; button reads "Transcribe with Whisper (local)";
+    directly `POST /api/review/transcribe { source_file, script, engine:'whisper', language_code }`.
+    Show a "this can take a while on CPU" hint; listen for WS `progress`
+    (`task_type:"transcribe"`) for the bar.
+- After either call, the existing `_applyReviewResp(resp, script)` handles the
+  result unchanged (engine-agnostic).
+
+The **Subtitles view** (§13) reuses the same toggle + endpoint for its
+"Transcribe a sequence/file" action.
+
+> Verification note: this is a CEP panel (runs inside Premiere) — it can't be
+> exercised by the web-preview harness. Verify by: (a) `py_compile` the edited
+> Python; (b) a quick unit test of `build_segments_and_words_from_whisper` against
+> a fake `TranscriptResult`; (c) manual test in Premiere (pick Whisper, transcribe,
+> confirm words land in the editor). Bump `BUILD_TAG` (§13) for the JS change.
 
 ---
 
@@ -187,8 +265,8 @@ class SubtitleStyle:
 
 The **dedicated view renders a live HTML/CSS preview** of a cue using these values
 so the user sees the look instantly **without** a Premiere round-trip. (Pure CSS:
-text + a `::before`/box div with `background: rgba(bg_color, bg_opacity)`, outline
-via `text-shadow`/`-webkit-text-stroke`, positioned in a 16:9 preview frame.)
+text + a box div with `background: rgba(bg_color, bg_opacity)`, outline via
+`text-shadow`/`-webkit-text-stroke`, positioned in a 16:9 preview frame.)
 
 ---
 
@@ -445,7 +523,8 @@ the scan/cut flow). Use `ProgressReporter(task_type="subtitles", client_id=...)`
 
 **View contents:**
 - **Source panel:** "From current cut (Review)" | "Transcribe a sequence/file"
-  (the latter reuses `/api/review/transcribe` + source resolution).
+  — the latter shows the **Whisper | Scribe** engine toggle (§4.1) and reuses
+  `/api/review/transcribe` + source resolution.
 - **Cue list:** editable list of cues (text + in/out); reuses the word/segment
   rendering ideas from `review-view.js`.
 - **Style panel:** the §6 fields with a **live CSS preview** of one cue.
@@ -468,6 +547,11 @@ the scan/cut flow). Use `ProgressReporter(task_type="subtitles", client_id=...)`
 - Wire the view into `main.js` (BUILD_TAG bump) + header button + "Subtitle this cut".
 - **Success:** from a Review session OR a standalone transcribe, generate cues,
   edit/style them, see a live preview, export a correct SRT. No Premiere writes.
+
+### Phase 0.5 — Whisper/Scribe engine toggle (§4.1)  ← small, do early
+- Backend `engine` param on `/api/review/transcribe` + Whisper→editor adapter + test.
+- Frontend engine toggle in the Review setup screen and the Subtitles view.
+- **Success:** user picks Whisper or Scribe in the panel; either lands words in the editor.
 
 ### Phase 1 — Caption track
 - `capability_probe`-style spike for native caption insertion on the target PPro.
@@ -508,6 +592,8 @@ the scan/cut flow). Use `ProgressReporter(task_type="subtitles", client_id=...)`
   templates light, render work-area only. State it in the UI.
 - **Time remap** (final cut) is the subtle correctness risk → unit-test hard.
 - **Per-cue placement speed:** `importMGT` is ~seconds/clip → progress + cap warning.
+- **Whisper on CPU is slow** (no NVIDIA GPU): the toggle must warn + recommend a
+  smaller model; the Scribe path stays the fast default.
 - **Tick math:** 254016000000 ticks/sec; keyframe times are absolute sequence ticks.
 - **Open:** does the target PPro version expose `Text Color` on AE MOGRTs reliably?
   Verify during Phase 2 template authoring; if not, drop color params to "set via
@@ -517,23 +603,26 @@ the scan/cut flow). Use `ProgressReporter(task_type="subtitles", client_id=...)`
 
 ## 16. Verification
 - **Unit (pytest):** `cue_builder` grouping + the kept-words→output-time remap;
-  `srt_export` timestamp formatting; `presets` manifest merge/seed.
+  `srt_export` timestamp formatting; `presets` manifest merge/seed;
+  `build_segments_and_words_from_whisper` against a fake `TranscriptResult`.
 - **Spikes:** caption insertion (Phase 1) and MOGRT text-set (Phase 2) verified in
   PPro before building on them (use `capability_probe.jsx`).
-- **Manual:** place on a real sequence; scrub and confirm captions/animations are
-  in sync; confirm the final-cut path matches the cut timeline; confirm word-by-word
-  timing; confirm import of a user `.mogrt`.
+- **Manual (in Premiere — the panel can't be run by the web-preview harness):**
+  place on a real sequence; scrub and confirm captions/animations are in sync;
+  confirm the final-cut path matches the cut timeline; confirm word-by-word timing;
+  confirm Whisper vs Scribe both land words; confirm import of a user `.mogrt`.
 - **Regression:** Review / agent / cut flows untouched (this is additive).
 
 ---
 
 ## 17. Exact integration touch-points (where to wire in)
+- Transcribe engine param: `backend/routes/review.py` (`TranscribeReq`, `transcribe_clip`); adapter in `backend/services/review_service.py`; whisper singleton import per `backend/services/agent/tools.py`.
+- Transcribe engine toggle (UI): `cep-panel/client/src/review-view.js` `_renderSetup` (~line 90) + `_transcribeScribe` (~line 158) → generalize to `_transcribe(engine)`.
 - New view registration & BUILD_TAG: `cep-panel/client/src/main.js` (~line 81; copy the review-view import block; bump `BUILD_TAG` at line 7).
 - ExtendScript module list & dispatch: `cep-panel/extendscript/index.jsx` (`editflowModuleNames` ~line 11; `switch` in `editflowDispatch` ~line 190; `modifyingCommands` ~line 360).
 - ExtendScript dispatch allowlist: `cep-panel/client/src/extendscript.js` `_buildScript` (the `.includes(fnName)` array ~line 92).
 - Router registration: `backend/main.py` (where other routers are `include_router`'d).
 - Source resolution / transcribe reuse: `backend/routes/review.py::_resolve_source`, `POST /api/review/transcribe`.
 - SRT producer to reuse: whatever `tests/unit/test_review_srt.py` exercises.
-- Progress: `backend/utils/progress.py::ProgressReporter` with `task_type="subtitles"`; render via the panel's WS `progress` handler.
+- Progress: `backend/utils/progress.py::ProgressReporter` with `task_type="subtitles"` (placement) / `"transcribe"` (whisper); render via the panel's WS `progress` handler.
 - Static serving of the new JS/CSS: already covered by `_NoCacheStatic` in `backend/main.py` — no change needed.
-```
