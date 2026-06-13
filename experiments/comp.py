@@ -28,6 +28,33 @@ def ollama_chat(prompt, model=MODEL, timeout=300):
         return json.loads(r.read()).get("message", {}).get("content", "")
 
 
+def zai_chat(prompt, model=None, timeout=180):
+    """z.ai (GLM) chat — free via glm-4.5-flash. Key from $ZAI_KEY or experiments/.zai_key."""
+    model = model or os.environ.get("ZAI_MODEL", "glm-4.5-flash")
+    key = os.environ.get("ZAI_KEY")
+    if not key:
+        key = open(os.path.join(os.path.dirname(__file__), ".zai_key"), encoding="utf-8").read().strip()
+    body = json.dumps({"model": model, "messages": [{"role": "user", "content": prompt}],
+                       "temperature": 0}).encode()
+    last = None
+    for _ in range(3):                       # z.ai SSL can drop mid-stream; retry
+        try:
+            req = urllib.request.Request("https://api.z.ai/api/paas/v4/chat/completions", data=body,
+                                         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return json.loads(r.read())["choices"][0]["message"]["content"]
+        except Exception as e:               # noqa: BLE001
+            last = e
+    raise last
+
+
+def chat(prompt):
+    """Dispatch to the configured backend: COMP_BACKEND=zai | ollama (default ollama)."""
+    if os.environ.get("COMP_BACKEND") == "zai":
+        return zai_chat(prompt)
+    return ollama_chat(prompt)
+
+
 def extract_json(text):
     """Pull the {...} object out of a reply that may have ```json fences / prose."""
     if not text:
@@ -157,11 +184,12 @@ def main():
     if os.environ.get("COMP_CACHE") and os.path.exists(cache):
         text = open(cache, encoding="utf-8").read()
     else:
-        text = ollama_chat(build_prompt())
+        text = chat(build_prompt())
         open(cache, "w", encoding="utf-8").write(text)
     data = extract_json(text)
     pieces = (data.get("cut", []) if data else [])
-    render_pieces(pieces, "comp", f"COMP ({MODEL})")
+    tag = os.environ.get("ZAI_MODEL", "glm-4.5-flash") if os.environ.get("COMP_BACKEND") == "zai" else MODEL
+    render_pieces(pieces, "comp_zai" if os.environ.get("COMP_BACKEND") == "zai" else "comp", f"COMP ({tag})")
 
 
 if __name__ == "__main__":
