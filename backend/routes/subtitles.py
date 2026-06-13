@@ -25,6 +25,7 @@ from ..services.subtitles.cue_builder import (
     build_cues,
     remap_kept_words_to_output,
 )
+from ..services.subtitles.presets import load_presets
 from ..services.subtitles.srt_export import cues_to_srt
 
 logger = logging.getLogger(__name__)
@@ -74,6 +75,12 @@ async def cues(req: CuesReq):
             "duration": round(built[-1]["end"] - built[0]["start"], 2) if built else 0.0,
         },
     }
+
+
+@router.get("/presets")
+async def presets():
+    """Animation presets for the view's picker (built-ins; MOGRT imports later)."""
+    return {"presets": load_presets()}
 
 
 class SrtReq(BaseModel):

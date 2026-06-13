@@ -4,7 +4,7 @@
  * Initializes all modules, wires up DOM events, and starts the app.
  * This file owns no business logic — it delegates to the modules.
  */
-const BUILD_TAG = 'review-10';  // bump when shipping a fix; visible in header
+const BUILD_TAG = 'review-11';  // bump when shipping a fix; visible in header
 
 // FIRST thing on parse: clear the inline boot-check banner. If the user sees
 // the banner disappear, we KNOW main.js parsed successfully and modules are

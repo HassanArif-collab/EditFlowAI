@@ -93,7 +93,8 @@ function _buildScript(fnName, args) {
        'addMediaToTimeline', 'createSequence', 'getSelectedProjectItems',
        'probeCapabilities', 'undoLastAction', 'removeTimelineClips',
        'clearTimelineLabels', 'addMarker', 'removeTimelineRanges',
-       'importFiles', 'getMarkers'
+       'importFiles', 'getMarkers',
+       'getSequenceVideoSettings', 'placeSubtitleClips'
       ].includes(fnName)) {
     // These are dispatched through the index.jsx router
     const command = fnName;

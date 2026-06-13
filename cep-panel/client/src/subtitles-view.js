@@ -7,7 +7,8 @@
  * Opened from the Review editor ("Subtitles" button passes the LIVE words —
  * the panel's keep/cut flags only exist client-side until /build).
  */
-import { apiPost } from './api.js';
+import { apiGet, apiPost } from './api.js';
+import { callExtendScript, isExtendScriptAvailable } from './extendscript.js';
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -19,6 +20,7 @@ const SV = {
   cues: [],
   opts: { max_words_per_cue: 7, word_mode: 'line' },
   style: { fontSize: 64, textColor: '#ffffff', bgColor: '#000000', bgOpacity: 0.6, position: 'bottom' },
+  presets: [], presetId: 'pop',
   prevView: null, busy: false,
 };
 
@@ -40,7 +42,17 @@ function openSubtitles(opts = {}) {
   $('#review-view')?.classList.add('hidden');
   v.classList.remove('hidden');
   _render();
+  if (!SV.presets.length) _loadPresets();
   if (SV.words.length && !SV.cues.length) _rebuild();
+}
+
+async function _loadPresets() {
+  try {
+    const r = await apiGet('/api/subtitles/presets', { timeoutMs: 8000 });
+    SV.presets = r.presets || [];
+    if (!SV.presets.find(p => p.id === SV.presetId)) SV.presetId = SV.presets[0]?.id || 'none';
+    if (!$('#subtitles-view')?.classList.contains('hidden')) _render();
+  } catch (_) { SV.presets = []; }
 }
 function closeSubtitles() {
   $('#subtitles-view')?.classList.add('hidden');
@@ -120,7 +132,15 @@ function _render() {
         </div>
         <div class="sv-frame"><div id="sv-caption" class="sv-caption"></div></div>
         <div class="sv-section">
-          <button class="sv-btn sv-primary" data-act="srt">Export SRT</button>
+          <div class="sv-subhead">Animation <span class="sv-dim">— built-in, no After Effects</span></div>
+          <label class="sv-row">Preset
+            <select id="sv-preset" class="sv-num">${SV.presets.map(p => `<option value="${p.id}" ${p.id === SV.presetId ? 'selected' : ''}>${_esc(p.label)}</option>`).join('') || '<option>(loading…)</option>'}</select>
+          </label>
+          <button class="sv-btn sv-primary" data-act="place">Add animated subtitles to timeline</button>
+          <div id="sv-place-status" class="sv-status"></div>
+        </div>
+        <div class="sv-section">
+          <button class="sv-btn" data-act="srt">Export SRT</button>
           <button class="sv-btn" data-act="copy">Copy SRT text</button>
           <div id="sv-export-status" class="sv-status"></div>
         </div>
@@ -131,6 +151,8 @@ function _render() {
   v.querySelector('[data-act="rebuild"]').onclick = _rebuild;
   v.querySelector('[data-act="srt"]').onclick = () => _exportSrt(false);
   v.querySelector('[data-act="copy"]').onclick = () => _exportSrt(true);
+  const presetSel = v.querySelector('#sv-preset'); if (presetSel) presetSel.onchange = (e) => { SV.presetId = e.target.value; };
+  v.querySelector('[data-act="place"]').onclick = _place;
   v.querySelectorAll('input[name="sv-src"]').forEach(r => r.onchange = () => { SV.source = r.value; _rebuild(); });
   v.querySelector('#sv-maxwords').onchange = (e) => { SV.opts.max_words_per_cue = Math.max(1, +e.target.value || 7); };
   v.querySelector('#sv-wordmode').onchange = (e) => { SV.opts.word_mode = e.target.value; };
@@ -193,6 +215,32 @@ async function _exportSrt(copyOnly) {
       _set(status, resp.srt_path ? `Saved: ${resp.srt_path}` : 'Saved (path unavailable — use Copy).');
     }
   } catch (e) { _set(status, 'Export failed: ' + (e.message || e), true); }
+}
+
+async function _place() {
+  const status = $('#sv-place-status');
+  if (!isExtendScriptAvailable()) { _set(status, 'Open this inside Premiere to place captions on the timeline.', true); return; }
+  const preset = SV.presets.find(p => p.id === SV.presetId) || { animation: 'none', wordMode: 'line' };
+  // Cues must match the preset's word mode (word-by-word = one cue per word).
+  if ((preset.wordMode || 'line') !== SV.opts.word_mode) {
+    SV.opts.word_mode = preset.wordMode || 'line';
+    await _rebuild();
+  }
+  if (!SV.cues.length) { _set(status, 'Build cues first.', true); return; }
+  let root = '';
+  try { const cs = new CSInterface(); root = cs.getSystemPath((cs.SYSTEM_PATH && cs.SYSTEM_PATH.EXTENSION) || 'extension'); } catch (_) {}
+  const baseMogrtPath = root ? root + '/templates/subtitles/base_text.mogrt' : '';
+  _set(status, `Placing ${SV.cues.length} caption clips…`);
+  try {
+    const res = await callExtendScript('placeSubtitleClips',
+      { baseMogrtPath, cues: SV.cues, style: SV.style, animation: preset.animation });
+    if (res && res.success) {
+      const errs = (res.errors || []);
+      _set(status, `Placed ${res.placed}/${res.total} clips.` + (errs.length ? ` Issues: ${errs.join(' | ')}` : ''), errs.length > 0);
+    } else {
+      _set(status, 'Placement failed: ' + ((res && res.error) || 'unknown'), true);
+    }
+  } catch (e) { _set(status, 'Placement failed: ' + (e.message || e), true); }
 }
 
 // ── Tiny utils ───────────────────────────────────────────────
