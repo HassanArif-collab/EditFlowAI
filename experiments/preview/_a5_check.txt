@@ -1,0 +1,60 @@
+=== SCRIPT-CLAUSE ALIGNMENT ===
+clauses=20 covered=20 missed=0
+
+[0.56] Now let's 10x this
+      -> @65s: دس ہزار،
+[0.599] I'm Javed
+      -> @223s: میں رہتا ہوں
+[0.885] I invested 14 crore in a tech startup
+      -> @22s: میں نے چودہ کروڑ invest کیے ایک tech startup میں اور جو چلا 
+[0.392] it blew up
+      -> @49s: چلا اور اس نے مجھے دیے-
+[0.649] now I'm worth 10
+      -> @86s: جو بہت زیادہ چلا اور اب میرے پاس ہیں دس ہزار کروڑ روپے۔
+[0.733] 000 crore
+      -> @65s: دس ہزار،
+[0.606] Same debt trick, bigger numbers
+      -> @97s: وہی same trick کھیلوں گا loan لینے والی تاکہ کم سے کم ٹیکس د
+[0.74] A 2% loan against my portfolio gives me 200 crore in tax-free cash
+      -> @161s: یعنی دو فیصد loan مجھے کے دو سو کروڑ روپے۔ [بچے کی آواز] دس 
+[0.246] CGT hits 0% after six years
+      -> @118s: دو فیصد loan.
+[0.505] so my portfolio grows way faster than my interest rate
+      -> @204s: اور جو میرے دس ہزار کروڑ ہیں وہ دس percent کی growth سے بڑھت
+[0.789] I live in F-6 Islamabad
+      -> @243s: اب میرا گھر دیکھتے ہیں، اب میرا گھر دیکھتے ہیں میں F6 اسلام 
+[0.653] Six bedrooms, a massive four-kanal estate, worth 250 crore
+      -> @269s: رقبے پر پھیلا ہے جس میں صرف چھ bedroom ہیں اور-
+[0.579] It's got a pool
+      -> @312s: اس میں ایک pool ہے، ایک private garden ہے، ایک basement ente
+[0.866] a private garden
+      -> @304s: private garden ہے۔ اس میں ایک pool ہے، ایک private garden ہے
+[0.626] a basement entertainment complex
+      -> @312s: اس میں ایک pool ہے، ایک private garden ہے، ایک basement ente
+[0.656] It's one of seven homes I own
+      -> @317s: میرے سات گھروں میں سے ایک ہے۔ میرے پاس ایک دبئی کے اندر ہے، 
+[0.495] Dubai Marina
+      -> @317s: میرے سات گھروں میں سے ایک ہے۔ میرے پاس ایک دبئی کے اندر ہے، 
+[0.346] London Mayfair
+      -> @312s: اس میں ایک pool ہے، ایک private garden ہے، ایک basement ente
+[0.54] a Lahore farmhouse
+      -> @224s: تو اب میرا گھر دیکھتے ہیں۔ میں F6 اسلام آباد میں رہتا ہوں-
+[0.396] Punjab farmland
+      -> @317s: میرے سات گھروں میں سے ایک ہے۔ میرے پاس ایک دبئی کے اندر ہے، 
+
+=== FINAL KEPT (time order) ===
+0:21 | میں نے چودہ کروڑ invest کیے ایک tech startup میں اور جو چلا اور
+0:48 | چلا اور اس نے مجھے دیے-
+1:05 | دس ہزار،
+1:25 | جو بہت زیادہ چلا اور اب میرے پاس ہیں دس ہزار کروڑ روپے۔
+1:37 | وہی same trick کھیلوں گا loan لینے والی تاکہ کم سے کم ٹیکس دینا پڑے
+1:57 | دو فیصد loan.
+2:40 | یعنی دو فیصد loan مجھے کے دو سو کروڑ روپے۔ [بچے کی آواز] دس فیصد。 [بچے کی آواز] یعنی
+3:24 | اور جو میرے دس ہزار کروڑ ہیں وہ دس percent کی growth سے بڑھتے جائیں
+3:42 | میں رہتا ہوں
+3:43 | تو اب میرا گھر دیکھتے ہیں۔ میں F6 اسلام آباد میں رہتا ہوں-
+4:03 | اب میرا گھر دیکھتے ہیں، اب میرا گھر دیکھتے ہیں میں F6 اسلام آباد میں رہتا ہوں
+4:28 | رقبے پر پھیلا ہے جس میں صرف چھ bedroom ہیں اور-
+5:03 | private garden ہے۔ اس میں ایک pool ہے، ایک private garden ہے۔ اس میں ایک pool ہے،
+5:12 | اس میں ایک pool ہے، ایک private garden ہے، ایک basement entertainment complex ہے۔ یہ
+5:17 | میرے سات گھروں میں سے ایک ہے۔ میرے پاس ایک دبئی کے اندر ہے، ایک مدینہ کے اندر ہے۔
