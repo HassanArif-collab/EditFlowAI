@@ -36,7 +36,7 @@ const S = {
   focusId: null,
   undo: [], redo: [],
   busy: false, aiAbort: null,
-  prevView: null, _scribePending: false, _menuOpen: false, _modelPoll: null,
+  prevView: null, _scribePending: false, _engine: 'scribe', _menuOpen: false, _modelPoll: null,
   debug: false, lastTrace: null,
 };
 let _keysBound = false, _lastNow = null;
@@ -93,11 +93,15 @@ function _renderSetup(opts = {}) {
   v.innerHTML = `
     <div class="rv-bar"><div class="rv-title">Review &amp; Cut</div><button class="rv-btn rv-ghost" data-act="close">Close</button></div>
     <div class="rv-setup">
-      <p class="rv-hint">Pick a clip, then <b>transcribe with Scribe</b> (exact word timing) — or paste a transcript. Then edit by word: play, select, cut.</p>
+      <p class="rv-hint">Pick a clip, then <b>transcribe</b> (Scribe cloud or local Whisper) — or paste a transcript. Then edit by word: play, select, cut.</p>
       <label class="rv-label">Source clip <span class="rv-dim">(filename if scanned, or full path)</span></label>
       <input id="rv-source" class="rv-input" type="text" placeholder="IMG_1694.MOV" value="${_esc(src)}" spellcheck="false" />
       <div class="rv-scribe">
-        <div class="rv-subhead">Transcribe with ElevenLabs Scribe <span class="rv-dim">— recommended</span></div>
+        <div class="rv-subhead">Transcribe <span class="rv-dim">— pick an engine</span></div>
+        <div class="rv-actions" id="rv-engine-row">
+          <button class="rv-btn rv-tiny" data-engine="scribe" title="ElevenLabs Scribe — exact per-word times, needs an API key">Scribe (cloud · exact)</button>
+          <button class="rv-btn rv-tiny" data-engine="whisper" title="Local Whisper — free, uses the model picked in Settings">Whisper (local · free)</button>
+        </div>
         <div id="rv-scribe-key" class="rv-keyrow"></div>
         <div class="rv-actions"><button class="rv-btn rv-primary" data-act="transcribe">Transcribe with Scribe</button><span id="rv-scribe-status" class="rv-status"></span></div>
       </div>
@@ -109,9 +113,25 @@ function _renderSetup(opts = {}) {
     </div>`;
   v.querySelector('[data-act="close"]').onclick = closeReview;
   v.querySelector('[data-act="load"]').onclick = _loadTranscript;
-  v.querySelector('[data-act="transcribe"]').onclick = _transcribeScribe;
+  v.querySelector('[data-act="transcribe"]').onclick = _transcribe;
+  v.querySelectorAll('#rv-engine-row [data-engine]').forEach(b => b.onclick = () => {
+    S._engine = b.dataset.engine; S._scribePending = false; _refreshEngineUI();
+  });
   const ta = v.querySelector('#rv-transcript'); if (ta && opts.transcript) ta.value = opts.transcript;
-  S._scribePending = false; _refreshScribe();
+  S._scribePending = false; _refreshEngineUI();
+}
+function _refreshEngineUI() {
+  const eng = S._engine || 'scribe';
+  document.querySelectorAll('#rv-engine-row [data-engine]').forEach(b =>
+    b.classList.toggle('rv-primary', b.dataset.engine === eng));
+  const key = $('#rv-scribe-key');
+  if (key) key.style.display = eng === 'scribe' ? '' : 'none';
+  const btn = document.querySelector('[data-act="transcribe"]');
+  if (btn) {
+    btn.disabled = false;
+    btn.textContent = eng === 'scribe' ? 'Transcribe with Scribe' : 'Transcribe with Whisper (local)';
+  }
+  if (eng === 'scribe') _refreshScribe();
 }
 async function _applyReviewResp(resp, script) {
   S.reviewId = resp.review_id;
@@ -155,11 +175,13 @@ function _showKeyInput(row) {
     catch (e) { _setStatus($('#rv-scribe-status'), 'Could not save key: ' + (e.message || e), true); }
   };
 }
-async function _transcribeScribe() {
+async function _transcribe() {
+  const eng = S._engine || 'scribe';
   const source = ($('#rv-source')?.value || '').trim(); const status = $('#rv-scribe-status');
   const btn = document.querySelector('[data-act="transcribe"]');
   if (!source) { _setStatus(status, 'Enter the source clip first.', true); return; }
-  if (!S._scribePending) {
+  // Scribe costs money → estimate + confirm first. Whisper is local: go straight.
+  if (eng === 'scribe' && !S._scribePending) {
     try {
       const est = await apiPost('/api/review/scribe/estimate', { source_file: source }, { timeoutMs: 15000 });
       if (!est.has_key) { _setStatus(status, 'Add your ElevenLabs API key above first.', true); return; }
@@ -168,13 +190,17 @@ async function _transcribeScribe() {
     } catch (e) { _setStatus(status, 'Estimate failed: ' + (e.message || e), true); }
     return;
   }
-  S._scribePending = false; if (btn) { btn.textContent = 'Transcribing with Scribe…'; btn.disabled = true; }
-  _setStatus(status, 'Transcribing with Scribe (and preparing preview)…');
+  S._scribePending = false;
+  const label = eng === 'scribe' ? 'Scribe' : 'Whisper';
+  if (btn) { btn.textContent = `Transcribing with ${label}…`; btn.disabled = true; }
+  _setStatus(status, eng === 'scribe'
+    ? 'Transcribing with Scribe (and preparing preview)…'
+    : 'Transcribing locally with Whisper — the first run loads the model and can take a while on CPU…');
   try {
     const script = ($('#rv-script')?.value || '').trim();
-    const resp = await apiPost('/api/review/transcribe', { source_file: source, script, language_code: 'ur' }, { timeoutMs: 1800000 });
+    const resp = await apiPost('/api/review/transcribe', { source_file: source, script, language_code: 'ur', engine: eng }, { timeoutMs: 1800000 });
     await _applyReviewResp(resp, script);
-  } catch (e) { _setStatus(status, 'Scribe failed: ' + (e.message || e), true); if (btn) { btn.textContent = 'Transcribe with Scribe'; btn.disabled = false; } }
+  } catch (e) { _setStatus(status, `${label} failed: ` + (e.message || e), true); _refreshEngineUI(); }
 }
 
 // ── Master render (tabs + layout) ────────────────────────────

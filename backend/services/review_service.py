@@ -168,6 +168,30 @@ def words_from_segments(segments: list[Segment]) -> list[Word]:
     return words
 
 
+def build_segments_and_words_from_whisper(result) -> tuple[list[Segment], list[Word]]:
+    """Whisper ``TranscriptResult`` → editor Segment/Word, matching Scribe's shape.
+
+    The engine toggle only works because both engines produce identical editor
+    data; keep this aligned with ``scribe_service.build_segments_and_words``.
+    Falls back to char-length interpolation when word timestamps are missing.
+    """
+    segments: list[Segment] = []
+    words: list[Word] = []
+    wid = 0
+    for i, seg in enumerate(result.segments):
+        s, e = round(seg.start, 3), round(seg.end, 3)
+        segments.append(Segment(id=i, start=s, end=e, text=(seg.text or "").strip(),
+                                tight_in=s, tight_out=e))
+        for w in (seg.words or []):
+            words.append(Word(id=wid, text=(w.word or "").strip(),
+                              start=round(w.start, 3), end=round(w.end, 3),
+                              segment_id=i))
+            wid += 1
+    if not words:
+        words = words_from_segments(segments)
+    return segments, words
+
+
 def words_to_cuts(
     words_by_id: dict[int, Word],
     kept_ids: list[int],

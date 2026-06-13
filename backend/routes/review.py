@@ -38,6 +38,7 @@ from ..services.review_service import (
     Segment,
     Word,
     build_gemma_prompt,
+    build_segments_and_words_from_whisper,
     classify,
     kept_cuts,
     parse_gemma_decisions,
@@ -520,28 +521,50 @@ class TranscribeReq(BaseModel):
     script: Optional[str] = ""
     language_code: Optional[str] = "ur"
     client_id: Optional[str] = None
+    engine: Optional[str] = "scribe"   # "scribe" (cloud, exact) | "whisper" (local)
 
 
 @router.post("/transcribe")
 async def transcribe_clip(req: TranscribeReq):
-    """Transcribe a clip with ElevenLabs Scribe and open a review session.
+    """Transcribe a clip and open a review session — the "no pasting" path.
 
-    The "no pasting" path: exact per-word times straight from Scribe → the word
-    editor. Requires an API key (Settings / ELEVENLABS_API_KEY).
+    ``engine`` picks the transcriber: ElevenLabs Scribe (cloud, exact per-word
+    times, needs an API key) or local Whisper (free, uses the model picked in
+    Settings). Both land the identical Segment/Word shape in the editor.
     """
     try:
         source_path = _resolve_source(req.source_file, req.bin_references)
     except ReviewError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    try:
-        data = await scribe_service.transcribe(source_path, language_code=req.language_code or None)
-    except scribe_service.ScribeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    segments, words = scribe_service.build_segments_and_words(data)
-    if not words:
-        raise HTTPException(status_code=400, detail="Scribe returned no words for this clip.")
+    engine = (req.engine or "scribe").lower()
+    if engine == "whisper":
+        from ..services.whisper_service import whisper_service
+        reporter = ProgressReporter(task_type="transcribe", client_id=req.client_id)
+        try:
+            result = await whisper_service.transcribe_fingerprinted(
+                source_path,
+                language=(req.language_code or None),
+                word_timestamps=True,
+                progress=reporter,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("review.transcribe: whisper failed for %s", source_path)
+            raise HTTPException(
+                status_code=400,
+                detail=f"Whisper transcription failed: {exc}",
+            ) from exc
+        segments, words = build_segments_and_words_from_whisper(result)
+        if not words:
+            raise HTTPException(status_code=400, detail="Whisper returned no words for this clip.")
+    else:
+        try:
+            data = await scribe_service.transcribe(source_path, language_code=req.language_code or None)
+        except scribe_service.ScribeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        segments, words = scribe_service.build_segments_and_words(data)
+        if not words:
+            raise HTTPException(status_code=400, detail="Scribe returned no words for this clip.")
 
     review_id = uuid.uuid4().hex[:12]
     reporter = ProgressReporter(task_type="review_proxy", client_id=req.client_id)
@@ -563,7 +586,7 @@ async def transcribe_clip(req: TranscribeReq):
         "source_path": source_path, "source_name": source_name, "proxy_path": proxy_path,
         "segments": segments, "words": words, "script": (req.script or "").strip(),
         "duration": duration, "codec": codec, "media_error": media_error,
-        "transcript_source": "scribe",
+        "transcript_source": engine,
     }
     _reviews[review_id] = rev
     _persist(review_id, rev)
@@ -576,5 +599,5 @@ async def transcribe_clip(req: TranscribeReq):
         "words": [w.to_dict() for w in words],
         "summary": _summary(segments),
         "word_summary": _word_summary(words, source_name),
-        "transcript_source": "scribe",
+        "transcript_source": engine,
     }
