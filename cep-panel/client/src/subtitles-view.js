@@ -229,7 +229,9 @@ async function _place() {
   if (!SV.cues.length) { _set(status, 'Build cues first.', true); return; }
   let root = '';
   try { const cs = new CSInterface(); root = cs.getSystemPath((cs.SYSTEM_PATH && cs.SYSTEM_PATH.EXTENSION) || 'extension'); } catch (_) {}
-  const baseMogrtPath = root ? root + '/templates/subtitles/base_text.mogrt' : '';
+  let baseMogrtPath = root ? root + '/templates/subtitles/base_text.mogrt' : '';
+  // Windows: importMGT needs an OS-native (backslash) path; getSystemPath returns forward slashes.
+  if (/^[A-Za-z]:/.test(baseMogrtPath)) baseMogrtPath = baseMogrtPath.replace(/\//g, '\\');
   // Add a fresh empty video track on top so captions never overwrite the edit,
   // then target it explicitly (0-based index = old track count).
   let trackIndex;
