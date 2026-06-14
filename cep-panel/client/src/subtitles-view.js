@@ -230,10 +230,19 @@ async function _place() {
   let root = '';
   try { const cs = new CSInterface(); root = cs.getSystemPath((cs.SYSTEM_PATH && cs.SYSTEM_PATH.EXTENSION) || 'extension'); } catch (_) {}
   const baseMogrtPath = root ? root + '/templates/subtitles/base_text.mogrt' : '';
+  // Add a fresh empty video track on top so captions never overwrite the edit,
+  // then target it explicitly (0-based index = old track count).
+  let trackIndex;
+  try {
+    const vs = await callExtendScript('getSequenceVideoSettings');
+    const n = (vs && vs.videoTracks) ? vs.videoTracks : 0;
+    if (n > 0) { await callExtendScript('manageTracks', { action: 'add', videoCount: n + 1 }); trackIndex = n; }
+  } catch (_) {}
   _set(status, `Placing ${SV.cues.length} caption clips…`);
   try {
-    const res = await callExtendScript('placeSubtitleClips',
-      { baseMogrtPath, cues: SV.cues, style: SV.style, animation: preset.animation });
+    const payload = { baseMogrtPath, cues: SV.cues, style: SV.style, animation: preset.animation };
+    if (trackIndex !== undefined) payload.trackIndex = trackIndex;
+    const res = await callExtendScript('placeSubtitleClips', payload);
     if (res && res.success) {
       const errs = (res.errors || []);
       _set(status, `Placed ${res.placed}/${res.total} clips.` + (errs.length ? ` Issues: ${errs.join(' | ')}` : ''), errs.length > 0);
