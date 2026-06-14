@@ -165,7 +165,11 @@ subtitleManager = (function() {
 
         var mogrt = editflowUtils.getParam(options, 'baseMogrtPath', 'mogrtPath');
         if (!mogrt) return _err("No base graphic path (baseMogrtPath).");
-        if (!(new File(mogrt)).exists) return _err("Base graphic not found: " + mogrt);
+        var mogrtFile = new File(mogrt);
+        if (!mogrtFile.exists) return _err("Base graphic not found: " + mogrt);
+        // importMGT needs the OS-native path (backslashes on Windows); File.exists
+        // accepts forward slashes but the importer returns null for them.
+        var nativePath = mogrtFile.fsName;
 
         var cues = editflowUtils.getParam(options, 'cues') || [];
         if (!cues.length) return _err("No cues to place.");
@@ -191,8 +195,8 @@ subtitleManager = (function() {
         for (var i = 0; i < cues.length; i++) {
             var cue = cues[i];
             try {
-                var clip = seq.importMGT(mogrt, editflowUtils.secondsToTicksString(cue.start), trackIndex, 0);
-                if (!clip) { errors.push("cue " + i + ": importMGT returned null"); continue; }
+                var clip = seq.importMGT(nativePath, editflowUtils.secondsToTicksString(cue.start), trackIndex, 0);
+                if (!clip) { errors.push("cue " + i + ": importMGT null (track=" + trackIndex + ", path=" + nativePath + ")"); continue; }
                 _setText(clip, cue.text, textOpts);
                 try { clip.end = _time(cue.end); } catch (e) {}
                 if (animation !== "none") _animate(clip, animation, cue.start, cue.end);
