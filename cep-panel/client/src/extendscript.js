@@ -62,19 +62,26 @@ async function callExtendScript(fnName, ...args) {
 
   return new Promise((resolve, reject) => {
     _csInterface.evalScript(script, (result) => {
+      // Log every ExtendScript call to the diagnostics sink so DOM failures
+      // (e.g. importMGT returning null) are captured without the user noticing.
+      const _log = (typeof window !== 'undefined' && window.__editflowLog) || null;
       if (result === 'EvalScript error.' || result === undefined) {
+        if (_log) _log('error', 'jsx', fnName, { error: 'EvalScript error' });
         reject(new Error(`ExtendScript call "${fnName}" failed`));
         return;
       }
       try {
         const parsed = JSON.parse(result);
         if (parsed && parsed.success === false) {
+          if (_log) _log('error', 'jsx', fnName, { ok: false, error: parsed.error });
           reject(new Error(parsed.error || `ExtendScript "${fnName}" returned failure`));
         } else {
+          if (_log) _log('info', 'jsx', fnName, { ok: true });
           resolve(parsed);
         }
       } catch (_) {
         // Not JSON — return raw string
+        if (_log) _log('info', 'jsx', fnName, { ok: true, raw: true });
         resolve(result);
       }
     });

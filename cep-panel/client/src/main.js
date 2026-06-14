@@ -4,7 +4,7 @@
  * Initializes all modules, wires up DOM events, and starts the app.
  * This file owns no business logic — it delegates to the modules.
  */
-const BUILD_TAG = 'review-12';  // bump when shipping a fix; visible in header
+const BUILD_TAG = 'review-13';  // bump when shipping a fix; visible in header
 
 // FIRST thing on parse: clear the inline boot-check banner. If the user sees
 // the banner disappear, we KNOW main.js parsed successfully and modules are
@@ -30,7 +30,7 @@ import { appendMessage, clearChat, scrollToBottom } from './chat-ui.js';
 import { attachAutocomplete } from './autocomplete.js';
 import { setupDropZone, setupSelectionChip, stopSelectionPoll } from './dnd.js';
 import { pickScriptFile } from './upload.js';
-import { initDiagnostics } from './diagnostics.js';
+import { initDiagnostics, installGlobalCapture } from './diagnostics.js';
 import { initSettings, openSettings, onWhisperDownloadProgress } from './settings.js';
 // openReview is loaded DYNAMICALLY (with the BUILD_TAG cache-buster) inside
 // _loadOrchestrator so edits to review-view.js land on reload without a CEP
@@ -100,6 +100,8 @@ const $ = (sel) => document.querySelector(sel);
 // ── Generate client ID ───────────────────────────────────────
 const CLIENT_ID = 'cep-' + Math.random().toString(36).substring(2, 8);
 setSession({ clientId: CLIENT_ID });
+// Start capturing errors + ExtendScript failures to the backend log sink ASAP.
+installGlobalCapture(CLIENT_ID, BUILD_TAG);
 
 // ── DOM references ────────────────────────────────────────────
 const hero = $('#hero');
