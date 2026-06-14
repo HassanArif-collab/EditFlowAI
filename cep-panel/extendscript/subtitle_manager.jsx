@@ -172,7 +172,15 @@ subtitleManager = (function() {
         var animation = editflowUtils.getParam(options, 'animation') || "none";
         var style = editflowUtils.getParam(options, 'style') || {};
         var trackIndex = editflowUtils.getParam(options, 'trackIndex');
-        if (trackIndex === undefined || trackIndex === null) trackIndex = seq.videoTracks.numTracks; // new top track
+        if (trackIndex === undefined || trackIndex === null) {
+            // Add a fresh empty video track on top so captions never overwrite
+            // existing clips, then target it. importMGT needs a REAL track index
+            // (0-based); numTracks itself is out of range and returns null.
+            try { trackManager.ensureTracks(seq, seq.videoTracks.numTracks + 1, 0); } catch (e) {}
+            trackIndex = seq.videoTracks.numTracks - 1;
+        }
+        if (trackIndex < 0) trackIndex = 0;
+        if (trackIndex > seq.videoTracks.numTracks - 1) trackIndex = seq.videoTracks.numTracks - 1;
 
         var textOpts = {
             textParam: editflowUtils.getParam(options, 'textParam') || "Source Text",
