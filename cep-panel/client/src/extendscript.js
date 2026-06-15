@@ -29,6 +29,11 @@ async function initExtendScript() {
                           _csInterface.getSystemPath('extension');
 
     await callExtendScript('editflowConfigureExtensionRoot', extensionRoot);
+    // Force-reload the .jsx module files from disk so ExtendScript edits apply on
+    // a panel refresh (Premiere caches them per session otherwise — no full
+    // restart needed during development).
+    try { await callExtendScript('editflowLoadAllModules', extensionRoot + '/extendscript'); }
+    catch (e) { console.warn('[extendscript] module force-reload failed:', e); }
     _esLoaded = true;
     console.log('[extendscript] ExtendScript loaded');
     return true;

@@ -70,35 +70,54 @@ subtitleManager = (function() {
         try { var o = JSON.parse(p.getValue()); return !!(o && o.textEditValue !== undefined); }
         catch (e) { return false; }
     }
-    function _findSourceTextParam(comp, preferredName) {
-        var p = _param(comp, preferredName || "Source Text");
-        if (p && _isTextParam(p)) return p;
-        try {
-            var props = comp.properties;
-            for (var i = 0; i < props.numItems; i++) {
-                if (_isTextParam(props[i])) return props[i];
-            }
-        } catch (e) {}
+    // Premiere-authored graphics often return null from getMGTComponent(), so
+    // search EVERY component's properties — the text param is the one whose value
+    // parses to JSON with a textEditValue field, whatever its display name.
+    function _allComponents(clip) {
+        var comps = [];
+        try { var mc = clip.getMGTComponent(); if (mc) comps.push(mc); } catch (e) {}
+        try { var cc = clip.components; for (var i = 0; i < cc.numItems; i++) comps.push(cc[i]); } catch (e) {}
+        return comps;
+    }
+    function _findSourceTextParam(clip, preferredName) {
+        var comps = _allComponents(clip), c, j, props, p;
+        for (c = 0; c < comps.length; c++) { p = _param(comps[c], preferredName || "Source Text"); if (p && _isTextParam(p)) return p; }
+        for (c = 0; c < comps.length; c++) {
+            try { props = comps[c].properties; for (j = 0; j < props.numItems; j++) { if (_isTextParam(props[j])) return props[j]; } } catch (e) {}
+        }
         return null;
+    }
+    function _findParam(clip, name) {
+        var comps = _allComponents(clip), c, p;
+        for (c = 0; c < comps.length; c++) { p = _param(comps[c], name); if (p) return p; }
+        return null;
+    }
+    function _dumpComps(clip) {
+        var out = [], comps = _allComponents(clip), c, j, props, names, dn;
+        for (c = 0; c < comps.length; c++) {
+            names = [];
+            try { props = comps[c].properties; for (j = 0; j < props.numItems && j < 40; j++) { try { names.push(props[j].displayName); } catch (e) {} } } catch (e) {}
+            dn = ""; try { dn = comps[c].displayName; } catch (e) {}
+            out.push(dn + "{" + names.join(",") + "}");
+        }
+        return out.join(" | ");
     }
 
     // ── Set the Source Text (+ optional colors) on a placed graphic ──
     function _setText(clip, text, opts) {
-        var comp = clip.getMGTComponent();
-        if (!comp) throw new Error("Clip has no MOGRT component (base graphic must expose an editable text param).");
-        var p = _findSourceTextParam(comp, opts && opts.textParam);
-        if (!p) throw new Error("Base graphic exposes no editable text param (textEditValue).");
+        var p = _findSourceTextParam(clip, opts && opts.textParam);
+        if (!p) throw new Error("no editable text param. comps: " + _dumpComps(clip));
         var v = JSON.parse(p.getValue());
         v.textEditValue = text;
         v.fontTextRunLength = [text.length];
         p.setValue(JSON.stringify(v), true);
 
         if (opts && opts.textColor) {
-            var tc = _param(comp, opts.textColorParam || "Text Color");
+            var tc = _findParam(clip, opts.textColorParam || "Text Color");
             if (tc) { try { tc.setValue(_hexRgba(opts.textColor, 1), true); } catch (e) {} }
         }
         if (opts && opts.bgColor) {
-            var bc = _param(comp, opts.bgColorParam || "Background Color");
+            var bc = _findParam(clip, opts.bgColorParam || "Background Color");
             if (bc) { try { bc.setValue(_hexRgba(opts.bgColor, 1), true); } catch (e) {} }
         }
     }
