@@ -79,19 +79,32 @@ subtitleManager = (function() {
         try { var cc = clip.components; for (var i = 0; i < cc.numItems; i++) comps.push(cc[i]); } catch (e) {}
         return comps;
     }
+    function _findByDisplayName(clip, name) {
+        var comps = _allComponents(clip), c, j, props, dn;
+        for (c = 0; c < comps.length; c++) {
+            try {
+                props = comps[c].properties;
+                for (j = 0; j < props.numItems; j++) {
+                    dn = ""; try { dn = props[j].displayName; } catch (e) {}
+                    if (dn === name) return props[j];
+                }
+            } catch (e) {}
+        }
+        return null;
+    }
     function _findSourceTextParam(clip, preferredName) {
-        var comps = _allComponents(clip), c, j, props, p;
-        for (c = 0; c < comps.length; c++) { p = _param(comps[c], preferredName || "Source Text"); if (p && _isTextParam(p)) return p; }
+        // 1) by display name — works on native graphic components, where
+        //    getParamForDisplayName is unreliable / the value isn't MOGRT JSON.
+        var p = _findByDisplayName(clip, preferredName || "Source Text");
+        if (p) return p;
+        // 2) fallback: probe for the MOGRT-style {textEditValue} JSON value.
+        var comps = _allComponents(clip), c, j, props;
         for (c = 0; c < comps.length; c++) {
             try { props = comps[c].properties; for (j = 0; j < props.numItems; j++) { if (_isTextParam(props[j])) return props[j]; } } catch (e) {}
         }
         return null;
     }
-    function _findParam(clip, name) {
-        var comps = _allComponents(clip), c, p;
-        for (c = 0; c < comps.length; c++) { p = _param(comps[c], name); if (p) return p; }
-        return null;
-    }
+    function _findParam(clip, name) { return _findByDisplayName(clip, name); }
     function _dumpComps(clip) {
         var out = [], comps = _allComponents(clip), c, j, props, names, dn;
         for (c = 0; c < comps.length; c++) {
@@ -102,15 +115,33 @@ subtitleManager = (function() {
         }
         return out.join(" | ");
     }
+    function _short(x) { try { return String(x).slice(0, 160); } catch (e) { return "?"; } }
 
     // ── Set the Source Text (+ optional colors) on a placed graphic ──
     function _setText(clip, text, opts) {
         var p = _findSourceTextParam(clip, opts && opts.textParam);
-        if (!p) throw new Error("no editable text param. comps: " + _dumpComps(clip));
-        var v = JSON.parse(p.getValue());
-        v.textEditValue = text;
-        v.fontTextRunLength = [text.length];
-        p.setValue(JSON.stringify(v), true);
+        if (!p) throw new Error("no text param. comps: " + _dumpComps(clip));
+        var before = null; try { before = p.getValue(); } catch (e) {}
+        var done = false;
+        // MOGRT-style structured JSON value (AE-authored templates).
+        if (typeof before === 'string') {
+            try {
+                var v = JSON.parse(before);
+                if (v && v.textEditValue !== undefined) {
+                    v.textEditValue = text;
+                    v.fontTextRunLength = [text.length];
+                    p.setValue(JSON.stringify(v), true);
+                    done = true;
+                }
+            } catch (e) {}
+        }
+        // Native graphic param — try setting the raw string.
+        if (!done) { try { p.setValue(text, true); } catch (e) {} }
+        // Verify the write took; native Source Text is often read-only to script.
+        var after = null; try { after = p.getValue(); } catch (e) {}
+        if (!done && String(after) === String(before)) {
+            throw new Error("text not settable via script (valType=" + (typeof before) + ", val=" + _short(before) + ")");
+        }
 
         if (opts && opts.textColor) {
             var tc = _findParam(clip, opts.textColorParam || "Text Color");
