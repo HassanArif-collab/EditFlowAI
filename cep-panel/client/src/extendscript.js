@@ -77,11 +77,24 @@ async function callExtendScript(fnName, ...args) {
       }
       try {
         const parsed = JSON.parse(result);
+        // Surface diagnostic fields (a tool can report success:true yet carry
+        // per-item errors, e.g. placeSubtitleClips placed:0 with cue errors).
+        const _summ = (p) => {
+          const s = {};
+          if (p && typeof p === 'object') {
+            ['success', 'placed', 'total', 'errors', 'error'].forEach((k) => {
+              if (p[k] !== undefined) s[k] = p[k];
+            });
+          }
+          return s;
+        };
         if (parsed && parsed.success === false) {
-          if (_log) _log('error', 'jsx', fnName, { ok: false, error: parsed.error });
+          if (_log) _log('error', 'jsx', fnName, { ok: false, ..._summ(parsed) });
           reject(new Error(parsed.error || `ExtendScript "${fnName}" returned failure`));
         } else {
-          if (_log) _log('info', 'jsx', fnName, { ok: true });
+          const sm = _summ(parsed);
+          const hadErrors = Array.isArray(sm.errors) && sm.errors.length > 0;
+          if (_log) _log(hadErrors ? 'error' : 'info', 'jsx', fnName, { ok: true, ...sm });
           resolve(parsed);
         }
       } catch (_) {
