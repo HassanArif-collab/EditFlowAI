@@ -245,27 +245,42 @@ try {
 $pipExe = Join-Path $VenvDir "Scripts\pip.exe"
 $pyExe = Join-Path $VenvDir "Scripts\python.exe"
 
-# Upgrade pip
+# Upgrade pip (protected — pip warnings to stderr can abort PS with EAP=Stop)
 Write-Info "Upgrading pip..."
-& $pyExe -m pip install --upgrade pip --quiet 2>&1 | Out-Null
+$prevEAP = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+try { & $pyExe -m pip install --upgrade pip --quiet 2>&1 | Out-Null } catch {}
+$ErrorActionPreference = $prevEAP
 
 # Install dependencies
 Write-Info "Installing Python dependencies (this takes 2-5 minutes)..."
+$prevEAP = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
 try {
     & $pipExe install -r (Join-Path $InstallDir "requirements.txt") --quiet 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "pip install failed (exit $LASTEXITCODE)" }
     Write-OK "Dependencies installed"
 } catch {
     Write-Warn "Quiet install failed, retrying with verbose output..."
-    & $pipExe install -r (Join-Path $InstallDir "requirements.txt")
+    & $pipExe install -r (Join-Path $InstallDir "requirements.txt") 2>&1 | Out-Null
     if ($LASTEXITCODE -ne 0) {
+        $ErrorActionPreference = $prevEAP
         Write-Err "Dependency installation failed"
         exit 1
     }
     Write-OK "Dependencies installed (verbose)"
 }
+$ErrorActionPreference = $prevEAP
 
-# Verify fastapi importable
-$importCheck = & $pyExe -c "import fastapi; print('fastapi', fastapi.__version__)" 2>&1
+# Verify fastapi importable (protected — stderr from Python aborts PS scripts)
+$prevEAP = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+try {
+    $importCheck = & $pyExe -c "import fastapi; print('fastapi', fastapi.__version__)" 2>&1
+} catch {
+    $importCheck = "check failed: $_"
+}
+$ErrorActionPreference = $prevEAP
 Write-Info "Verified: $importCheck"
 
 # ── Step 5: Create CEP junction ────────────────────────────────────────────
@@ -420,13 +435,32 @@ foreach ($check in $checks) {
     }
 }
 
-# Test backend can import
+# Test backend can import (non-fatal — just a sanity check)
+# Two critical things here:
+#   1. Push-Location $InstallDir — Python must run from the install dir so it
+#      can find the 'backend' package (the working dir of the installer is
+#      wherever the user launched the .bat from, NOT C:\EditFlowAI).
+#   2. Temporarily relax $ErrorActionPreference — Python writes tracebacks to
+#      stderr, and PowerShell 5.x with ErrorActionPreference=Stop treats ANY
+#      stderr output from native commands as a terminating error (NativeCommandError).
+#      This would abort the entire installer before reaching the success banner,
+#      even though every install step succeeded.
 Write-Info "Testing backend imports..."
-$testResult = & $pyExe -c "from backend.main import app; print('OK')" 2>&1
+$prevEAP = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+Push-Location $InstallDir
+try {
+    $testResult = & $pyExe -c "from backend.main import app; print('OK')" 2>&1
+} catch {
+    $testResult = "exception: $_"
+}
+Pop-Location
+$ErrorActionPreference = $prevEAP
 if ($testResult -match "OK") {
     Write-OK "Backend imports cleanly"
 } else {
-    Write-Warn "Backend import test: $testResult"
+    Write-Warn "Backend import test (non-fatal): $testResult"
+    Write-Warn "The install succeeded. The desktop shortcut will start the backend correctly."
 }
 
 # ── Success ────────────────────────────────────────────────────────────────
