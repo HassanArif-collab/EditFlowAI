@@ -9,8 +9,8 @@ setlocal
 
 set "PS1=%TEMP%\editflow_bootstrap_%RANDOM%.ps1"
 
-:: Extract PowerShell portion to temp file
-powershell -NoProfile -Command "$lines = Get-Content -LiteralPath '%~f0'; $marker = ($lines | Select-String -SimpleMatch '# PS_SCRIPT_START' | Select-Object -First 1).LineNumber; if ($marker) { $lines[($marker)..($lines.Count-1)] | Set-Content -LiteralPath '%PS1%' -Encoding UTF8 } else { Write-Host 'ERROR: marker not found'; exit 1 }"
+:: Extract PowerShell portion to temp file (everything after the marker line)
+powershell -NoProfile -Command "$lines = Get-Content -LiteralPath '%~f0'; $marker = ($lines | Select-String -Pattern '^# PS_SCRIPT_START$' | Select-Object -First 1).LineNumber; if ($marker) { $lines[($marker)..($lines.Count-1)] | Set-Content -LiteralPath '%PS1%' -Encoding UTF8 } else { Write-Host 'ERROR: marker not found'; exit 1 }"
 
 if not exist "%PS1%" (
     echo.

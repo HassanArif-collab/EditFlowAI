@@ -13,9 +13,9 @@ setlocal enabledelayedexpansion
 
 set "PS1=%TEMP%\editflow_install_%RANDOM%.ps1"
 
-:: Extract the PowerShell portion (everything after the marker line) to a temp .ps1 file
-:: The marker is: # PS_SCRIPT_START
-powershell -NoProfile -Command "$lines = Get-Content -LiteralPath '%~f0'; $marker = ($lines | Select-String -SimpleMatch '# PS_SCRIPT_START' | Select-Object -First 1).LineNumber; if ($marker) { $lines[($marker)..($lines.Count-1)] | Set-Content -LiteralPath '%PS1%' -Encoding UTF8 } else { Write-Host 'ERROR: PS_SCRIPT_START marker not found'; exit 1 }"
+:: Extract the PowerShell portion (everything after the unique marker line)
+:: to a temp .ps1 file, then run it with -File.
+powershell -NoProfile -Command "$lines = Get-Content -LiteralPath '%~f0'; $marker = ($lines | Select-String -Pattern '^# PS_SCRIPT_START$' | Select-Object -First 1).LineNumber; if ($marker) { $lines[($marker)..($lines.Count-1)] | Set-Content -LiteralPath '%PS1%' -Encoding UTF8 } else { Write-Host 'ERROR: marker not found'; exit 1 }"
 
 if not exist "%PS1%" (
     echo.
