@@ -20,7 +20,9 @@ var editflowModuleNames = [
     "export_manager.jsx",
     "effects_manager.jsx",
     "capability_probe.jsx",
-    "subtitle_manager.jsx"
+    "subtitle_manager.jsx",
+    "sequence_audio.jsx",
+    "diagnostic_probe.jsx"
 ];
 
 function editflowEscapeJSON(value) {
@@ -357,6 +359,16 @@ function editflowDispatch(command, payloadData) {
 
         case "placeSubtitleClips":
             result = subtitleManager.placeSubtitleClips(options);
+            break;
+
+        // ── Sequence Audio Extraction (native captions) ──
+        case "extractSequenceAudio":
+            result = sequenceAudio.extractSequenceAudio(options);
+            break;
+
+        // ── Diagnostic Probe (native captions) ──
+        case "runDiagnosticProbe":
+            result = diagnosticProbe.runProbe(options);
             break;
 
         default:

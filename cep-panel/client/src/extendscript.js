@@ -94,7 +94,8 @@ function _buildScript(fnName, args) {
        'probeCapabilities', 'undoLastAction', 'removeTimelineClips',
        'clearTimelineLabels', 'addMarker', 'removeTimelineRanges',
        'importFiles', 'getMarkers',
-       'getSequenceVideoSettings', 'placeSubtitleClips'
+       'getSequenceVideoSettings', 'placeSubtitleClips',
+       'extractSequenceAudio', 'runDiagnosticProbe'
       ].includes(fnName)) {
     // These are dispatched through the index.jsx router
     const command = fnName;

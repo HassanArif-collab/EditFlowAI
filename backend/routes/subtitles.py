@@ -13,11 +13,12 @@ arrive with Phases 1–3.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import uuid
 from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from ..services.subtitles.cue_builder import (
@@ -27,6 +28,9 @@ from ..services.subtitles.cue_builder import (
 )
 from ..services.subtitles.presets import load_presets
 from ..services.subtitles.srt_export import cues_to_srt
+from ..services.whisper_service import whisper_service
+from ..utils.progress import ProgressReporter
+from .whisper_admin import is_model_installed
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/subtitles", tags=["subtitles"])
@@ -105,3 +109,103 @@ async def srt(req: SrtReq):
     except Exception as exc:  # noqa: BLE001
         logger.warning("subtitles.srt: file write failed: %s", exc)
     return {"srt": text, "srt_path": srt_path}
+
+
+@router.post("/transcribe-mixdown")
+async def transcribe_mixdown(
+    file: UploadFile = File(...),
+    client_id: Optional[str] = Form(None),
+    sequence_name: Optional[str] = Form(None),
+    in_seconds: float = Form(0.0),
+    out_seconds: float = Form(0.0),
+):
+    """Receive a WAV mixdown from Premiere, transcribe it, return word-level cues.
+
+    Used by the Native Animated Captions panel: the CEP side exports the active
+    sequence's audio between In/Out points to a WAV, uploads it here, and we
+    run Whisper on it. Returns word-level timestamps so the panel can place
+    one MOGRT clip per word and keyframe native Scale/Opacity animations.
+
+    Returns 409 with body {error: "no_model", ...} if no Whisper model is
+    installed — the frontend uses this signal to pop the Whisper download UI.
+    """
+    from ..config import get_settings
+
+    try:
+        # 1. Resolve the active model + compute a *range-based* fingerprint.
+        #    Same sequence + In/Out + model → same fingerprint → same on-disk
+        #    WAV. This lets the CEP side skip re-uploading when the user
+        #    re-opens the panel for the same range, and lets Whisper's
+        #    transcript cache (keyed by file_fingerprint) hit on re-runs.
+        active_model = whisper_service.get_active_model_name()
+        fingerprint = hashlib.sha256(
+            f"{sequence_name}|{in_seconds}|{out_seconds}|{active_model}".encode("utf-8")
+        ).hexdigest()[:16]
+
+        # 2. Persist the uploaded WAV under data/media_cache/mixdowns/.
+        mixdowns_dir = get_settings().DATA_DIR / "media_cache" / "mixdowns"
+        mixdowns_dir.mkdir(parents=True, exist_ok=True)
+        wav_path = mixdowns_dir / f"{fingerprint}.wav"
+        try:
+            content = await file.read()
+            wav_path.write_bytes(content)
+        finally:
+            await file.close()
+
+        # 3. Model-availability short-circuit. 409 (not 422/500) so the
+        #    frontend can distinguish "install a model first" from a real
+        #    error.
+        if not is_model_installed(active_model):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "no_model",
+                    "available": [],
+                    "download_hint": "open_settings_whisper",
+                },
+            )
+
+        # 4. Transcribe. range_in/range_out=0 → whole file (the CEP side
+        #    already pre-trimmed to In/Out, so we don't re-trim here).
+        #    Passing file_fingerprint explicitly so the cache key is the
+        #    range-based fingerprint, not a content hash — re-runs of the
+        #    same In/Out hit the cache even if the WAV bytes differ.
+        reporter = ProgressReporter(task_type="transcribe", client_id=client_id)
+        result = await whisper_service.transcribe_fingerprinted(
+            source_path=str(wav_path),
+            file_fingerprint=fingerprint,
+            language=None,        # auto-detect
+            word_timestamps=True,
+            vad_filter=True,
+            progress=reporter,
+            range_in=0.0,
+            range_out=0.0,
+        )
+
+        # 5. Flatten segments → word list. TranscriptWord.probability maps
+        #    to the spec's `confidence` field name.
+        words_out: list[dict] = []
+        for seg in result.segments:
+            for w in seg.words:
+                words_out.append({
+                    "word": w.word,
+                    "start": w.start,
+                    "end": w.end,
+                    "confidence": w.probability,
+                })
+
+        return {
+            "words": words_out,
+            "fingerprint": fingerprint,
+            "duration": result.duration,
+            "model": result.model or active_model,
+            "engine": result.engine,
+        }
+
+    except HTTPException:
+        # Re-raise 409 (and any other deliberate HTTPException) unchanged
+        # so the try/except below doesn't mask it as a 500.
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("subtitles.transcribe_mixdown failed")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
