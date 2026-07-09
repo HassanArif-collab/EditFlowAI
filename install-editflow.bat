@@ -1,22 +1,41 @@
-<# :
 @echo off
 :: ============================================================================
 :: EditFlow AI — One-Click Installer for Windows
 :: ============================================================================
-:: Double-click this file to install everything:
-::   - Downloads the EditFlow AI repository
-::   - Sets up Python + all dependencies automatically
-::   - Links the panel into Adobe Premiere Pro
-::   - Creates desktop + Start Menu shortcuts
-::   - Creates an uninstaller
+:: Double-click this file to install everything automatically.
 ::
-:: Requirements: Windows 10/11, Adobe Premiere Pro 2023+
-:: No manual steps needed — just double-click and wait.
+:: HOW IT WORKS: This .bat file extracts its embedded PowerShell script to
+:: a temp .ps1 file, then runs it with `powershell -File`. This avoids the
+:: broken `iex` pattern that chokes on `>` and `$env:` characters.
 :: ============================================================================
 
-:: Re-launch self in PowerShell with admin rights for the junction
-powershell -NoProfile -ExecutionPolicy Bypass -Command "iex ((Get-Content '%~f0') -join \"`n\")"
-if %ERRORLEVEL% NEQ 0 (
+setlocal enabledelayedexpansion
+
+set "PS1=%TEMP%\editflow_install_%RANDOM%.ps1"
+
+:: Extract the PowerShell portion (everything after the marker line) to a temp .ps1 file
+:: The marker is: # PS_SCRIPT_START
+powershell -NoProfile -Command "$lines = Get-Content -LiteralPath '%~f0'; $marker = ($lines | Select-String -SimpleMatch '# PS_SCRIPT_START' | Select-Object -First 1).LineNumber; if ($marker) { $lines[($marker)..($lines.Count-1)] | Set-Content -LiteralPath '%PS1%' -Encoding UTF8 } else { Write-Host 'ERROR: PS_SCRIPT_START marker not found'; exit 1 }"
+
+if not exist "%PS1%" (
+    echo.
+    echo ============================================================
+    echo  ERROR: Could not extract installer script.
+    echo  Please screenshot this window and share it for help.
+    echo ============================================================
+    pause
+    exit /b 1
+)
+
+:: Run the extracted PowerShell script
+powershell -NoProfile -ExecutionPolicy Bypass -File "%PS1%"
+
+set "EXITCODE=%ERRORLEVEL%"
+
+:: Clean up temp file
+del "%PS1%" 2>nul
+
+if %EXITCODE% NEQ 0 (
     echo.
     echo ============================================================
     echo  Installation failed. Please read the messages above.
@@ -24,26 +43,27 @@ if %ERRORLEVEL% NEQ 0 (
     echo ============================================================
     pause
 )
-exit /b
-#>
 
-# ============================================================================
-# PowerShell installer script (runs after the batch header above)
-# ============================================================================
+exit /b %EXITCODE%
 
+:: ============================================================================
+:: Everything below this line is PowerShell (extracted to temp .ps1 at runtime)
+:: Do not remove the marker line below — the .bat file looks for it.
+:: ============================================================================
+# PS_SCRIPT_START
 $ErrorActionPreference = "Stop"
-$ProgressPreference = "SilentlyContinue"  # speed up Invoke-WebRequest
+$ProgressPreference = "SilentlyContinue"
 
 # ── Configuration ──────────────────────────────────────────────────────────
 $RepoUrl = "https://github.com/HassanArif-collab/EditFlowAI/archive/refs/heads/feat/native-animated-captions.zip"
 $InstallDir = "C:\EditFlowAI"
 $ExtensionId = "com.editflow.ai"
-$VenvDir = "$InstallDir\.venv"
-$BranchName = "feat/native-animated-captions"
+$VenvDir = Join-Path $InstallDir ".venv"
 
 # ── Helper functions ───────────────────────────────────────────────────────
 function Write-Step($msg) {
-    Write-Host "`n>>> $msg" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host ">>> $msg" -ForegroundColor Cyan
 }
 function Write-OK($msg) {
     Write-Host "    [OK] $msg" -ForegroundColor Green
@@ -65,17 +85,17 @@ function Test-Command($cmd) {
 # ── Banner ─────────────────────────────────────────────────────────────────
 Write-Host ""
 Write-Host "  ==================================================" -ForegroundColor Cyan
-Write-Host "    EditFlow AI — One-Click Installer" -ForegroundColor Cyan
+Write-Host "    EditFlow AI - One-Click Installer" -ForegroundColor Cyan
 Write-Host "    Native Animated Captions for Premiere Pro" -ForegroundColor Cyan
 Write-Host "  ==================================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "  This will install EditFlow AI to: $InstallDir" -ForegroundColor White
-Write-Host "  Close Premiere Pro if it's open, then press any key to begin." -ForegroundColor Yellow
+Write-Host "  Close Premiere Pro if it is open, then press any key to begin." -ForegroundColor Yellow
 Write-Host ""
 $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
 
 # ── Step 1: Check Windows version ──────────────────────────────────────────
-Write-Step "Step 1/8 — Checking system..."
+Write-Step "Step 1/8 - Checking system..."
 $osVersion = [System.Environment]::OSVersion.Version
 if ($osVersion.Major -lt 10) {
     Write-Err "Windows 10 or later is required. You have Windows $($osVersion.Major)."
@@ -85,9 +105,9 @@ Write-OK "Windows $($osVersion.Major).$($osVersion.Minor) detected"
 
 # Check for Premiere Pro install
 $premierePaths = @(
-    "${env:ProgramFiles}\Adobe",
-    "${env:ProgramFiles(x86)}\Adobe",
-    "${env:LOCALAPPDATA}\Adobe"
+    (Join-Path $env:ProgramFiles "Adobe"),
+    (Join-Path ${env:ProgramFiles(x86)} "Adobe"),
+    (Join-Path $env:LOCALAPPDATA "Adobe")
 )
 $premiereFound = $false
 foreach ($base in $premierePaths) {
@@ -106,7 +126,7 @@ if (-not $premiereFound) {
 }
 
 # ── Step 2: Check for Python ───────────────────────────────────────────────
-Write-Step "Step 2/8 — Checking for Python..."
+Write-Step "Step 2/8 - Checking for Python..."
 
 $python = $null
 foreach ($cmd in @("python", "python3", "py")) {
@@ -114,7 +134,8 @@ foreach ($cmd in @("python", "python3", "py")) {
         try {
             $ver = & $cmd --version 2>&1
             if ($ver -match "Python (\d+)\.(\d+)") {
-                $major = [int]$matches[1]; $minor = [int]$matches[2]
+                $major = [int]$matches[1]
+                $minor = [int]$matches[2]
                 if ($major -ge 3 -and $minor -ge 10) {
                     $python = $cmd
                     Write-OK "Python $major.$minor found ($cmd)"
@@ -152,12 +173,12 @@ if (-not $python) {
 }
 
 # ── Step 3: Download the repository ────────────────────────────────────────
-Write-Step "Step 3/8 — Downloading EditFlow AI..."
+Write-Step "Step 3/8 - Downloading EditFlow AI..."
 
 # If the install dir already exists, back it up
 if (Test-Path $InstallDir) {
     $backup = "$InstallDir.backup." + (Get-Date -Format "yyyyMMdd-HHmmss")
-    Write-Warn "Existing install found at $InstallDir — backing up to $backup"
+    Write-Warn "Existing install found at $InstallDir - backing up to $backup"
     try {
         Move-Item $InstallDir $backup
         Write-OK "Backed up existing install"
@@ -171,7 +192,7 @@ if (Test-Path $InstallDir) {
 New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 
 # Download the ZIP
-$zipPath = "$InstallDir\editflow-download.zip"
+$zipPath = Join-Path $InstallDir "editflow-download.zip"
 Write-Info "Downloading from GitHub..."
 try {
     Invoke-WebRequest -Uri $RepoUrl -OutFile $zipPath -UseBasicParsing
@@ -203,26 +224,26 @@ try {
 }
 
 # Verify key files exist
-if (-not (Test-Path "$InstallDir\backend\main.py") -or -not (Test-Path "$InstallDir\cep-panel\CSXS\manifest.xml")) {
-    Write-Err "Repository structure looks wrong — backend/main.py or cep-panel/CSXS/manifest.xml missing"
+if (-not (Test-Path (Join-Path $InstallDir "backend\main.py")) -or -not (Test-Path (Join-Path $InstallDir "cep-panel\CSXS\manifest.xml"))) {
+    Write-Err "Repository structure looks wrong - backend\main.py or cep-panel\CSXS\manifest.xml missing"
     exit 1
 }
 Write-OK "Repository structure verified"
 
 # ── Step 4: Create Python virtual environment + install dependencies ───────
-Write-Step "Step 4/8 — Setting up Python environment..."
+Write-Step "Step 4/8 - Setting up Python environment..."
 
 Write-Info "Creating virtual environment..."
 try {
-    & $python -m venv "$VenvDir"
+    & $python -m venv $VenvDir
     Write-OK "Virtual environment created"
 } catch {
     Write-Err "Failed to create venv: $_"
     exit 1
 }
 
-$pipExe = "$VenvDir\Scripts\pip.exe"
-$pyExe = "$VenvDir\Scripts\python.exe"
+$pipExe = Join-Path $VenvDir "Scripts\pip.exe"
+$pyExe = Join-Path $VenvDir "Scripts\python.exe"
 
 # Upgrade pip
 Write-Info "Upgrading pip..."
@@ -231,11 +252,11 @@ Write-Info "Upgrading pip..."
 # Install dependencies
 Write-Info "Installing Python dependencies (this takes 2-5 minutes)..."
 try {
-    & $pipExe install -r "$InstallDir\requirements.txt" --quiet 2>&1 | Out-Null
+    & $pipExe install -r (Join-Path $InstallDir "requirements.txt") --quiet 2>&1 | Out-Null
     Write-OK "Dependencies installed"
 } catch {
     Write-Warn "Quiet install failed, retrying with verbose output..."
-    & $pipExe install -r "$InstallDir\requirements.txt"
+    & $pipExe install -r (Join-Path $InstallDir "requirements.txt")
     if ($LASTEXITCODE -ne 0) {
         Write-Err "Dependency installation failed"
         exit 1
@@ -244,14 +265,15 @@ try {
 }
 
 # Verify fastapi importable
-& $pyExe -c "import fastapi; print('fastapi', fastapi.__version__)" 2>&1 | ForEach-Object { Write-Info $_ }
+$importCheck = & $pyExe -c "import fastapi; print('fastapi', fastapi.__version__)" 2>&1
+Write-Info "Verified: $importCheck"
 
 # ── Step 5: Create CEP junction ────────────────────────────────────────────
-Write-Step "Step 5/8 — Linking panel to Adobe Premiere Pro..."
+Write-Step "Step 5/8 - Linking panel to Adobe Premiere Pro..."
 
 $cepDir = Join-Path $env:APPDATA "Adobe\CEP\extensions"
 $targetDir = Join-Path $cepDir $ExtensionId
-$cepPanelDir = "$InstallDir\cep-panel"
+$cepPanelDir = Join-Path $InstallDir "cep-panel"
 
 # Create CEP extensions directory if missing
 if (-not (Test-Path $cepDir)) {
@@ -270,7 +292,7 @@ if (Test-Path $targetDir) {
     Write-Info "Removed existing panel link"
 }
 
-# Create junction (no admin required for junctions to %APPDATA%)
+# Create junction (no admin required for junctions to APPDATA)
 cmd.exe /c "mklink /J `"$targetDir`" `"$cepPanelDir`"" | Out-Null
 
 if (Test-Path $targetDir) {
@@ -282,7 +304,7 @@ if (Test-Path $targetDir) {
 }
 
 # ── Step 6: Enable unsigned extensions in registry ─────────────────────────
-Write-Step "Step 6/8 — Enabling unsigned extensions in Premiere..."
+Write-Step "Step 6/8 - Enabling unsigned extensions in Premiere..."
 
 $regPaths = @(
     "HKCU:\SOFTWARE\Adobe\CSXS.11",
@@ -300,11 +322,11 @@ foreach ($regPath in $regPaths) {
 Write-OK "PlayerDebugMode enabled for CSXS.11-15"
 
 # ── Step 7: Create shortcuts + uninstaller ─────────────────────────────────
-Write-Step "Step 7/8 — Creating shortcuts..."
+Write-Step "Step 7/8 - Creating shortcuts..."
 
 # Create the backend launcher batch file
-$launcherPath = "$InstallDir\start-editflow.bat"
-@"
+$launcherPath = Join-Path $InstallDir "start-editflow.bat"
+$launcherContent = @"
 @echo off
 title EditFlow AI Backend
 echo Starting EditFlow AI backend...
@@ -313,17 +335,18 @@ echo Keep this window open while you use the panel in Premiere Pro.
 echo Close this window to stop the backend.
 echo.
 cd /d "$InstallDir"
-"$VenvDir\Scripts\python.exe" run.py --prod
+"$pyExe" run.py --prod
 pause
-"@ | Set-Content $launcherPath -Encoding ASCII
+"@
+Set-Content -Path $launcherPath -Value $launcherContent -Encoding ASCII
 
 # Desktop shortcut
 $desktop = [Environment]::GetFolderPath("Desktop")
-$shortcutPath = "$desktop\EditFlow AI.lnk"
+$shortcutPath = Join-Path $desktop "EditFlow AI.lnk"
 $ws = New-Object -ComObject WScript.Shell
 $shortcut = $ws.CreateShortcut($shortcutPath)
 $shortcut.TargetPath = $launcherPath
-$shortcut.IconLocation = "shell32.dll,13"  # play icon
+$shortcut.IconLocation = "shell32.dll,13"
 $shortcut.Description = "Start EditFlow AI backend for Premiere Pro"
 $shortcut.WorkingDirectory = $InstallDir
 $shortcut.Save()
@@ -331,7 +354,7 @@ Write-OK "Desktop shortcut created: EditFlow AI"
 
 # Start Menu shortcut
 $startMenu = [Environment]::GetFolderPath("Programs")
-$startShortcutPath = "$startMenu\EditFlow AI.lnk"
+$startShortcutPath = Join-Path $startMenu "EditFlow AI.lnk"
 $shortcut = $ws.CreateShortcut($startShortcutPath)
 $shortcut.TargetPath = $launcherPath
 $shortcut.IconLocation = "shell32.dll,13"
@@ -341,8 +364,8 @@ $shortcut.Save()
 Write-OK "Start Menu shortcut created"
 
 # Uninstaller
-$uninstallerPath = "$InstallDir\uninstall-editflow.bat"
-@"
+$uninstallerPath = Join-Path $InstallDir "uninstall-editflow.bat"
+$uninstallerContent = @"
 @echo off
 title Uninstall EditFlow AI
 echo.
@@ -365,34 +388,34 @@ rmdir /S /Q "$InstallDir"
 
 echo.
 echo  EditFlow AI has been uninstalled.
-echo  Your transcripts and data are still in $InstallDir\data (if present).
 echo.
 pause
-"@ | Set-Content $uninstallerPath -Encoding ASCII
-Write-OK "Uninstaller created: $uninstallerPath"
+"@
+Set-Content -Path $uninstallerPath -Value $uninstallerContent -Encoding ASCII
+Write-OK "Uninstaller created"
 
 # ── Step 8: Final verification ─────────────────────────────────────────────
-Write-Step "Step 8/8 — Verifying installation..."
+Write-Step "Step 8/8 - Verifying installation..."
 
 $checks = @(
     @{Name="Install directory"; Path=$InstallDir},
-    @{Name="Backend code"; Path="$InstallDir\backend\main.py"},
-    @{Name="CEP panel"; Path="$InstallDir\cep-panel\CSXS\manifest.xml"},
-    @{Name="Python venv"; Path="$VenvDir\Scripts\python.exe"},
+    @{Name="Backend code"; Path=(Join-Path $InstallDir "backend\main.py")},
+    @{Name="CEP panel"; Path=(Join-Path $InstallDir "cep-panel\CSXS\manifest.xml")},
+    @{Name="Python venv"; Path=$pyExe},
     @{Name="Panel link"; Path=$targetDir},
     @{Name="Desktop shortcut"; Path=$shortcutPath},
     @{Name="Launcher script"; Path=$launcherPath},
     @{Name="Uninstaller"; Path=$uninstallerPath},
-    @{Name="Native captions view"; Path="$InstallDir\cep-panel\client\src\native-captions-view.js"},
-    @{Name="base_text.mogrt"; Path="$InstallDir\cep-panel\templates\subtitles\base_text.mogrt"}
+    @{Name="Native captions view"; Path=(Join-Path $InstallDir "cep-panel\client\src\native-captions-view.js")},
+    @{Name="base_text.mogrt"; Path=(Join-Path $InstallDir "cep-panel\templates\subtitles\base_text.mogrt")}
 )
 
 $allOk = $true
 foreach ($check in $checks) {
     if (Test-Path $check.Path) {
-        Write-OK "$($check.Name) — present"
+        Write-OK "$($check.Name) - present"
     } else {
-        Write-Err "$($check.Name) — MISSING at $($check.Path)"
+        Write-Err "$($check.Name) - MISSING at $($check.Path)"
         $allOk = $false
     }
 }
@@ -415,22 +438,22 @@ Write-Host ""
 Write-Host "  NEXT STEPS:" -ForegroundColor White
 Write-Host ""
 Write-Host "  1. Double-click the 'EditFlow AI' shortcut on your Desktop" -ForegroundColor White
-Write-Host "     (a black window opens — leave it running)"
+Write-Host "     (a black window opens - leave it running)"
 Write-Host ""
 Write-Host "  2. Open Adobe Premiere Pro" -ForegroundColor White
 Write-Host ""
-Write-Host "  3. Go to: Window > Extensions > EditFlow AI" -ForegroundColor White
+Write-Host "  3. Go to: Window - Extensions - EditFlow AI" -ForegroundColor White
 Write-Host ""
-Write-Host "  4. Click the 💬 speech bubble icon in the panel header" -ForegroundColor White
+Write-Host "  4. Click the speech bubble icon in the panel header" -ForegroundColor White
 Write-Host "     to open Native Animated Captions"
 Write-Host ""
 Write-Host "  5. FIRST TIME ONLY: Download a Whisper model" -ForegroundColor Yellow
-Write-Host "     Click the gear icon in the panel > Settings > Whisper"
+Write-Host "     Click the gear icon in the panel, then Settings, then Whisper"
 Write-Host "     Download 'small' (English) or 'medium' (multilingual)"
 Write-Host "     This takes 5-15 minutes depending on your internet"
 Write-Host ""
-Write-Host "  OPTIONAL — Audio export preset (.epr file):" -ForegroundColor Yellow
-Write-Host "  If 'Extract & Transcribe' fails, see:" -ForegroundColor Gray
+Write-Host "  OPTIONAL - Audio export preset (.epr file):" -ForegroundColor Yellow
+Write-Host "  If 'Extract and Transcribe' fails, see:" -ForegroundColor Gray
 Write-Host "  $InstallDir\cep-panel\templates\audio\README.md" -ForegroundColor Gray
 Write-Host ""
 Write-Host "  To uninstall: $uninstallerPath" -ForegroundColor Gray

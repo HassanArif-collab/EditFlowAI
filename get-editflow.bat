@@ -1,26 +1,42 @@
-<# :
 @echo off
 :: ============================================================================
-:: EditFlow AI — Quick Installer (downloads and runs the full installer)
+:: EditFlow AI — Quick Bootstrap Installer
 :: ============================================================================
-:: This is a tiny bootstrap that downloads the real installer from GitHub
-:: and runs it. Useful for sharing a short link.
+:: Downloads the full installer from GitHub and runs it.
 :: ============================================================================
 
-powershell -NoProfile -ExecutionPolicy Bypass -Command "iex ((Get-Content '%~f0') -join \"`n\")"
-if %ERRORLEVEL% NEQ 0 pause
-exit /b
-#>
+setlocal
 
+set "PS1=%TEMP%\editflow_bootstrap_%RANDOM%.ps1"
+
+:: Extract PowerShell portion to temp file
+powershell -NoProfile -Command "$lines = Get-Content -LiteralPath '%~f0'; $marker = ($lines | Select-String -SimpleMatch '# PS_SCRIPT_START' | Select-Object -First 1).LineNumber; if ($marker) { $lines[($marker)..($lines.Count-1)] | Set-Content -LiteralPath '%PS1%' -Encoding UTF8 } else { Write-Host 'ERROR: marker not found'; exit 1 }"
+
+if not exist "%PS1%" (
+    echo.
+    echo  ERROR: Could not extract bootstrap script.
+    pause
+    exit /b 1
+)
+
+powershell -NoProfile -ExecutionPolicy Bypass -File "%PS1%"
+
+del "%PS1%" 2>nul
+exit /b %ERRORLEVEL%
+
+:: ============================================================================
+:: PowerShell script starts here (extracted to temp .ps1 at runtime)
+:: ============================================================================
+# PS_SCRIPT_START
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
 Write-Host ""
-Write-Host "  EditFlow AI — Downloading installer..." -ForegroundColor Cyan
+Write-Host "  EditFlow AI - Downloading installer..." -ForegroundColor Cyan
 Write-Host ""
 
 $installerUrl = "https://raw.githubusercontent.com/HassanArif-collab/EditFlowAI/feat/native-animated-captions/install-editflow.bat"
-$tempPath = "$env:TEMP\editflow-full-installer.bat"
+$tempPath = Join-Path $env:TEMP "editflow-full-installer.bat"
 
 try {
     Invoke-WebRequest -Uri $installerUrl -OutFile $tempPath -UseBasicParsing
