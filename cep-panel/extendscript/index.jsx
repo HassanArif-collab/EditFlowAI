@@ -22,7 +22,8 @@ var editflowModuleNames = [
     "capability_probe.jsx",
     "subtitle_manager.jsx",
     "sequence_audio.jsx",
-    "diagnostic_probe.jsx"
+    "diagnostic_probe.jsx",
+    "native_captions_manager.jsx"
 ];
 
 function editflowEscapeJSON(value) {
@@ -371,6 +372,11 @@ function editflowDispatch(command, payloadData) {
             result = diagnosticProbe.runProbe(options);
             break;
 
+        // ── Native Caption Placement + Animation (the core) ──
+        case "applyNativeCaptions":
+            result = nativeCaptionsManager.applyNativeCaptions(options);
+            break;
+
         default:
             result = editflowUtils.safeStringify({
                 success: false,
@@ -385,7 +391,8 @@ function editflowDispatch(command, payloadData) {
             "clearTimelineLabels", "manageTracks",
             "setAudioLevel", "normalizeAudio", "audioFade", "addMarker", "addPhraseRangeMarkers",
             "applyEffect", "applyTransitionToAll", "setClipLabel", "processEDL",
-            "placeSubtitleClips"
+            "placeSubtitleClips",
+            "applyNativeCaptions"
         ];
         if (editflowArrayContains(modifyingCommands, command)) {
             _undoCounter++;

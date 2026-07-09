@@ -19,8 +19,8 @@
   <base href="http://127.0.0.1:8765/panel/">
   <!-- Noto Nastaliq Urdu is bundled locally (styles/fonts.css → fonts/*.woff2)
        so Urdu renders even when CEP is offline. No Google Fonts CDN at runtime. -->
-  <link rel="stylesheet" href="styles/fonts.css?v=natcap3">
-  <link rel="stylesheet" href="styles/chat.css?v=natcap3">
+  <link rel="stylesheet" href="styles/fonts.css?v=natcap4">
+  <link rel="stylesheet" href="styles/chat.css?v=natcap4">
   <title>EditFlow AI</title>
 </head>
 <body>
@@ -228,9 +228,9 @@
   <div id="settings-overlay" class="overlay hidden"></div>
   <div id="diagnostics-popover" class="popover hidden"></div>
 
-  <script src="lib/CSInterface.js?v=natcap3"></script>
+  <script src="lib/CSInterface.js?v=natcap4"></script>
   <!-- ?v= cache-buster: force CEP to refetch each release so module hot-swap
        is reliable. Bump the value whenever any module changes. -->
-  <script type="module" src="src/main.js?v=natcap3"></script>
+  <script type="module" src="src/main.js?v=natcap4"></script>
 </body>
 </html>
