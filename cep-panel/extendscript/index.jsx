@@ -19,7 +19,8 @@ var editflowModuleNames = [
     "track_manager.jsx",
     "export_manager.jsx",
     "effects_manager.jsx",
-    "capability_probe.jsx"
+    "capability_probe.jsx",
+    "subtitle_manager.jsx"
 ];
 
 function editflowEscapeJSON(value) {
@@ -349,6 +350,15 @@ function editflowDispatch(command, payloadData) {
             result = clipManager.processEDLOps(options);
             break;
 
+        // ── Subtitles / animated captions ──
+        case "getSequenceVideoSettings":
+            result = subtitleManager.getSequenceVideoSettings();
+            break;
+
+        case "placeSubtitleClips":
+            result = subtitleManager.placeSubtitleClips(options);
+            break;
+
         default:
             result = editflowUtils.safeStringify({
                 success: false,
@@ -362,7 +372,8 @@ function editflowDispatch(command, payloadData) {
             "removeTimelineClips", "removeTimelineRanges",
             "clearTimelineLabels", "manageTracks",
             "setAudioLevel", "normalizeAudio", "audioFade", "addMarker", "addPhraseRangeMarkers",
-            "applyEffect", "applyTransitionToAll", "setClipLabel", "processEDL"
+            "applyEffect", "applyTransitionToAll", "setClipLabel", "processEDL",
+            "placeSubtitleClips"
         ];
         if (editflowArrayContains(modifyingCommands, command)) {
             _undoCounter++;
