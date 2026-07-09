@@ -183,18 +183,20 @@ nativeCaptionsManager = (function() {
     }
 
     function _popKeyframes(durSec) {
-        // Hormozi-style pop-in: scale 0 → 110 → 100 + opacity 0 → 100 (faster than scale).
-        // Uses easeOutBack on the scale curve to give the slight overshoot.
+        // Hormozi-style pop-in: scale 0 → 110 (overshoot) → 100 (settle)
+        // + opacity 0 → 100 (snaps in faster than scale).
+        //
+        // The overshoot is what gives the "pop" feel. Premiere's Bezier
+        // interpolation (set via setInterpolationTypeAtKey(t, 5, true)) smooths
+        // the curve between keyframes — we don't need to compute easing values
+        // ourselves, just set the right peak/settle points.
+        //
+        // This matches the proven pattern from subtitle_manager.jsx (which was
+        // debugged through 5 fix commits on feat/animated-captions).
         var intro = Math.min(0.25, durSec * 0.4);
-        // Compute eased values for the scale curve at 0%, 60%, 100% of intro
-        // easeOutBack(0) = 0, easeOutBack(0.6) ≈ 1.13 (overshoot), easeOutBack(1) = 1
-        // We want final scale = 100, peak = 110 (10% overshoot)
-        var peakScale = 110;
-        var eased60 = easeOutBack(0.6);  // ~1.13
-        var scaleAt60 = Math.round(100 + (peakScale - 100) * (eased60 / 1.13));  // ~110
         return {
-            opacity: [[0, 0], [intro * 0.5, 100]],  // opacity snaps in faster than scale
-            scale:   [[0, 0], [intro * 0.6, scaleAt60], [intro, 100]]
+            opacity: [[0, 0], [intro * 0.5, 100]],  // opacity snaps in at 50% of intro
+            scale:   [[0, 0], [intro * 0.6, 110], [intro, 100]]  // overshoot to 110, settle to 100
         };
     }
 

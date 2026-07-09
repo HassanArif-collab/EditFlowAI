@@ -302,11 +302,9 @@ async function _onExtract() {
     }
 
     // Resolve the bundled .epr path (templates/audio/audio_mixdown_wav.epr).
-    // We ask ExtendScript for the extension root via the dispatcher, OR we
-    // construct it from the known panel mount path.
-    // Simpler: pass "WaveAudio" as the preset name and let sequence_audio.jsx
-    // try the literal-name fallback first.
-    const csInterface = window.CSInterface ? new CSInterface() : null;
+    // If the .epr file doesn't exist, sequence_audio.jsx will fall back to
+    // trying the "WaveAudio" literal preset name.
+    const csInterface = _getCSInterface();
     let extensionRoot = '';
     if (csInterface) {
       const key = (csInterface.SYSTEM_PATH && csInterface.SYSTEM_PATH.EXTENSION) || 'extension';
@@ -454,9 +452,14 @@ async function _onGenerate(smokeTest) {
 }
 
 // ── Helpers ──────────────────────────────────────────────────
+function _getCSInterface() {
+  if (typeof CSInterface !== 'undefined') return new CSInterface();
+  return null;
+}
+
 function _resolveBaseMogrtPath() {
   // Resolve the bundled base_text.mogrt path relative to the extension root.
-  const csInterface = window.CSInterface ? new CSInterface() : null;
+  const csInterface = _getCSInterface();
   if (!csInterface) {
     throw new Error('CSInterface not available — must run inside Premiere CEP.');
   }
@@ -467,16 +470,21 @@ function _resolveBaseMogrtPath() {
 }
 
 function _tempWavPath() {
-  // Use the OS temp dir + a unique name. ExtendScript will create the file.
-  // On Windows: %TEMP% via $.getenv('TEMP')
-  // On macOS: /tmp
-  let tmpDir = '';
-  try { tmpDir = $.getenv('TEMP') || $.getenv('TMP') || '/tmp'; } catch (e) { tmpDir = '/tmp'; }
-  // Use a timestamp + random suffix
+  // Use the OS temp dir + a unique name. CEP gives us Node's os module
+  // via cep_node.require — os.tmpdir() returns the correct platform path:
+  //   Windows: C:\Users\<user>\AppData\Local\Temp
+  //   macOS:   /var/folders/xx/...
+  //   Linux:   /tmp
+  const req = (typeof require === 'function') ? require
+            : (window.cep_node && window.cep_node.require) ? window.cep_node.require
+            : null;
+  if (!req) throw new Error('Node require not available in CEP — cannot determine temp dir.');
+  const os = req('os');
+  const path = req('path');
+  const tmpDir = os.tmpdir();
   const name = 'editflow_mixdown_' + Date.now() + '_' + Math.floor(Math.random() * 10000) + '.wav';
-  // Build OS-native path
-  const sep = (tmpDir.indexOf('/') === 0) ? '/' : '\\';
-  return tmpDir.replace(/[\\/]+$/, '') + sep + name;
+  // path.join produces OS-native separators automatically
+  return path.join(tmpDir, name);
 }
 
 async function _readFileAsBlob(path) {
@@ -495,9 +503,12 @@ async function _readFileAsBlob(path) {
 
 async function _diagLog(level, msg, data) {
   try {
+    // Read BUILD_TAG from the DOM (main.js stamps #boot-tag with "build:<tag>")
+    const tagEl = document.getElementById('boot-tag');
+    const build = tagEl ? tagEl.textContent.replace(/^build:/, '') : 'native-captions';
     await apiPost('/api/diag/log', {
       events: [{ level, source: 'native-captions', msg, data }],
-      build: 'native-captions-2',
+      build: build,
     }, { timeoutMs: 5000 });
   } catch (_) { /* never let logging break the flow */ }
 }
