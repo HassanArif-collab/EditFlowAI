@@ -370,6 +370,20 @@ $launcherPath = Join-Path $InstallDir "start-editflow.bat"
 $launcherContent = @"
 @echo off
 title EditFlow AI Backend
+echo ==================================================
+echo   EditFlow AI - Starting Backend Server
+echo ==================================================
+echo.
+
+:: Kill any existing EditFlow backend on port 8765
+:: (prevents "only one usage of each socket address" error)
+echo Checking for existing backend...
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":8765 " ^| findstr "LISTENING"') do (
+    echo Killing existing backend process (PID %%a)...
+    taskkill /F /PID %%a >nul 2>&1
+    timeout /t 1 /nobreak >nul
+)
+
 echo Starting EditFlow AI backend...
 echo.
 echo Keep this window open while you use the panel in Premiere Pro.

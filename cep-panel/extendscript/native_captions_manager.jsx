@@ -1,35 +1,30 @@
 /*
- * native_captions_manager.jsx — Per-word native caption placement + animation.
+ * native_captions_manager.jsx — Native caption placement + animation.
  *
- * Architecture (reliability-first):
- *   1. Pre-bake style: base_text.mogrt already has font/color/size/position baked in.
- *      Per-clip, we only change textEditValue (one operation, not four).
- *   2. Opacity-first animation ladder:
- *      - Fade-in: Opacity keyframes only (most reliable, no Premiere bugs)
- *      - Pop-in:  Opacity + Scale (Hormozi-style, works on 95% of setups)
- *      - Bounce:  Opacity + Scale + Position (experimental — DVAPR-4217831 risk)
- *   3. Bail-fast: if (errors.length >= 3) break; — don't keep placing when the
- *      first 3 cues all fail (systemic issue, not per-word).
- *   4. Per-step error detail: each failure records {word, step, error} so the
- *      panel can show exactly what went wrong.
+ * v3: SINGLE-CLIP approach (fixes memory crash).
  *
- * Easing functions ported from Paquette1111/Better-Captions-Premiere
- * (pure JS, no Premiere API — just compute keyframe values with the curve applied).
+ * OLD approach (v2): 1 MOGRT per word = 100+ Graphic layers = PPro crash.
+ * NEW approach (v3): 1 MOGRT spanning the whole sequence, with keyframed
+ *   Source Text (text changes at each word boundary) + keyframed Scale/Opacity
+ *   (pop-in at each word). This is how submachine.ai and other pro caption
+ *   plugins work — 1 clip, N keyframes, minimal memory.
  *
- * Helpers copied verbatim from subtitle_manager.jsx (the prior attempt already
- * debugged Source Text JSON patching through 5 fix commits — reusing them
- * verbatim is safer than re-deriving).
+ * The single-clip approach:
+ *   1. Insert ONE base_text.mogrt at the first word's start time
+ *   2. Trim it to span from first word start to last word end
+ *   3. Keyframe Source Text: at each word.start, set the text to that word
+ *   4. Keyframe Scale: at each word.start, do the pop-in (0 → 110 → 100)
+ *   5. Keyframe Opacity: at each word.start, do the fade (0 → 100)
  *
- * Units:
- *   - importMGT placement time: tick STRING (secondsToTicksString)
- *   - Component keyframe time: Time OBJECTS in seconds (var t = new Time(); t.seconds = X)
- *   - KF_BASE = 'sequence' — keyframe times are absolute sequence seconds
+ * For 108 words: 1 clip + 108 Source Text keyframes + 324 Scale keyframes +
+ * 216 Opacity keyframes = ~650 keyframes on 1 clip. PPro handles this easily.
+ *
+ * Helpers copied verbatim from subtitle_manager.jsx (debugged through 5 fix
+ * commits on feat/animated-captions).
  */
 nativeCaptionsManager = (function() {
     "use strict";
 
-    // 'sequence' = keyframe times are absolute sequence seconds (cue.start+off);
-    // 'clip' = relative to the clip's own start. 'sequence' is the working setting.
     var KF_BASE = 'sequence';
 
     function _ok(obj)  { obj = obj || {}; obj.success = true;  return editflowUtils.safeStringify(obj); }
@@ -37,16 +32,7 @@ nativeCaptionsManager = (function() {
 
     function _time(seconds) { var t = new Time(); t.seconds = seconds; return t; }
 
-    // ── Easing functions (ported from Better-Captions-Premiere) ──
-    // All take t in [0, 1] and return eased value in [0, 1].
-    function easeOutBack(t) {
-        var c1 = 1.70158, c3 = c1 + 1;
-        return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
-    }
-    function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
-    function easeLinear(t) { return t; }
-
-    // ── Helpers (VERBATIM copies from subtitle_manager.jsx — keep self-contained) ──
+    // ── Helpers (VERBATIM from subtitle_manager.jsx) ──
     function _hexRgba(hex, alpha) {
         var h = String(hex || "#ffffff").replace("#", "");
         if (h.length === 3) h = h.charAt(0)+h.charAt(0)+h.charAt(1)+h.charAt(1)+h.charAt(2)+h.charAt(2);
@@ -105,8 +91,6 @@ nativeCaptionsManager = (function() {
         return null;
     }
 
-    function _findParam(clip, name) { return _findByDisplayName(clip, name); }
-
     function _dumpComps(clip) {
         var out = [], comps = _allComponents(clip), c, j, props, names, dn;
         for (c = 0; c < comps.length; c++) {
@@ -120,6 +104,27 @@ nativeCaptionsManager = (function() {
 
     function _short(x) { try { return String(x).slice(0, 160); } catch (e) { return "?"; } }
 
+    // Build the Source Text JSON value for a given text string.
+    // Parses the existing value (to preserve style info) and patches textEditValue
+    // + fontTextRunLength.
+    function _buildTextValue(param, text) {
+        var before = null;
+        try { before = param.getValue(); } catch (e) {}
+        if (typeof before === 'string') {
+            try {
+                var v = JSON.parse(before);
+                if (v && v.textEditValue !== undefined) {
+                    v.textEditValue = text;
+                    v.fontTextRunLength = [text.length];
+                    return JSON.stringify(v);
+                }
+            } catch (e) {}
+        }
+        // Fallback: raw string
+        return text;
+    }
+
+    // Set the Source Text value (non-keyframed — used for the initial value).
     function _setText(clip, text, opts) {
         var p = _findSourceTextParam(clip, opts && opts.textParam);
         if (!p) throw new Error("no text param. comps: " + _dumpComps(clip));
@@ -144,14 +149,6 @@ nativeCaptionsManager = (function() {
     }
 
     // ── Keyframe helpers ──
-    function _baseSec(clip, cueStart) {
-        if (KF_BASE === 'clip') {
-            try { return clip.start.seconds; } catch (e) { return cueStart; }
-        }
-        return cueStart;  // sequence-absolute
-    }
-
-    // Add a single keyframe at t0+offset with the given value, using Bezier interpolation.
     function _addKey(prop, tSec, value) {
         var t = _time(tSec);
         prop.addKey(t);
@@ -159,112 +156,10 @@ nativeCaptionsManager = (function() {
         try { prop.setInterpolationTypeAtKey(t, 5, true); } catch (e) {}  // 5 = Bezier
     }
 
-    // Apply a list of [offsetSec, value] pairs as keyframes on `prop`, starting at t0.
-    function _keyNum(prop, t0, pairs) {
-        prop.setTimeVarying(true);
-        for (var i = 0; i < pairs.length; i++) {
-            _addKey(prop, t0 + pairs[i][0], pairs[i][1]);
-        }
-    }
-
-    // ── Preset keyframe generators ──
-    // Each returns { opacity: [[off, val], ...], scale: [[off, val], ...] }
-    // Offsets are relative to the cue's start time (seconds).
-    // Values are in the units Premiere expects (Opacity 0-100, Scale 0-100).
-
-    function _fadeKeyframes(durSec) {
-        // Pure opacity fade. Most reliable.
-        // Opacity 0 → 100 over 0.3s (or 40% of cue if shorter).
-        var intro = Math.min(0.3, durSec * 0.4);
-        return {
-            opacity: [[0, 0], [intro, 100]],
-            scale: []
-        };
-    }
-
-    function _popKeyframes(durSec) {
-        // Hormozi-style pop-in: scale 0 → 110 (overshoot) → 100 (settle)
-        // + opacity 0 → 100 (snaps in faster than scale).
-        //
-        // The overshoot is what gives the "pop" feel. Premiere's Bezier
-        // interpolation (set via setInterpolationTypeAtKey(t, 5, true)) smooths
-        // the curve between keyframes — we don't need to compute easing values
-        // ourselves, just set the right peak/settle points.
-        //
-        // This matches the proven pattern from subtitle_manager.jsx (which was
-        // debugged through 5 fix commits on feat/animated-captions).
-        var intro = Math.min(0.25, durSec * 0.4);
-        return {
-            opacity: [[0, 0], [intro * 0.5, 100]],  // opacity snaps in at 50% of intro
-            scale:   [[0, 0], [intro * 0.6, 110], [intro, 100]]  // overshoot to 110, settle to 100
-        };
-    }
-
-    function _bounceKeyframes(durSec) {
-        // Experimental: scale 0 → 125 → 90 → 100 + opacity 0 → 100.
-        // Position bounce is NOT applied (Position keyframes are flakier than Scale).
-        var intro = Math.min(0.4, durSec * 0.5);
-        return {
-            opacity: [[0, 0], [intro * 0.3, 100]],
-            scale:   [[0, 0], [intro * 0.4, 125], [intro * 0.7, 90], [intro, 100]]
-        };
-    }
-
-    function _getKeyframes(preset, durSec) {
-        if (preset === 'fade')   return _fadeKeyframes(durSec);
-        if (preset === 'pop')    return _popKeyframes(durSec);
-        if (preset === 'bounce') return _bounceKeyframes(durSec);
-        throw new Error("Unknown preset: " + preset + " (expected fade|pop|bounce)");
-    }
-
-    // ── Apply animation keyframes to a placed clip ──
-    function _animate(clip, preset, cueStart, cueEnd) {
-        var dur = Math.max(0.05, cueEnd - cueStart);
-        var kfs = _getKeyframes(preset, dur);
-        var t0 = _baseSec(clip, cueStart);
-
-        // Find Motion component (has Scale property)
-        var motion = _findComponent(clip, "Motion");
-        var scale = motion ? _param(motion, "Scale") : null;
-
-        // Find Opacity component (has Opacity property)
-        var opacityComp = _findComponent(clip, "Opacity");
-        var opacity = opacityComp ? _param(opacityComp, "Opacity") : null;
-
-        var applied = { opacity: false, scale: false };
-
-        // Opacity keyframes (most reliable — apply first)
-        if (opacity && kfs.opacity.length) {
-            try {
-                _keyNum(opacity, t0, kfs.opacity);
-                applied.opacity = true;
-            } catch (e) {
-                throw new Error("opacity keyframe failed: " + e.toString());
-            }
-        }
-
-        // Scale keyframes (apply second — only if preset specifies them)
-        if (scale && kfs.scale.length) {
-            try {
-                _keyNum(scale, t0, kfs.scale);
-                applied.scale = true;
-            } catch (e) {
-                // Scale failure is non-fatal for fade preset (which doesn't use scale),
-                // but fatal for pop/bounce. Caller decides via the preset.
-                if (preset !== 'fade') {
-                    throw new Error("scale keyframe failed: " + e.toString());
-                }
-            }
-        }
-
-        return applied;
-    }
-
-    // ── Main: place + animate one caption clip per word ──
-    // Supports batch processing: pass batchStart + batchSize to process a subset.
-    // The frontend calls repeatedly until all words are placed. This prevents
-    // Premiere from crashing when placing 100+ clips in a single call.
-    function applyNativeCaptions(options) {
+    // ── SINGLE-CLIP approach (v3 — fixes memory crash) ──
+    // Creates ONE MOGRT clip spanning the whole sequence, with keyframed
+    // Source Text + Scale + Opacity. This is how pro caption plugins work.
+    function applyNativeCaptionsSingleClip(options) {
         var seq = app.project.activeSequence;
         if (!seq) return _err("No active sequence — open a sequence first.");
 
@@ -280,17 +175,181 @@ nativeCaptionsManager = (function() {
         var textParam = editflowUtils.getParam(options, 'textParam') || "Source Text";
         var trackIndex = editflowUtils.getParam(options, 'trackIndex');
 
-        // Batch processing: process a subset of words per call to avoid
-        // crashing Premiere when placing 100+ clips in a single evalScript.
-        // Default batch size = 15 (safe for PPro 26; ~1.5s per clip = ~22s per batch).
+        // Resolve track
+        if (trackIndex === undefined || trackIndex === null) {
+            try { trackManager.ensureTracks(seq, seq.videoTracks.numTracks + 1, 0); } catch (e) {}
+            trackIndex = seq.videoTracks.numTracks - 1;
+        }
+        if (trackIndex < 0) trackIndex = 0;
+        if (trackIndex > seq.videoTracks.numTracks - 1) trackIndex = seq.videoTracks.numTracks - 1;
+
+        // Find the time range
+        var firstStart = parseFloat(words[0].start);
+        var lastEnd = parseFloat(words[words.length - 1].end);
+        if (!isFinite(firstStart) || !isFinite(lastEnd) || lastEnd <= firstStart) {
+            return _err("Invalid word time range: " + firstStart + " - " + lastEnd);
+        }
+
+        // 1. Insert ONE MOGRT at the first word's start time
+        var clip = seq.importMGT(nativePath, editflowUtils.secondsToTicksString(firstStart), trackIndex, 0);
+        if (!clip) return _err("importMGT returned null (track=" + trackIndex + ", path=" + nativePath + ")");
+
+        // 2. Trim to span the whole sequence
+        try { clip.end = _time(lastEnd); } catch (e) {
+            // Non-fatal
+        }
+
+        // 3. Set the initial text to the first word
+        var firstWord = words[0].word || words[0].text || "";
+        _setText(clip, firstWord, { textParam: textParam });
+
+        // 4. Find the Source Text param + enable time-varying
+        var sourceTextParam = _findSourceTextParam(clip, textParam);
+        if (!sourceTextParam) {
+            return _err("Could not find Source Text param after insertion. comps: " + _dumpComps(clip));
+        }
+        try { sourceTextParam.setTimeVarying(true); } catch (e) {}
+
+        // 5. Find Motion + Opacity components
+        var motion = _findComponent(clip, "Motion");
+        var scaleParam = motion ? _param(motion, "Scale") : null;
+        var opacityComp = _findComponent(clip, "Opacity");
+        var opacityParam = opacityComp ? _param(opacityComp, "Opacity") : null;
+
+        if (scaleParam) { try { scaleParam.setTimeVarying(true); } catch (e) {} }
+        if (opacityParam) { try { opacityParam.setTimeVarying(true); } catch (e) {} }
+
+        // 6. Keyframe Source Text + Scale + Opacity at each word boundary
+        var textKeyframes = 0, scaleKeyframes = 0, opacityKeyframes = 0;
+        var errors = [];
+
+        for (var i = 0; i < words.length; i++) {
+            var w = words[i];
+            var wordText = w.word || w.text || "";
+            var startSec = parseFloat(w.start);
+            var endSec = parseFloat(w.end);
+
+            if (!wordText || !isFinite(startSec) || !isFinite(endSec)) {
+                errors.push({ word: wordText, step: "validate", error: "bad word data" });
+                continue;
+            }
+
+            // Keyframe Source Text: change the text at this word's start
+            try {
+                var textValue = _buildTextValue(sourceTextParam, wordText);
+                _addKey(sourceTextParam, startSec, textValue);
+                textKeyframes++;
+            } catch (e) {
+                errors.push({ word: wordText, step: "source_text_key", error: e.toString() });
+            }
+
+            // Keyframe Scale + Opacity for the pop-in animation
+            // Pop-in: scale 0 → 110 (at 60% of intro) → 100 (at end of intro)
+            //         opacity 0 → 100 (at 50% of intro)
+            var wordDur = Math.max(0.1, endSec - startSec);
+            var intro = Math.min(0.2, wordDur * 0.5);
+
+            if (preset === 'fade') {
+                if (opacityParam) {
+                    try {
+                        _addKey(opacityParam, startSec, 0);
+                        _addKey(opacityParam, startSec + intro, 100);
+                        opacityKeyframes += 2;
+                    } catch (e) {
+                        errors.push({ word: wordText, step: "opacity_key", error: e.toString() });
+                    }
+                }
+            } else if (preset === 'pop') {
+                if (opacityParam) {
+                    try {
+                        _addKey(opacityParam, startSec, 0);
+                        _addKey(opacityParam, startSec + intro * 0.5, 100);
+                        opacityKeyframes += 2;
+                    } catch (e) {
+                        errors.push({ word: wordText, step: "opacity_key", error: e.toString() });
+                    }
+                }
+                if (scaleParam) {
+                    try {
+                        _addKey(scaleParam, startSec, 0);
+                        _addKey(scaleParam, startSec + intro * 0.6, 110);
+                        _addKey(scaleParam, startSec + intro, 100);
+                        scaleKeyframes += 3;
+                    } catch (e) {
+                        errors.push({ word: wordText, step: "scale_key", error: e.toString() });
+                    }
+                }
+            } else if (preset === 'bounce') {
+                if (opacityParam) {
+                    try {
+                        _addKey(opacityParam, startSec, 0);
+                        _addKey(opacityParam, startSec + intro * 0.3, 100);
+                        opacityKeyframes += 2;
+                    } catch (e) {
+                        errors.push({ word: wordText, step: "opacity_key", error: e.toString() });
+                    }
+                }
+                if (scaleParam) {
+                    try {
+                        _addKey(scaleParam, startSec, 0);
+                        _addKey(scaleParam, startSec + intro * 0.4, 125);
+                        _addKey(scaleParam, startSec + intro * 0.7, 90);
+                        _addKey(scaleParam, startSec + intro, 100);
+                        scaleKeyframes += 4;
+                    } catch (e) {
+                        errors.push({ word: wordText, step: "scale_key", error: e.toString() });
+                    }
+                }
+            }
+        }
+
+        return _ok({
+            placed: 1,                    // 1 clip
+            total: words.length,
+            clip_count: 1,
+            text_keyframes: textKeyframes,
+            scale_keyframes: scaleKeyframes,
+            opacity_keyframes: opacityKeyframes,
+            errors: errors,
+            preset: preset,
+            track_index: trackIndex,
+            approach: "single_clip"
+        });
+    }
+
+    // ── Legacy: per-word approach (kept as fallback, but NOT recommended) ──
+    // Uses batch processing to avoid crashing, but still creates N clips.
+    function applyNativeCaptions(options) {
+        // Default to single-clip approach unless explicitly requested otherwise
+        var approach = editflowUtils.getParam(options, 'approach') || "single_clip";
+        if (approach === "single_clip") {
+            return applyNativeCaptionsSingleClip(options);
+        }
+        // Legacy per-word approach with batching
+        return _applyNativeCaptionsPerWord(options);
+    }
+
+    function _applyNativeCaptionsPerWord(options) {
+        var seq = app.project.activeSequence;
+        if (!seq) return _err("No active sequence — open a sequence first.");
+
+        var mogrt = editflowUtils.getParam(options, 'baseMogrtPath');
+        if (!mogrt) return _err("No baseMogrtPath provided.");
+        var mogrtFile = new File(mogrt);
+        if (!mogrtFile.exists) return _err("Base MOGRT not found: " + mogrt);
+        var nativePath = mogrtFile.fsName;
+
+        var words = editflowUtils.getParam(options, 'words') || [];
+        if (!words.length) return _err("No words to place.");
+        var preset = editflowUtils.getParam(options, 'preset') || "fade";
+        var textParam = editflowUtils.getParam(options, 'textParam') || "Source Text";
+        var trackIndex = editflowUtils.getParam(options, 'trackIndex');
+
         var batchStart = editflowUtils.getParam(options, 'batchStart') || 0;
         var batchSize = editflowUtils.getParam(options, 'batchSize') || 15;
         var batchEnd = Math.min(batchStart + batchSize, words.length);
         var batchWords = words.slice(batchStart, batchEnd);
 
-        // Resolve track: if not provided, add a fresh empty video track on top.
-        // Only do this on the FIRST batch (batchStart === 0) so we don't create
-        // a new track for every batch.
         if (trackIndex === undefined || trackIndex === null) {
             if (batchStart === 0) {
                 try { trackManager.ensureTracks(seq, seq.videoTracks.numTracks + 1, 0); } catch (e) {}
@@ -301,9 +360,7 @@ nativeCaptionsManager = (function() {
         if (trackIndex > seq.videoTracks.numTracks - 1) trackIndex = seq.videoTracks.numTracks - 1;
 
         var textOpts = { textParam: textParam };
-
         var placed = 0, errors = [];
-        var animationStats = { opacity_ok: 0, scale_ok: 0, opacity_fail: 0, scale_fail: 0 };
 
         for (var i = 0; i < batchWords.length; i++) {
             var w = batchWords[i];
@@ -312,39 +369,24 @@ nativeCaptionsManager = (function() {
             var endSec = parseFloat(w.end);
 
             if (!wordText || !isFinite(startSec) || !isFinite(endSec) || endSec <= startSec) {
-                errors.push({ word: wordText, step: "validate", error: "bad word data: " + JSON.stringify(w).slice(0, 100) });
+                errors.push({ word: wordText, step: "validate", error: "bad word data" });
                 if (errors.length >= 3) break;
                 continue;
             }
 
             try {
-                // 1. Insert base_text.mogrt at the word's start time
                 var clip = seq.importMGT(nativePath, editflowUtils.secondsToTicksString(startSec), trackIndex, 0);
                 if (!clip) {
-                    errors.push({ word: wordText, step: "importMGT", error: "importMGT returned null (track=" + trackIndex + ", path=" + nativePath + ")" });
+                    errors.push({ word: wordText, step: "importMGT", error: "null" });
                     if (errors.length >= 3) break;
                     continue;
                 }
-
-                // 2. Set the text content (single operation — style is pre-baked into the MOGRT)
                 _setText(clip, wordText, textOpts);
-
-                // 3. Trim the clip to the word's duration
-                try { clip.end = _time(endSec); } catch (e) {
-                    errors.push({ word: wordText, step: "trim", error: e.toString() });
-                }
-
-                // 4. Apply animation keyframes
-                var applied = _animate(clip, preset, startSec, endSec);
-                if (applied.opacity) animationStats.opacity_ok++; else animationStats.opacity_fail++;
-                if (applied.scale) animationStats.scale_ok++; else animationStats.scale_fail++;
-
+                try { clip.end = _time(endSec); } catch (e) {}
                 placed++;
             } catch (e) {
-                errors.push({ word: wordText, step: "place_or_animate", error: e.toString() });
-                if (errors.length >= 3) {
-                    break;
-                }
+                errors.push({ word: wordText, step: "place", error: e.toString() });
+                if (errors.length >= 3) break;
             }
         }
 
@@ -352,17 +394,17 @@ nativeCaptionsManager = (function() {
         var hasMore = batchEnd < words.length;
 
         return _ok({
-            placed: placed,                    // clips placed in THIS batch
-            total: words.length,               // total words to place
+            placed: placed,
+            total: words.length,
             batch_start: batchStart,
             batch_end: batchEnd,
-            total_placed: totalPlaced,         // cumulative placed across all batches
-            has_more: hasMore,                 // frontend should call again if true
+            total_placed: totalPlaced,
+            has_more: hasMore,
             next_batch_start: hasMore ? batchEnd : null,
             errors: errors,
-            animation_stats: animationStats,
             preset: preset,
-            track_index: trackIndex
+            track_index: trackIndex,
+            approach: "per_word"
         });
     }
 

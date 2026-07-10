@@ -229,6 +229,8 @@ function _render() {
   if (S.step1Tab === 'extract') {
     const extractBtn = v.querySelector('#nc-extract-btn');
     if (extractBtn) extractBtn.onclick = _onExtract;
+    const wavUpload = v.querySelector('#nc-wav-upload');
+    if (wavUpload) wavUpload.onchange = _onWavUpload;
   } else {
     const loadBtn = v.querySelector('#nc-load-transcript-btn');
     if (loadBtn) loadBtn.onclick = _onLoadTranscript;
@@ -257,6 +259,10 @@ function _renderExtractTab() {
       <button id="nc-extract-btn" class="nc-btn nc-primary" ${S.busy ? 'disabled' : ''}>
         ${S.busy ? 'Working…' : 'Extract &amp; Transcribe'}
       </button>
+      <label class="nc-btn nc-ghost" style="cursor:pointer" title="If audio extraction fails, export a WAV manually from Premiere (File > Export > Media > Wave) and upload it here">
+        Upload WAV
+        <input type="file" id="nc-wav-upload" accept=".wav,audio/wav" style="display:none" />
+      </label>
     </div>
     ${S.extractStatus ? `<div class="nc-status nc-status-progress">${_esc(S.extractStatus)}</div>` : ''}
     ${S.busy && S.extractProgress > 0 ? `
@@ -273,6 +279,21 @@ function _renderExtractTab() {
         ${S.fingerprint ? `· fingerprint <code>${S.fingerprint}</code>` : ''}
       </div>
     ` : ''}
+    <details class="nc-drawer" style="margin-top: 8px">
+      <summary style="font-size: 11px; color: #6b6b7a; cursor: pointer">Audio extraction not working? Click for help</summary>
+      <div style="font-size: 11px; color: #9a9aa8; margin-top: 6px; line-height: 1.6">
+        If "Extract &amp; Transcribe" fails with "export returned no file", it means
+        the bundled .epr preset doesn't work on your Premiere version.<br><br>
+        <strong>Workaround:</strong> Export audio manually from Premiere:
+        <ol style="margin: 4px 0; padding-left: 20px">
+          <li>File &gt; Export &gt; Media</li>
+          <li>Format: <strong>Wave</strong></li>
+          <li>Set range to your In/Out points</li>
+          <li>Export to a .wav file</li>
+          <li>Click "Upload WAV" above to transcribe it</li>
+        </ol>
+      </div>
+    </details>
   `;
 }
 
@@ -486,6 +507,73 @@ async function _onExtract() {
     S.extractStatus = null;
     S.extractProgress = 0;
     _diagLog('error', 'extract_failed', { error: String(e.message || e) });
+  } finally {
+    if (_progressUnsub) { try { _progressUnsub(); } catch (_) {} }
+    S.busy = false;
+    _render();
+  }
+}
+
+async function _onWavUpload(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  if (S.busy) return;
+  S.busy = true;
+  S.extractError = null;
+  S.extractStatus = 'Uploading WAV + transcribing with Whisper...';
+  S.extractProgress = 15;
+  _render();
+
+  // Listen for transcription progress events via WebSocket
+  const wsClientId = (getState && getState().session && getState().session.clientId) || 'native-captions';
+  let _progressUnsub = null;
+  try {
+    const { connectWS } = await import('./api.js');
+    const ws = connectWS(wsClientId);
+    _progressUnsub = ws.on('progress', (data) => {
+      const payload = data.payload || data;
+      if (payload.task_type === 'transcribe') {
+        S.extractProgress = Math.round(15 + (payload.progress || 0) * 85);
+        S.extractStatus = payload.message || `Transcribing... ${S.extractProgress}%`;
+        _render();
+      }
+    });
+  } catch (e) { /* non-fatal */ }
+
+  try {
+    if (!S.modelInstalled) {
+      throw new Error(`Whisper model "${S.modelName}" is not installed. Click "Manage Models" to download it first.`);
+    }
+
+    const clientId = (getState && getState().session && getState().session.clientId) || 'native-captions';
+    const resp = await apiUpload(
+      '/api/subtitles/transcribe-mixdown',
+      file,
+      {
+        client_id: clientId,
+        sequence_name: file.name,
+        in_seconds: 0,
+        out_seconds: 0,
+      },
+      { timeoutMs: 600000 }
+    );
+
+    S.words = resp.words || [];
+    S.fingerprint = resp.fingerprint;
+    S.duration = resp.duration || 0;
+    S.modelName = resp.model || S.modelName;
+    S.extractStatus = null;
+    S.extractProgress = 100;
+
+    if (!S.words.length) {
+      throw new Error('Transcription completed but no words were found. The audio might be too quiet or not contain speech.');
+    }
+  } catch (e) {
+    console.error('[native-captions] WAV upload failed:', e);
+    S.extractError = e.message || String(e);
+    S.extractStatus = null;
+    S.extractProgress = 0;
+    _diagLog('error', 'wav_upload_failed', { error: String(e.message || e) });
   } finally {
     if (_progressUnsub) { try { _progressUnsub(); } catch (_) {} }
     S.busy = false;
@@ -712,70 +800,37 @@ async function _onGenerate(smokeTest) {
   S.busy = true;
   S.generateResult = null;
   S.generateProgress = 0;
-  S.generateStatus = smokeTest ? 'Placing 1 test clip...' : 'Starting placement...';
+  S.generateStatus = smokeTest ? 'Creating test clip...' : 'Creating caption clip...';
   _render();
   try {
     if (!isExtendScriptAvailable()) {
       throw new Error('ExtendScript not available — are you running inside Premiere?');
     }
     const mogrtPath = _resolveBaseMogrtPath();
-    const wordsToPlace = smokeTest ? S.words.slice(0, 1) : S.words;
+    const wordsToPlace = smokeTest ? S.words.slice(0, 3) : S.words;
 
-    if (!smokeTest && wordsToPlace.length > 50) {
-      const ok = confirm(
-        `You're about to place ${wordsToPlace.length} caption clips.\n\n` +
-        `This runs in batches of 15 clips (~1.5s per clip) to avoid crashing Premiere.\n` +
-        `Total time: ~${Math.ceil(wordsToPlace.length * 1.5 / 60)} minutes.\n\n` +
-        `DON'T close Premiere or click elsewhere during placement.\n\n` +
-        `Continue?`
-      );
-      if (!ok) {
-        S.busy = false;
-        S.generateStatus = null;
-        _render();
-        return;
-      }
-    }
+    // Single-clip approach: 1 MOGRT with keyframed Source Text + Scale + Opacity.
+    // This is memory-efficient (1 clip instead of 100+) and won't crash Premiere.
+    S.generateStatus = `Creating 1 clip with ${wordsToPlace.length} keyframed words...`;
+    S.generateProgress = 30;
+    _render();
 
-    // Batch processing: call applyNativeCaptions repeatedly with batchStart
-    // until has_more is false. This prevents Premiere from crashing when
-    // placing 100+ clips in a single evalScript call.
-    let batchStart = 0;
-    let totalPlaced = 0;
-    let allErrors = [];
-    const batchSize = smokeTest ? 1 : 15;
-
-    while (true) {
-      S.generateStatus = `Placing clips ${batchStart + 1}-${Math.min(batchStart + batchSize, wordsToPlace.length)} of ${wordsToPlace.length}...`;
-      S.generateProgress = Math.round((batchStart / wordsToPlace.length) * 100);
-      _render();
-
-      const resp = await callExtendScript('applyNativeCaptions', {
-        words: wordsToPlace,
-        preset: S.preset,
-        baseMogrtPath: mogrtPath,
-        trackIndex: S.trackIndex,
-        textParam: 'Source Text',
-        batchStart: batchStart,
-        batchSize: batchSize,
-      });
-
-      totalPlaced += resp.placed || 0;
-      if (resp.errors && resp.errors.length) {
-        allErrors = allErrors.concat(resp.errors);
-      }
-
-      batchStart = resp.next_batch_start;
-      if (!resp.has_more || !batchStart) break;
-
-      // Small delay between batches to let Premiere breathe
-      await new Promise(r => setTimeout(r, 200));
-    }
+    const resp = await callExtendScript('applyNativeCaptions', {
+      words: wordsToPlace,
+      preset: S.preset,
+      baseMogrtPath: mogrtPath,
+      trackIndex: S.trackIndex,
+      textParam: 'Source Text',
+      approach: 'single_clip',
+    });
 
     S.generateResult = {
-      placed: totalPlaced,
+      placed: resp.placed || 0,
       total: wordsToPlace.length,
-      errors: allErrors,
+      errors: resp.errors || [],
+      clip_count: resp.clip_count || 0,
+      text_keyframes: resp.text_keyframes || 0,
+      approach: resp.approach || 'single_clip',
     };
     S.generateProgress = 100;
     S.generateStatus = null;
