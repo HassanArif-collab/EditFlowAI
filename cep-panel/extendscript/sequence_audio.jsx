@@ -84,7 +84,10 @@ sequenceAudio = (function() {
 
         // 2. In/Out points (returned as tick strings; "-400000" = NOT_SET)
         var io = _readInOutTicks(seq);
-        if (io.inTicks <= 0 || io.outTicks <= io.inTicks) {
+        // In point at tick 0 (start of sequence) is VALID — only reject negative
+        // (NOT_SET sentinel) or out <= in. The old check (inTicks <= 0) rejected
+        // a valid In point at the very start of the sequence.
+        if (io.inTicks < 0 || io.outTicks <= io.inTicks) {
             return _err(
                 "No valid In/Out range set on the active sequence. " +
                 "Position the playhead and press I (in) and O (out) in Premiere, " +

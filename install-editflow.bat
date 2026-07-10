@@ -175,8 +175,23 @@ if (-not $python) {
 # ── Step 3: Download the repository ────────────────────────────────────────
 Write-Step "Step 3/8 - Downloading EditFlow AI..."
 
-# If the install dir already exists, back it up
+# If the install dir already exists, back it up — BUT preserve the data/
+# directory (Whisper models, transcripts, cache) so the user doesn't have to
+# re-download 1.5GB models on every reinstall.
+$preservedData = $null
 if (Test-Path $InstallDir) {
+    $dataDir = Join-Path $InstallDir "data"
+    if (Test-Path $dataDir) {
+        $preservedData = Join-Path $env:TEMP "editflow_data_preserve_$(Get-Random)"
+        Write-Info "Preserving data directory (Whisper models, transcripts)..."
+        try {
+            Move-Item $dataDir $preservedData
+            Write-OK "Data directory preserved"
+        } catch {
+            Write-Warn "Could not preserve data directory: $_"
+            $preservedData = $null
+        }
+    }
     $backup = "$InstallDir.backup." + (Get-Date -Format "yyyyMMdd-HHmmss")
     Write-Warn "Existing install found at $InstallDir - backing up to $backup"
     try {
@@ -190,6 +205,17 @@ if (Test-Path $InstallDir) {
 
 # Create install dir
 New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+
+# Restore the preserved data directory if we saved one
+if ($preservedData -and (Test-Path $preservedData)) {
+    $newDataDir = Join-Path $InstallDir "data"
+    try {
+        Move-Item $preservedData $newDataDir
+        Write-OK "Restored data directory (Whisper models preserved)"
+    } catch {
+        Write-Warn "Could not restore data directory: $_"
+    }
+}
 
 # Download the ZIP
 $zipPath = Join-Path $InstallDir "editflow-download.zip"

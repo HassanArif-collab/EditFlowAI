@@ -261,6 +261,9 @@ nativeCaptionsManager = (function() {
     }
 
     // ── Main: place + animate one caption clip per word ──
+    // Supports batch processing: pass batchStart + batchSize to process a subset.
+    // The frontend calls repeatedly until all words are placed. This prevents
+    // Premiere from crashing when placing 100+ clips in a single call.
     function applyNativeCaptions(options) {
         var seq = app.project.activeSequence;
         if (!seq) return _err("No active sequence — open a sequence first.");
@@ -269,7 +272,6 @@ nativeCaptionsManager = (function() {
         if (!mogrt) return _err("No baseMogrtPath provided.");
         var mogrtFile = new File(mogrt);
         if (!mogrtFile.exists) return _err("Base MOGRT not found: " + mogrt);
-        // importMGT needs the OS-native path (backslashes on Windows).
         var nativePath = mogrtFile.fsName;
 
         var words = editflowUtils.getParam(options, 'words') || [];
@@ -278,10 +280,21 @@ nativeCaptionsManager = (function() {
         var textParam = editflowUtils.getParam(options, 'textParam') || "Source Text";
         var trackIndex = editflowUtils.getParam(options, 'trackIndex');
 
-        // Resolve track: if not provided, add a fresh empty video track on top
-        // so captions never overwrite existing clips.
+        // Batch processing: process a subset of words per call to avoid
+        // crashing Premiere when placing 100+ clips in a single evalScript.
+        // Default batch size = 15 (safe for PPro 26; ~1.5s per clip = ~22s per batch).
+        var batchStart = editflowUtils.getParam(options, 'batchStart') || 0;
+        var batchSize = editflowUtils.getParam(options, 'batchSize') || 15;
+        var batchEnd = Math.min(batchStart + batchSize, words.length);
+        var batchWords = words.slice(batchStart, batchEnd);
+
+        // Resolve track: if not provided, add a fresh empty video track on top.
+        // Only do this on the FIRST batch (batchStart === 0) so we don't create
+        // a new track for every batch.
         if (trackIndex === undefined || trackIndex === null) {
-            try { trackManager.ensureTracks(seq, seq.videoTracks.numTracks + 1, 0); } catch (e) {}
+            if (batchStart === 0) {
+                try { trackManager.ensureTracks(seq, seq.videoTracks.numTracks + 1, 0); } catch (e) {}
+            }
             trackIndex = seq.videoTracks.numTracks - 1;
         }
         if (trackIndex < 0) trackIndex = 0;
@@ -292,8 +305,8 @@ nativeCaptionsManager = (function() {
         var placed = 0, errors = [];
         var animationStats = { opacity_ok: 0, scale_ok: 0, opacity_fail: 0, scale_fail: 0 };
 
-        for (var i = 0; i < words.length; i++) {
-            var w = words[i];
+        for (var i = 0; i < batchWords.length; i++) {
+            var w = batchWords[i];
             var wordText = w.word || w.text || "";
             var startSec = parseFloat(w.start);
             var endSec = parseFloat(w.end);
@@ -319,7 +332,6 @@ nativeCaptionsManager = (function() {
                 // 3. Trim the clip to the word's duration
                 try { clip.end = _time(endSec); } catch (e) {
                     errors.push({ word: wordText, step: "trim", error: e.toString() });
-                    // Non-fatal — clip stays at default length, animation still works
                 }
 
                 // 4. Apply animation keyframes
@@ -331,15 +343,22 @@ nativeCaptionsManager = (function() {
             } catch (e) {
                 errors.push({ word: wordText, step: "place_or_animate", error: e.toString() });
                 if (errors.length >= 3) {
-                    // Bail-fast on systemic failure (3 consecutive cues failing = something is wrong)
                     break;
                 }
             }
         }
 
+        var totalPlaced = batchStart + placed;
+        var hasMore = batchEnd < words.length;
+
         return _ok({
-            placed: placed,
-            total: words.length,
+            placed: placed,                    // clips placed in THIS batch
+            total: words.length,               // total words to place
+            batch_start: batchStart,
+            batch_end: batchEnd,
+            total_placed: totalPlaced,         // cumulative placed across all batches
+            has_more: hasMore,                 // frontend should call again if true
+            next_batch_start: hasMore ? batchEnd : null,
             errors: errors,
             animation_stats: animationStats,
             preset: preset,

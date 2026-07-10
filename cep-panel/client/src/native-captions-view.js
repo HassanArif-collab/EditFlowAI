@@ -42,9 +42,12 @@ const S = {
   // Generation
   busy: false,                // true during extract/transcribe OR generate
   generateResult: null,       // {placed, total, errors}
+  generateProgress: 0,        // 0-100
+  generateStatus: null,       // string | null (progress messages)
   // Error state (survives _render() — the old bug was that errors were lost)
   extractError: null,         // string | null
   extractStatus: null,        // string | null (progress messages)
+  extractProgress: 0,         // 0-100
   // View bookkeeping
   prevView: null,
   _modelPoll: null,
@@ -189,6 +192,13 @@ function _render() {
               Generate All (${S.words.length} words)
             </button>
           </div>
+          ${S.generateStatus ? `<div class="nc-status nc-status-progress">${_esc(S.generateStatus)}</div>` : ''}
+          ${S.busy && S.generateProgress > 0 ? `
+            <div class="nc-progress-bar">
+              <div class="nc-progress-fill" style="width: ${S.generateProgress}%"></div>
+              <span class="nc-progress-text">${S.generateProgress}%</span>
+            </div>
+          ` : ''}
           ${S.generateResult ? _renderGenerateResult() : ''}
 
           <!-- Probe details drawer -->
@@ -249,6 +259,12 @@ function _renderExtractTab() {
       </button>
     </div>
     ${S.extractStatus ? `<div class="nc-status nc-status-progress">${_esc(S.extractStatus)}</div>` : ''}
+    ${S.busy && S.extractProgress > 0 ? `
+      <div class="nc-progress-bar">
+        <div class="nc-progress-fill" style="width: ${S.extractProgress}%"></div>
+        <span class="nc-progress-text">${S.extractProgress}%</span>
+      </div>
+    ` : ''}
     ${S.extractError ? `<div class="nc-status nc-err">${_esc(S.extractError)}</div>` : ''}
     ${S.words.length ? `
       <div class="nc-words-info">
@@ -381,19 +397,36 @@ async function _onExtract() {
   S.busy = true;
   S.extractError = null;
   S.extractStatus = 'Starting...';
+  S.extractProgress = 0;
   _render();
+
+  // Listen for transcription progress events via WebSocket
+  const wsClientId = (getState && getState().session && getState().session.clientId) || 'native-captions';
+  let _progressUnsub = null;
+  try {
+    const { connectWS } = await import('./api.js');
+    const ws = connectWS(wsClientId);
+    _progressUnsub = ws.on('progress', (data) => {
+      const payload = data.payload || data;
+      if (payload.task_type === 'transcribe') {
+        S.extractProgress = Math.round((payload.progress || 0) * 100);
+        S.extractStatus = payload.message || `Transcribing... ${S.extractProgress}%`;
+        _render();
+      }
+    });
+  } catch (e) {
+    console.warn('[native-captions] WS progress listener failed (non-fatal):', e);
+  }
 
   try {
     if (!isExtendScriptAvailable()) {
       throw new Error('ExtendScript not available — are you running inside Premiere?');
     }
 
-    // Check model first — give a clear error before attempting extraction
     if (!S.modelInstalled) {
       throw new Error(`Whisper model "${S.modelName}" is not installed. Click "Manage Models" to download it first.`);
     }
 
-    // Resolve the bundled .epr path
     const csInterface = _getCSInterface();
     let extensionRoot = '';
     if (csInterface) {
@@ -407,6 +440,7 @@ async function _onExtract() {
     const outPath = _tempWavPath();
 
     S.extractStatus = 'Exporting audio mixdown from Premiere...';
+    S.extractProgress = 5;
     _render();
 
     const extractResp = await callExtendScript('extractSequenceAudio', {
@@ -419,6 +453,7 @@ async function _onExtract() {
     }
 
     S.extractStatus = 'Uploading WAV + transcribing with Whisper...';
+    S.extractProgress = 15;
     _render();
 
     const wavBlob = await _readFileAsBlob(extractResp.path);
@@ -440,6 +475,7 @@ async function _onExtract() {
     S.duration = resp.duration || 0;
     S.modelName = resp.model || S.modelName;
     S.extractStatus = null;
+    S.extractProgress = 100;
 
     if (!S.words.length) {
       throw new Error('Transcription completed but no words were found. The audio might be too quiet or not contain speech.');
@@ -448,8 +484,10 @@ async function _onExtract() {
     console.error('[native-captions] extract failed:', e);
     S.extractError = e.message || String(e);
     S.extractStatus = null;
+    S.extractProgress = 0;
     _diagLog('error', 'extract_failed', { error: String(e.message || e) });
   } finally {
+    if (_progressUnsub) { try { _progressUnsub(); } catch (_) {} }
     S.busy = false;
     _render();
   }
@@ -673,6 +711,8 @@ async function _onGenerate(smokeTest) {
   if (S.busy || !S.words.length) return;
   S.busy = true;
   S.generateResult = null;
+  S.generateProgress = 0;
+  S.generateStatus = smokeTest ? 'Placing 1 test clip...' : 'Starting placement...';
   _render();
   try {
     if (!isExtendScriptAvailable()) {
@@ -681,31 +721,64 @@ async function _onGenerate(smokeTest) {
     const mogrtPath = _resolveBaseMogrtPath();
     const wordsToPlace = smokeTest ? S.words.slice(0, 1) : S.words;
 
-    if (!smokeTest && wordsToPlace.length > 400) {
+    if (!smokeTest && wordsToPlace.length > 50) {
       const ok = confirm(
-        `You're about to place ${wordsToPlace.length} caption clips. ` +
-        `This takes ~${Math.ceil(wordsToPlace.length * 1.5 / 60)} minutes and ` +
-        `may slow Premiere during placement. Continue?`
+        `You're about to place ${wordsToPlace.length} caption clips.\n\n` +
+        `This runs in batches of 15 clips (~1.5s per clip) to avoid crashing Premiere.\n` +
+        `Total time: ~${Math.ceil(wordsToPlace.length * 1.5 / 60)} minutes.\n\n` +
+        `DON'T close Premiere or click elsewhere during placement.\n\n` +
+        `Continue?`
       );
       if (!ok) {
         S.busy = false;
+        S.generateStatus = null;
         _render();
         return;
       }
     }
 
-    const resp = await callExtendScript('applyNativeCaptions', {
-      words: wordsToPlace,
-      preset: S.preset,
-      baseMogrtPath: mogrtPath,
-      trackIndex: S.trackIndex,
-      textParam: 'Source Text',
-    });
+    // Batch processing: call applyNativeCaptions repeatedly with batchStart
+    // until has_more is false. This prevents Premiere from crashing when
+    // placing 100+ clips in a single evalScript call.
+    let batchStart = 0;
+    let totalPlaced = 0;
+    let allErrors = [];
+    const batchSize = smokeTest ? 1 : 15;
+
+    while (true) {
+      S.generateStatus = `Placing clips ${batchStart + 1}-${Math.min(batchStart + batchSize, wordsToPlace.length)} of ${wordsToPlace.length}...`;
+      S.generateProgress = Math.round((batchStart / wordsToPlace.length) * 100);
+      _render();
+
+      const resp = await callExtendScript('applyNativeCaptions', {
+        words: wordsToPlace,
+        preset: S.preset,
+        baseMogrtPath: mogrtPath,
+        trackIndex: S.trackIndex,
+        textParam: 'Source Text',
+        batchStart: batchStart,
+        batchSize: batchSize,
+      });
+
+      totalPlaced += resp.placed || 0;
+      if (resp.errors && resp.errors.length) {
+        allErrors = allErrors.concat(resp.errors);
+      }
+
+      batchStart = resp.next_batch_start;
+      if (!resp.has_more || !batchStart) break;
+
+      // Small delay between batches to let Premiere breathe
+      await new Promise(r => setTimeout(r, 200));
+    }
+
     S.generateResult = {
-      placed: resp.placed || 0,
-      total: resp.total || wordsToPlace.length,
-      errors: resp.errors || [],
+      placed: totalPlaced,
+      total: wordsToPlace.length,
+      errors: allErrors,
     };
+    S.generateProgress = 100;
+    S.generateStatus = null;
     _diagLog('info', smokeTest ? 'smoke_test_result' : 'generate_result', S.generateResult);
   } catch (e) {
     console.error('[native-captions] generate failed:', e);
@@ -714,6 +787,7 @@ async function _onGenerate(smokeTest) {
       total: smokeTest ? 1 : S.words.length,
       errors: [String(e.message || e)],
     };
+    S.generateStatus = null;
     _diagLog('error', 'generate_exception', { error: String(e.message || e) });
   } finally {
     S.busy = false;
