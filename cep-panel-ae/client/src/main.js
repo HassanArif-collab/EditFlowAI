@@ -1,0 +1,75 @@
+/**
+ * main.js — Bootstrap for EditFlow AE panel.
+ */
+const BUILD_TAG = 'ae-captions-1';
+
+(function _stampBoot() {
+  const banner = document.getElementById('inline-boot-check');
+  if (banner) {
+    banner.dataset.cleared = '1';
+    banner.style.background = '#1f3a1f';
+    banner.style.color = '#a5d6a7';
+    banner.textContent = `Boot: main.js parsed (build ${BUILD_TAG}). Loading modules...`;
+    setTimeout(() => banner.remove(), 1500);
+  }
+  const tag = document.getElementById('boot-tag');
+  if (tag) tag.textContent = `build:${BUILD_TAG}`;
+  console.log(`[EditFlow] main.js parsed — build ${BUILD_TAG}`);
+})();
+
+import { initExtendScript } from './extendscript.js';
+import { apiGet, apiUpload, connectWS, getBaseUrl } from './api.js';
+import { openCaptions, closeCaptions } from './captions-view.js';
+
+const $ = (sel) => document.querySelector(sel);
+
+document.addEventListener('DOMContentLoaded', async () => {
+  console.log('[EditFlow] Initializing...');
+
+  window.addEventListener('error', (e) => _showGlobalError((e && (e.error && e.error.message || e.message)) || 'Unknown error'));
+  window.addEventListener('unhandledrejection', (e) => _showGlobalError((e && (e.reason && e.reason.message || e.reason)) || 'Unhandled promise rejection'));
+
+  try {
+    await initExtendScript();
+  } catch (err) {
+    console.error('[EditFlow] ExtendScript init failed:', err);
+  }
+
+  // Open the captions view immediately (this is the main + only view)
+  openCaptions();
+
+  // Wire settings button
+  const btnSettings = $('#btn-settings');
+  if (btnSettings) {
+    btnSettings.addEventListener('click', () => {
+      const overlay = $('#settings-overlay');
+      if (overlay) {
+        overlay.classList.remove('hidden');
+        overlay.innerHTML = '<div style="padding:20px;color:#e8e8ee"><h2>Settings</h2><p>Backend URL: <code>http://127.0.0.1:8765</code></p><p>Build: <code>' + BUILD_TAG + '</code></p><button onclick="this.parentElement.parentElement.classList.add(\'hidden\')">Close</button></div>';
+      }
+    });
+  }
+
+  console.log('[EditFlow] Initialization complete');
+});
+
+function _showGlobalError(msg) {
+  try {
+    let b = document.getElementById('editflow-error-bar');
+    if (!b) {
+      b = document.createElement('div');
+      b.id = 'editflow-error-bar';
+      b.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:99999;background:#5a2d2d;color:#fff;font:12px/1.4 monospace;padding:6px 10px;display:flex;gap:8px;align-items:center';
+      document.body.appendChild(b);
+    }
+    b.innerHTML = '';
+    const span = document.createElement('span');
+    span.style.flex = '1';
+    span.textContent = 'EditFlow error: ' + String(msg).slice(0, 300);
+    const x = document.createElement('button');
+    x.textContent = 'Dismiss';
+    x.style.cssText = 'background:#7a3d3d;color:#fff;border:0;border-radius:4px;padding:3px 8px;cursor:pointer';
+    x.onclick = () => b.remove();
+    b.appendChild(span); b.appendChild(x);
+  } catch (_) {}
+}

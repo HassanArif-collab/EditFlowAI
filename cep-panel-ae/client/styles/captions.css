@@ -1,0 +1,116 @@
+/* EditFlow AI AE — Captions panel styles */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: #1a1a22;
+  color: #e8e8ee;
+  font-size: 13px;
+  overflow: hidden;
+}
+
+#app-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #14141b;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+}
+.logo { font-weight: 700; font-size: 14px; }
+.boot-tag { font: 10px monospace; color: #6b6b7a; }
+.header-spacer { flex: 1; }
+.icon-btn {
+  background: transparent; border: 0; color: #9a9aa8; cursor: pointer;
+  font-size: 16px; padding: 4px; border-radius: 4px;
+}
+.icon-btn:hover { background: rgba(255,255,255,.1); color: #e8e8ee; }
+
+.captions-view {
+  padding: 12px;
+  height: calc(100vh - 44px);
+  overflow-y: auto;
+}
+
+.cap-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.cap-header h2 { font-size: 16px; font-weight: 700; }
+
+.cap-pill {
+  display: inline-block; padding: 2px 8px; border-radius: 999px;
+  font-size: 11px; font-weight: 600; border: 1px solid rgba(255,255,255,.15);
+  background: rgba(255,255,255,.05); color: #c9c9d4;
+}
+.cap-pill-ok { background: rgba(34,197,94,.15); border-color: rgba(34,197,94,.4); color: #4ade80; }
+.cap-pill-err { background: rgba(239,68,68,.15); border-color: rgba(239,68,68,.4); color: #f87171; }
+.cap-pill-warn { background: rgba(234,179,8,.15); border-color: rgba(234,179,8,.4); color: #facc15; }
+
+.cap-comp-info {
+  background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.07);
+  border-radius: 6px; padding: 8px 10px; margin-bottom: 12px; font-size: 12px;
+}
+.cap-dim { color: #6b6b7a; }
+
+.cap-section {
+  background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.07);
+  border-radius: 8px; padding: 10px 12px; margin-bottom: 12px;
+}
+.cap-subhead { font-weight: 600; margin-bottom: 6px; }
+.cap-hint { color: #9a9aa8; font-size: 12px; line-height: 1.5; margin: 4px 0 8px; }
+
+.cap-row {
+  display: flex; align-items: center; gap: 8px; margin: 6px 0; color: #c9c9d4;
+}
+.cap-label { min-width: 70px; color: #9a9aa8; font-size: 12px; }
+.cap-select, .cap-input {
+  background: #1a1a22; color: #e8e8ee; border: 1px solid rgba(255,255,255,.12);
+  border-radius: 6px; padding: 4px 8px; flex: 1; font: inherit;
+}
+.cap-color { width: 40px; height: 28px; border: 1px solid rgba(255,255,255,.12); border-radius: 4px; cursor: pointer; background: transparent; }
+
+.cap-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.cap-btn {
+  background: #1a1a22; color: #e8e8ee; border: 1px solid rgba(255,255,255,.14);
+  border-radius: 6px; padding: 6px 14px; cursor: pointer; font: inherit;
+}
+.cap-btn:hover:not(:disabled) { background: #23232e; }
+.cap-btn:disabled { opacity: .5; cursor: not-allowed; }
+.cap-primary { background: #2563eb; border-color: #2563eb; }
+.cap-primary:hover:not(:disabled) { background: #1d4ed8; }
+.cap-ghost { background: transparent; }
+
+.cap-status { display: block; margin-top: 6px; word-break: break-word; }
+.cap-status-progress { color: #facc15; }
+.cap-status.cap-err { color: #f87171; }
+
+.cap-progress-bar {
+  position: relative; background: #1a1a22; border: 1px solid rgba(255,255,255,.1);
+  border-radius: 4px; height: 22px; margin: 8px 0; overflow: hidden;
+}
+.cap-progress-fill {
+  position: absolute; left: 0; top: 0; bottom: 0;
+  background: linear-gradient(90deg, #2563eb, #3b82f6); transition: width .3s ease;
+}
+.cap-progress-text {
+  position: absolute; left: 0; right: 0; top: 0; bottom: 0;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font: 11px monospace; font-weight: 600;
+  text-shadow: 0 1px 2px rgba(0,0,0,.5);
+}
+
+.cap-words-info {
+  margin-top: 8px; padding: 6px 8px; background: rgba(34,197,94,.08);
+  border: 1px solid rgba(34,197,94,.2); border-radius: 6px; font-size: 12px;
+}
+
+.cap-result { margin-top: 8px; }
+.cap-drawer { margin-top: 6px; }
+.cap-drawer summary { cursor: pointer; color: #9a9aa8; font-size: 12px; }
+.cap-error-list { margin: 4px 0 0; padding-left: 20px; color: #f87171; font-size: 11px; }
+
+.overlay { position: fixed; inset: 0; background: rgba(0,0,0,.7); z-index: 100; }
+.overlay.hidden { display: none; }

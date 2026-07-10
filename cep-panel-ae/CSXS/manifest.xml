@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ExtensionManifest Version="7.0" ExtensionBundleId="com.editflow.ae" ExtensionBundleVersion="1.0.0"
+                   ExtensionBundleName="EditFlow AI AE">
+
+    <ExtensionList>
+        <Extension Id="com.editflow.ae.panel" Version="1.0.0" />
+    </ExtensionList>
+
+    <ExecutionList>
+        <Environment Host="AEFT" />
+    </ExecutionList>
+
+    <ExecutionEnvironment>
+        <HostList>
+            <!-- After Effects 2022-2026 (versions 22.x-26.x) -->
+            <Host Name="AEFT" Version="[22.0,27.0]" />
+        </HostList>
+        <LocaleList>
+            <Locale Code="All" />
+        </LocaleList>
+        <RequiredRuntimeList>
+            <RequiredRuntime Name="CSXS" Version="7.0" />
+        </RequiredRuntimeList>
+    </ExecutionEnvironment>
+
+    <DispatchInfoList>
+        <Extension Id="com.editflow.ae.panel">
+            <DispatchInfo>
+                <Resources>
+                    <MainPath>./client/cep-loader.html</MainPath>
+                    <ScriptPath>./extendscript/index.jsx</ScriptPath>
+                    <CEFCommandLine>
+                        <Parameter>--allow-file-access-from-files</Parameter>
+                        <Parameter>--enable-nodejs</Parameter>
+                        <Parameter>--mixed-context</Parameter>
+                    </CEFCommandLine>
+                </Resources>
+                <Lifecycle>
+                    <AutoVisible>true</AutoVisible>
+                </Lifecycle>
+                <UI>
+                    <Type>Panel</Type>
+                    <Menu>EditFlow AI</Menu>
+                    <Geometry>
+                        <Size>
+                            <Height>600</Height>
+                            <Width>400</Width>
+                        </Size>
+                        <MinSize>
+                            <Height>400</Height>
+                            <Width>300</Width>
+                        </MinSize>
+                    </Geometry>
+                    <Icons />
+                </UI>
+            </DispatchInfo>
+        </Extension>
+    </DispatchInfoList>
+</ExtensionManifest>
