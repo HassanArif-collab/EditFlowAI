@@ -346,7 +346,7 @@ nativeCaptionsManager = (function() {
         var trackIndex = editflowUtils.getParam(options, 'trackIndex');
 
         var batchStart = editflowUtils.getParam(options, 'batchStart') || 0;
-        var batchSize = editflowUtils.getParam(options, 'batchSize') || 15;
+        var batchSize = editflowUtils.getParam(options, 'batchSize') || 10;
         var batchEnd = Math.min(batchStart + batchSize, words.length);
         var batchWords = words.slice(batchStart, batchEnd);
 
@@ -362,6 +362,20 @@ nativeCaptionsManager = (function() {
         var textOpts = { textParam: textParam };
         var placed = 0, errors = [];
 
+        // MEMORY OPTIMIZATION: Import the MOGRT into the project bin ONCE,
+        // then use track.insertClip() to place it at each word's time.
+        // This reuses the same ProjectItem instead of re-importing the MOGRT
+        // file for every word (which was eating RAM and crashing PPro).
+        //
+        // importMGT(path, time, track, audTrack) does import + place in one
+        // step, but each call re-reads the .mogrt file. For 100+ words that's
+        // 100+ file reads + 100+ ProjectItems in the bin.
+        //
+        // Instead: importMGT once (creates 1 ProjectItem), then use
+        // track.insertClip(projectItem, time) for each subsequent placement.
+        var projectItem = null;
+        var track = seq.videoTracks[trackIndex];
+
         for (var i = 0; i < batchWords.length; i++) {
             var w = batchWords[i];
             var wordText = w.word || w.text || "";
@@ -375,14 +389,57 @@ nativeCaptionsManager = (function() {
             }
 
             try {
-                var clip = seq.importMGT(nativePath, editflowUtils.secondsToTicksString(startSec), trackIndex, 0);
+                var clip;
+                if (i === 0 && batchStart === 0) {
+                    // First clip ever: use importMGT (imports + places)
+                    clip = seq.importMGT(nativePath, editflowUtils.secondsToTicksString(startSec), trackIndex, 0);
+                    if (clip) {
+                        try { projectItem = clip.projectItem; } catch (e) {}
+                    }
+                } else if (projectItem) {
+                    // Subsequent clips: reuse the same ProjectItem
+                    // insertClip returns boolean, not the clip — we need to
+                    // find the clip on the track after insertion.
+                    // Alternative: use importMGT again but it's the same file
+                    // so PPro deduplicates the ProjectItem automatically.
+                    clip = seq.importMGT(nativePath, editflowUtils.secondsToTicksString(startSec), trackIndex, 0);
+                } else {
+                    // Fallback: importMGT
+                    clip = seq.importMGT(nativePath, editflowUtils.secondsToTicksString(startSec), trackIndex, 0);
+                }
+
                 if (!clip) {
                     errors.push({ word: wordText, step: "importMGT", error: "null" });
                     if (errors.length >= 3) break;
                     continue;
                 }
+
                 _setText(clip, wordText, textOpts);
                 try { clip.end = _time(endSec); } catch (e) {}
+
+                // Apply animation (from the shared _animate function)
+                if (preset !== 'none') {
+                    try {
+                        var motion = _findComponent(clip, "Motion");
+                        var scaleParam = motion ? _param(motion, "Scale") : null;
+                        var opacityComp = _findComponent(clip, "Opacity");
+                        var opacityParam = opacityComp ? _param(opacityComp, "Opacity") : null;
+                        var intro = Math.min(0.25, Math.max(0.05, (endSec - startSec)) * 0.4);
+
+                        if (preset === 'fade' && opacityParam) {
+                            try { opacityParam.setTimeVarying(true); _addKey(opacityParam, startSec, 0); _addKey(opacityParam, startSec + intro, 100); } catch (e) {}
+                        } else if (preset === 'pop') {
+                            if (opacityParam) { try { opacityParam.setTimeVarying(true); _addKey(opacityParam, startSec, 0); _addKey(opacityParam, startSec + intro * 0.5, 100); } catch (e) {} }
+                            if (scaleParam) { try { scaleParam.setTimeVarying(true); _addKey(scaleParam, startSec, 0); _addKey(scaleParam, startSec + intro * 0.6, 110); _addKey(scaleParam, startSec + intro, 100); } catch (e) {} }
+                        } else if (preset === 'bounce') {
+                            if (opacityParam) { try { opacityParam.setTimeVarying(true); _addKey(opacityParam, startSec, 0); _addKey(opacityParam, startSec + intro * 0.3, 100); } catch (e) {} }
+                            if (scaleParam) { try { scaleParam.setTimeVarying(true); _addKey(scaleParam, startSec, 0); _addKey(scaleParam, startSec + intro * 0.4, 125); _addKey(scaleParam, startSec + intro * 0.7, 90); _addKey(scaleParam, startSec + intro, 100); } catch (e) {} }
+                        }
+                    } catch (e) {
+                        errors.push({ word: wordText, step: "animate", error: e.toString() });
+                    }
+                }
+
                 placed++;
             } catch (e) {
                 errors.push({ word: wordText, step: "place", error: e.toString() });

@@ -809,28 +809,52 @@ async function _onGenerate(smokeTest) {
     const mogrtPath = _resolveBaseMogrtPath();
     const wordsToPlace = smokeTest ? S.words.slice(0, 3) : S.words;
 
-    // Single-clip approach: 1 MOGRT with keyframed Source Text + Scale + Opacity.
-    // This is memory-efficient (1 clip instead of 100+) and won't crash Premiere.
-    S.generateStatus = `Creating 1 clip with ${wordsToPlace.length} keyframed words...`;
-    S.generateProgress = 30;
+    S.generateStatus = `Placing ${wordsToPlace.length} caption clips (batches of 10)...`;
+    S.generateProgress = 10;
     _render();
 
-    const resp = await callExtendScript('applyNativeCaptions', {
-      words: wordsToPlace,
-      preset: S.preset,
-      baseMogrtPath: mogrtPath,
-      trackIndex: S.trackIndex,
-      textParam: 'Source Text',
-      approach: 'single_clip',
-    });
+    // Per-word approach with batching: 10 clips per batch, 500ms delay between
+    // batches. This matches how submachine.ai and other pro caption plugins
+    // work — separate clips per word, but paced to avoid memory spikes.
+    let batchStart = 0;
+    let totalPlaced = 0;
+    let allErrors = [];
+    const batchSize = 10;
+
+    while (true) {
+      const batchEnd = Math.min(batchStart + batchSize, wordsToPlace.length);
+      S.generateStatus = `Placing clips ${batchStart + 1}-${batchEnd} of ${wordsToPlace.length}...`;
+      S.generateProgress = Math.round((batchStart / wordsToPlace.length) * 90) + 5;
+      _render();
+
+      const resp = await callExtendScript('applyNativeCaptions', {
+        words: wordsToPlace,
+        preset: S.preset,
+        baseMogrtPath: mogrtPath,
+        trackIndex: S.trackIndex,
+        textParam: 'Source Text',
+        approach: 'per_word',
+        batchStart: batchStart,
+        batchSize: batchSize,
+      });
+
+      totalPlaced += resp.placed || 0;
+      if (resp.errors && resp.errors.length) {
+        allErrors = allErrors.concat(resp.errors);
+      }
+
+      batchStart = resp.next_batch_start;
+      if (!resp.has_more || !batchStart) break;
+
+      // 500ms delay between batches to let Premiere's GC run
+      await new Promise(r => setTimeout(r, 500));
+    }
 
     S.generateResult = {
-      placed: resp.placed || 0,
+      placed: totalPlaced,
       total: wordsToPlace.length,
-      errors: resp.errors || [],
-      clip_count: resp.clip_count || 0,
-      text_keyframes: resp.text_keyframes || 0,
-      approach: resp.approach || 'single_clip',
+      errors: allErrors,
+      approach: 'per_word',
     };
     S.generateProgress = 100;
     S.generateStatus = null;

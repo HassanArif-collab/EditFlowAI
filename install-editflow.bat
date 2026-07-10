@@ -27,8 +27,9 @@ if not exist "%PS1%" (
     exit /b 1
 )
 
-:: Run the extracted PowerShell script
-powershell -NoProfile -ExecutionPolicy Bypass -File "%PS1%"
+:: Run the extracted PowerShell script, passing the .bat file's directory
+:: so it installs next to the .bat file (not always C:\EditFlowAI)
+powershell -NoProfile -ExecutionPolicy Bypass -File "%PS1%" -BatDir "%~dp0"
 
 set "EXITCODE=%ERRORLEVEL%"
 
@@ -51,13 +52,33 @@ exit /b %EXITCODE%
 :: Do not remove the marker line below — the .bat file looks for it.
 :: ============================================================================
 # PS_SCRIPT_START
+param(
+    [string]$BatDir = ""
+)
+
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
 # ── Configuration ──────────────────────────────────────────────────────────
 $RepoUrl = "https://github.com/HassanArif-collab/EditFlowAI/archive/refs/heads/feat/native-animated-captions.zip"
-$InstallDir = "C:\EditFlowAI"
 $ExtensionId = "com.editflow.ai"
+
+# Install next to the .bat file (NOT always C:\EditFlowAI).
+# The .bat wrapper passes its directory via -BatDir. If not provided
+# (e.g., running the .ps1 directly), fall back to the current directory.
+if ($BatDir -and (Test-Path $BatDir)) {
+    $ScriptDir = $BatDir.TrimEnd('\').TrimEnd('/')
+} else {
+    $ScriptDir = (Get-Location).Path
+}
+
+# If the script is running from a temp dir (e.g., downloaded to %TEMP%),
+# fall back to the user's home directory.
+if ($ScriptDir -like "*\Temp\*" -or $ScriptDir -like "*\tmp\*") {
+    $ScriptDir = [Environment]::GetFolderPath("UserProfile")
+}
+
+$InstallDir = Join-Path $ScriptDir "EditFlowAI"
 $VenvDir = Join-Path $InstallDir ".venv"
 
 # ── Helper functions ───────────────────────────────────────────────────────
@@ -90,6 +111,7 @@ Write-Host "    Native Animated Captions for Premiere Pro" -ForegroundColor Cyan
 Write-Host "  ==================================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "  This will install EditFlow AI to: $InstallDir" -ForegroundColor White
+Write-Host "  (installed next to this .bat file's location)" -ForegroundColor Gray
 Write-Host "  Close Premiere Pro if it is open, then press any key to begin." -ForegroundColor Yellow
 Write-Host ""
 $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
