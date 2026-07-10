@@ -2,20 +2,19 @@
  * native-captions-view.js — Native Animated Captions (word-by-word MOGRT
  * placement + native Premiere keyframe animation).
  *
+ * v2: Fixed error visibility, added paste-transcript, added inline model
+ * management, improved audio extraction error messages.
+ *
  * Reliability-first architecture:
  *   1. Pre-bake style into base_text.mogrt (per-clip: only text content changes)
  *   2. Opacity-first animation ladder: Fade-in > Pop-in > Bounce
- *   3. Diagnostic probe before any generation (insert_mogrt → source_text_patch
- *      → motion_scale_keyframe → opacity_keyframe → cleanup)
+ *   3. Diagnostic probe before any generation
  *   4. Smoke test button (1 word) before bulk Generate
  *   5. Defensive logging + bail-fast on 3 systemic errors
  *
- * Mirrors review-view.js: dynamic-imported by main.js with BUILD_TAG buster,
- * exposed as window.__editflowOpenNativeCaptions, self-injects CSS with
- * ?v=Date.now() to dodge CEF cache.
- *
  * Backend: /api/subtitles/transcribe-mixdown (Whisper on the mixdown WAV)
  *          /api/whisper/status (model availability)
+ *          /api/whisper/set-model (switch active model)
  *          /api/diag/log (relay probe results to backend log)
  * ExtendScript: extractSequenceAudio, runDiagnosticProbe, applyNativeCaptions
  */
@@ -30,21 +29,27 @@ const S = {
   words: [],                  // [{word, start, end, confidence}] in sequence time
   fingerprint: null,
   duration: 0,
+  // Model state
   modelName: '',
   modelInstalled: false,
+  modelStatus: null,          // full /api/whisper/status response
   // Settings
-  preset: 'fade',             // 'fade' | 'pop' | 'bounce'
+  preset: 'pop',              // 'fade' | 'pop' | 'bounce'
   trackIndex: null,           // null = auto-create new track on top
   // Probe
-  probeResult: null,          // {steps:[{step,ok,error?,details}], passed, failed, summary}
+  probeResult: null,
   probeRunning: false,
   // Generation
   busy: false,                // true during extract/transcribe OR generate
   generateResult: null,       // {placed, total, errors}
+  // Error state (survives _render() — the old bug was that errors were lost)
+  extractError: null,         // string | null
+  extractStatus: null,        // string | null (progress messages)
   // View bookkeeping
   prevView: null,
   _modelPoll: null,
-  _ws: null,
+  // Tab state for Step 1
+  step1Tab: 'extract',        // 'extract' | 'paste'
 };
 
 // ── Public ───────────────────────────────────────────────────
@@ -64,7 +69,6 @@ function openNativeCaptions(opts = {}) {
   v.classList.remove('hidden');
   _render();
   _refreshModelStatus();
-  // Poll model status every 15s (so installing a model in Settings reflects here)
   if (!S._modelPoll) {
     S._modelPoll = setInterval(() => {
       const el = $('#native-captions-view');
@@ -113,33 +117,27 @@ function _render() {
     <div class="nc-bar">
       <div class="nc-title">Native Animated Captions</div>
       <span id="nc-model-pill" class="nc-pill nc-pill-warn">checking model…</span>
+      <button id="nc-manage-models-btn" class="nc-btn nc-btn-tiny" title="Manage Whisper models">Manage Models</button>
       <span class="nc-spacer"></span>
       <button class="nc-btn nc-ghost" data-act="close">Close</button>
     </div>
 
     <div class="nc-body">
       <div class="nc-left">
-        <!-- Step 1: Extract & Transcribe -->
+        <!-- Step 1: Extract & Transcribe / Paste Transcript -->
         <div class="nc-section">
-          <div class="nc-subhead">Step 1 — Extract &amp; Transcribe</div>
-          <p class="nc-hint">
-            Set In/Out points (press <kbd>I</kbd> and <kbd>O</kbd> in Premiere) on the
-            section you want captioned. Then click below: we'll export a WAV mixdown
-            of that range and run Whisper on it to get word-level timestamps.
-          </p>
-          <div class="nc-actions">
-            <button id="nc-extract-btn" class="nc-btn nc-primary" ${S.busy ? 'disabled' : ''}>
-              ${S.busy ? 'Working…' : 'Extract &amp; Transcribe'}
+          <div class="nc-subhead">Step 1 — Get Word Timestamps</div>
+
+          <div class="nc-tabs">
+            <button class="nc-tab ${S.step1Tab === 'extract' ? 'nc-tab-active' : ''}" data-tab="extract">
+              Extract &amp; Transcribe
             </button>
-            <span id="nc-extract-status" class="nc-status"></span>
+            <button class="nc-tab ${S.step1Tab === 'paste' ? 'nc-tab-active' : ''}" data-tab="paste">
+              Paste Transcript
+            </button>
           </div>
-          ${S.words.length ? `
-            <div class="nc-words-info">
-              <strong>${S.words.length}</strong> words transcribed
-              (${S.duration.toFixed(1)}s)
-              ${S.fingerprint ? `· fingerprint <code>${S.fingerprint}</code>` : ''}
-            </div>
-          ` : ''}
+
+          ${S.step1Tab === 'extract' ? _renderExtractTab() : _renderPasteTab()}
         </div>
 
         <!-- Step 2: Animation preset -->
@@ -150,7 +148,7 @@ function _render() {
             <select id="nc-preset" class="nc-select">
               <option value="fade" ${S.preset === 'fade' ? 'selected' : ''}>Fade-in (most reliable)</option>
               <option value="pop" ${S.preset === 'pop' ? 'selected' : ''}>Pop-in (Hormozi style)</option>
-              <option value="bounce" ${S.preset === 'bounce' ? 'selected' : ''}>Bounce (experimental ⚠️)</option>
+              <option value="bounce" ${S.preset === 'bounce' ? 'selected' : ''}>Bounce (experimental)</option>
             </select>
           </div>
           <p id="nc-preset-hint" class="nc-hint nc-hint-dim"></p>
@@ -169,7 +167,7 @@ function _render() {
             <button id="nc-probe-btn" class="nc-btn" ${S.probeRunning ? 'disabled' : ''}>
               ${S.probeRunning ? 'Running probe…' : 'Run Probe'}
             </button>
-            <span id="nc-probe-status" class="nc-status"></span>
+            <span id="nc-probe-status" class="nc-status">${S.probeResult ? (S.probeResult.failed === 0 ? '✓ All steps passed' : '⚠ ' + S.probeResult.failed + ' step(s) failed') : ''}</span>
           </div>
           ${S.probeResult ? _renderProbeSummary() : ''}
         </div>
@@ -178,7 +176,7 @@ function _render() {
       <div class="nc-right">
         <!-- Step 4: Generate -->
         <div class="nc-section nc-grow">
-          <div class="nc-subhead">Step 4 — Generate</div>
+          <div class="nc-subhead">Step 4 — Generate Captions</div>
           <p class="nc-hint">
             Always run a <strong>smoke test</strong> (1 word) first. If it passes,
             bulk Generate will work.
@@ -202,10 +200,32 @@ function _render() {
 
   // Wire up
   v.querySelector('[data-act="close"]').onclick = closeNativeCaptions;
-  v.querySelector('#nc-extract-btn').onclick = _onExtract;
+  v.querySelector('#nc-manage-models-btn').onclick = _openSettings;
   v.querySelector('#nc-probe-btn').onclick = _onProbe;
   v.querySelector('#nc-smoke-btn').onclick = () => _onGenerate(true);
   v.querySelector('#nc-generate-btn').onclick = () => _onGenerate(false);
+
+  // Tab switching
+  v.querySelectorAll('.nc-tab').forEach(tab => {
+    tab.onclick = () => {
+      S.step1Tab = tab.dataset.tab;
+      S.extractError = null;
+      S.extractStatus = null;
+      _render();
+    };
+  });
+
+  // Step 1 tab-specific wiring
+  if (S.step1Tab === 'extract') {
+    const extractBtn = v.querySelector('#nc-extract-btn');
+    if (extractBtn) extractBtn.onclick = _onExtract;
+  } else {
+    const loadBtn = v.querySelector('#nc-load-transcript-btn');
+    if (loadBtn) loadBtn.onclick = _onLoadTranscript;
+    const fileInput = v.querySelector('#nc-srt-file');
+    if (fileInput) fileInput.onchange = _onSrtFileSelected;
+  }
+
   const presetSel = v.querySelector('#nc-preset');
   if (presetSel) {
     presetSel.onchange = (e) => {
@@ -214,6 +234,56 @@ function _render() {
     };
   }
   _updatePresetHint();
+}
+
+function _renderExtractTab() {
+  return `
+    <p class="nc-hint">
+      Set In/Out points (press <kbd>I</kbd> and <kbd>O</kbd> in Premiere) on the
+      section you want captioned. Then click below: we'll export a WAV mixdown
+      of that range and run Whisper on it to get word-level timestamps.
+    </p>
+    <div class="nc-actions">
+      <button id="nc-extract-btn" class="nc-btn nc-primary" ${S.busy ? 'disabled' : ''}>
+        ${S.busy ? 'Working…' : 'Extract &amp; Transcribe'}
+      </button>
+    </div>
+    ${S.extractStatus ? `<div class="nc-status nc-status-progress">${_esc(S.extractStatus)}</div>` : ''}
+    ${S.extractError ? `<div class="nc-status nc-err">${_esc(S.extractError)}</div>` : ''}
+    ${S.words.length ? `
+      <div class="nc-words-info">
+        <strong>${S.words.length}</strong> words transcribed
+        (${S.duration.toFixed(1)}s)
+        ${S.fingerprint ? `· fingerprint <code>${S.fingerprint}</code>` : ''}
+      </div>
+    ` : ''}
+  `;
+}
+
+function _renderPasteTab() {
+  return `
+    <p class="nc-hint">
+      Have a transcript already? Paste it here as <strong>SRT</strong>,
+      <strong>JSON</strong> (with word timestamps), or plain text. We'll
+      convert it to word-level timestamps for caption placement.
+    </p>
+    <textarea id="nc-transcript-input" class="nc-textarea" rows="8"
+      placeholder="Paste SRT here...&#10;&#10;1&#10;00:00:00,000 --> 00:00:02,000&#10;Hello world&#10;&#10;2&#10;00:00:02,000 --> 00:00:04,500&#10;This is a test&#10;&#10;Or paste JSON:&#10;[{\"word\":\"hello\",\"start\":0,\"end\":0.5},...]"></textarea>
+    <div class="nc-actions">
+      <button id="nc-load-transcript-btn" class="nc-btn nc-primary">Load Transcript</button>
+      <label class="nc-btn nc-ghost" style="cursor:pointer">
+        Or upload .srt file
+        <input type="file" id="nc-srt-file" accept=".srt,.txt,.json" style="display:none" />
+      </label>
+      <span id="nc-paste-status" class="nc-status"></span>
+    </div>
+    ${S.words.length ? `
+      <div class="nc-words-info">
+        <strong>${S.words.length}</strong> words loaded
+        (${S.duration.toFixed(1)}s)
+      </div>
+    ` : ''}
+  `;
 }
 
 function _renderProbeSummary() {
@@ -263,17 +333,33 @@ function _updatePresetHint() {
   const hints = {
     fade: 'Opacity 0→100 over 0.3s. Most reliable — works on all Premiere versions.',
     pop: 'Scale 0→110→100 + Opacity 0→100 over 0.25s. Hormozi-style pop-in. Works on 95% of setups.',
-    bounce: 'Scale 0→125→90→100 + Opacity 0→100 over 0.4s. Experimental — known Premiere bug (DVAPR-4217831) may affect keyframes on still-image clips.',
+    bounce: 'Scale 0→125→90→100 + Opacity 0→100 over 0.4s. Experimental — known Premiere bug may affect keyframes.',
   };
   el.textContent = hints[S.preset] || '';
 }
 
 // ── Actions ──────────────────────────────────────────────────
+function _openSettings() {
+  try {
+    if (typeof openSettings === 'function') {
+      openSettings();
+    } else if (window.__editflowOpenSettings) {
+      window.__editflowOpenSettings();
+    } else {
+      const btn = document.getElementById('btn-settings');
+      if (btn) btn.click();
+    }
+  } catch (e) {
+    console.error('[native-captions] could not open settings:', e);
+  }
+}
+
 async function _refreshModelStatus() {
   const pill = $('#nc-model-pill');
   if (!pill) return;
   try {
     const r = await apiGet('/api/whisper/status', { timeoutMs: 8000 });
+    S.modelStatus = r;
     S.modelName = r.active_model || '';
     const installed = (r.supported_models || []).find(m => m.name === S.modelName);
     S.modelInstalled = !!(installed && installed.installed);
@@ -293,42 +379,48 @@ async function _refreshModelStatus() {
 async function _onExtract() {
   if (S.busy) return;
   S.busy = true;
+  S.extractError = null;
+  S.extractStatus = 'Starting...';
   _render();
-  const statusEl = $('#nc-extract-status');
+
   try {
-    // 1. Get the active sequence's In/Out + extension paths via ExtendScript
     if (!isExtendScriptAvailable()) {
       throw new Error('ExtendScript not available — are you running inside Premiere?');
     }
 
-    // Resolve the bundled .epr path (templates/audio/audio_mixdown_wav.epr).
-    // If the .epr file doesn't exist, sequence_audio.jsx will fall back to
-    // trying the "WaveAudio" literal preset name.
+    // Check model first — give a clear error before attempting extraction
+    if (!S.modelInstalled) {
+      throw new Error(`Whisper model "${S.modelName}" is not installed. Click "Manage Models" to download it first.`);
+    }
+
+    // Resolve the bundled .epr path
     const csInterface = _getCSInterface();
     let extensionRoot = '';
     if (csInterface) {
       const key = (csInterface.SYSTEM_PATH && csInterface.SYSTEM_PATH.EXTENSION) || 'extension';
       extensionRoot = csInterface.getSystemPath(key) || '';
     }
-    // Convert to OS-native path with templates/audio subdir
     const eprPath = extensionRoot
       ? extensionRoot.replace(/[\\/]+$/, '') + '/templates/audio/audio_mixdown_wav.epr'
       : 'audio_mixdown_wav.epr';
 
-    // Output WAV path — put it in a temp dir; backend will persist its own copy
     const outPath = _tempWavPath();
 
-    if (statusEl) statusEl.textContent = 'Exporting audio mixdown…';
+    S.extractStatus = 'Exporting audio mixdown from Premiere...';
+    _render();
+
     const extractResp = await callExtendScript('extractSequenceAudio', {
       outPath: outPath,
       eprPath: eprPath,
     });
+
     if (!extractResp || !extractResp.success) {
-      throw new Error(extractResp?.error || 'Audio extraction failed');
+      throw new Error(extractResp?.error || 'Audio extraction failed. Make sure you set In/Out points (press I and O in Premiere) and the .epr preset exists.');
     }
 
-    // 2. Upload the WAV to the backend for transcription
-    if (statusEl) statusEl.textContent = 'Uploading WAV + transcribing…';
+    S.extractStatus = 'Uploading WAV + transcribing with Whisper...';
+    _render();
+
     const wavBlob = await _readFileAsBlob(extractResp.path);
     const clientId = (getState && getState().session && getState().session.clientId) || 'native-captions';
     const resp = await apiUpload(
@@ -340,21 +432,22 @@ async function _onExtract() {
         in_seconds: extractResp.in_seconds,
         out_seconds: extractResp.out_seconds,
       },
-      { timeoutMs: 600000 }  // 10 minutes for slow CPU Whisper
+      { timeoutMs: 600000 }
     );
 
     S.words = resp.words || [];
     S.fingerprint = resp.fingerprint;
     S.duration = resp.duration || 0;
     S.modelName = resp.model || S.modelName;
-    if (statusEl) statusEl.textContent = '';
+    S.extractStatus = null;
+
+    if (!S.words.length) {
+      throw new Error('Transcription completed but no words were found. The audio might be too quiet or not contain speech.');
+    }
   } catch (e) {
     console.error('[native-captions] extract failed:', e);
-    if (statusEl) {
-      statusEl.textContent = 'Error: ' + (e.message || e);
-      statusEl.classList.add('nc-err');
-    }
-    // Relay to backend log
+    S.extractError = e.message || String(e);
+    S.extractStatus = null;
     _diagLog('error', 'extract_failed', { error: String(e.message || e) });
   } finally {
     S.busy = false;
@@ -362,11 +455,193 @@ async function _onExtract() {
   }
 }
 
+async function _onLoadTranscript() {
+  const ta = $('#nc-transcript-input');
+  if (!ta || !ta.value.trim()) {
+    const statusEl = $('#nc-paste-status');
+    if (statusEl) {
+      statusEl.textContent = 'Please paste a transcript first.';
+      statusEl.classList.add('nc-err');
+    }
+    return;
+  }
+
+  const text = ta.value.trim();
+  const statusEl = $('#nc-paste-status');
+  if (statusEl) { statusEl.textContent = 'Parsing...'; statusEl.classList.remove('nc-err'); }
+
+  try {
+    let words = null;
+
+    // Try JSON first (array of {word, start, end} or {text, start, end})
+    if (text.startsWith('[') || text.startsWith('{')) {
+      try {
+        const parsed = JSON.parse(text);
+        words = _parseJsonTranscript(parsed);
+      } catch (e) {
+        // Not valid JSON — fall through to SRT
+      }
+    }
+
+    // Try SRT
+    if (!words) {
+      words = _parseSrt(text);
+    }
+
+    // Try plain text (distribute evenly across 10 seconds)
+    if (!words || words.length === 0) {
+      words = _parsePlainText(text);
+    }
+
+    if (!words || words.length === 0) {
+      throw new Error('Could not parse transcript. Expected SRT, JSON array, or plain text.');
+    }
+
+    S.words = words;
+    S.duration = words.length > 0 ? words[words.length - 1].end : 0;
+    S.fingerprint = null;
+    S.extractError = null;
+    S.extractStatus = null;
+
+    if (statusEl) {
+      statusEl.textContent = `✓ Loaded ${words.length} words (${S.duration.toFixed(1)}s)`;
+      statusEl.classList.remove('nc-err');
+    }
+    _diagLog('info', 'paste_transcript_loaded', { wordCount: words.length, duration: S.duration });
+  } catch (e) {
+    console.error('[native-captions] parse failed:', e);
+    if (statusEl) {
+      statusEl.textContent = 'Error: ' + (e.message || e);
+      statusEl.classList.add('nc-err');
+    }
+  }
+  _render();
+}
+
+function _onSrtFileSelected(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const ta = $('#nc-transcript-input');
+    if (ta) {
+      ta.value = e.target.result;
+      _onLoadTranscript();
+    }
+  };
+  reader.readAsText(file);
+}
+
+// ── Transcript parsers ───────────────────────────────────────
+
+function _srtTimeToSeconds(timeStr) {
+  // Format: HH:MM:SS,mmm or HH:MM:SS.mmm
+  const cleaned = timeStr.replace(',', '.');
+  const parts = cleaned.split(':');
+  if (parts.length === 3) {
+    return parseInt(parts[0]) * 3600 + parseInt(parts[1]) * 60 + parseFloat(parts[2]);
+  } else if (parts.length === 2) {
+    return parseInt(parts[0]) * 60 + parseFloat(parts[1]);
+  }
+  return parseFloat(cleaned) || 0;
+}
+
+function _parseSrt(text) {
+  const cues = [];
+  const blocks = text.trim().split(/\n\s*\n/);
+  for (const block of blocks) {
+    const lines = block.split('\n').filter(l => l.trim());
+    if (lines.length < 2) continue;
+
+    let timeLineIdx = 0;
+    if (/^\d+$/.test(lines[0].trim())) timeLineIdx = 1;
+    if (timeLineIdx >= lines.length) continue;
+
+    const timeMatch = lines[timeLineIdx].match(/(\d{1,2}:\d{2}:\d{2}[.,]\d{1,3})\s*-->\s*(\d{1,2}:\d{2}:\d{2}[.,]\d{1,3})/);
+    if (!timeMatch) continue;
+
+    const start = _srtTimeToSeconds(timeMatch[1]);
+    const end = _srtTimeToSeconds(timeMatch[2]);
+    const cueText = lines.slice(timeLineIdx + 1).join(' ').trim();
+    if (cueText) cues.push({ start, end, text: cueText });
+  }
+
+  return _cuesToWords(cues);
+}
+
+function _parseJsonTranscript(data) {
+  let words = [];
+
+  if (Array.isArray(data)) {
+    if (data.length === 0) return null;
+    const first = data[0];
+    if (first.word !== undefined || first.text !== undefined) {
+      words = data.map(w => ({
+        word: w.word || w.text || '',
+        start: parseFloat(w.start || 0),
+        end: parseFloat(w.end || 0),
+        confidence: w.confidence || w.probability || 1.0,
+      })).filter(w => w.word && isFinite(w.start) && isFinite(w.end));
+    }
+  } else if (data && data.segments) {
+    for (const seg of data.segments) {
+      if (seg.words && seg.words.length) {
+        for (const w of seg.words) {
+          words.push({
+            word: w.word || w.text || '',
+            start: parseFloat(w.start || 0),
+            end: parseFloat(w.end || 0),
+            confidence: w.probability || w.confidence || 1.0,
+          });
+        }
+      } else if (seg.text) {
+        const cues = [{ start: seg.start, end: seg.end, text: seg.text }];
+        words = words.concat(_cuesToWords(cues));
+      }
+    }
+  }
+
+  return words.length ? words : null;
+}
+
+function _parsePlainText(text) {
+  const wordStrs = text.split(/\s+/).filter(w => w.length > 0);
+  if (!wordStrs.length) return [];
+  const wordDur = 0.4;
+  return wordStrs.map((word, i) => ({
+    word: word,
+    start: i * wordDur,
+    end: (i + 1) * wordDur,
+    confidence: 1.0,
+  }));
+}
+
+function _cuesToWords(cues) {
+  const words = [];
+  for (const cue of cues) {
+    const cueWords = cue.text.split(/\s+/).filter(w => w.length > 0);
+    if (!cueWords.length) continue;
+    const dur = cue.end - cue.start;
+    const totalChars = cueWords.reduce((sum, w) => sum + w.length, 0);
+    let charOffset = 0;
+    for (const word of cueWords) {
+      const wordStart = cue.start + (charOffset / totalChars) * dur;
+      charOffset += word.length;
+      const wordEnd = cue.start + (charOffset / totalChars) * dur;
+      words.push({
+        word: word,
+        start: wordStart,
+        end: wordEnd,
+        confidence: 1.0,
+      });
+    }
+  }
+  return words;
+}
+
 async function _onProbe() {
   if (S.probeRunning) return;
   S.probeRunning = true;
-  const statusEl = $('#nc-probe-status');
-  if (statusEl) statusEl.textContent = 'Running probe…';
   _render();
   try {
     if (!isExtendScriptAvailable()) {
@@ -377,20 +652,16 @@ async function _onProbe() {
       baseMogrtPath: mogrtPath,
     });
     S.probeResult = resp;
-    // Relay to backend log
     _diagLog('info', 'probe_result', resp);
-    if (statusEl) {
-      statusEl.textContent = resp.failed === 0
-        ? '✓ All steps passed'
-        : `⚠ ${resp.failed} step(s) failed`;
-      statusEl.classList.toggle('nc-err', resp.failed > 0);
-    }
   } catch (e) {
     console.error('[native-captions] probe failed:', e);
-    if (statusEl) {
-      statusEl.textContent = 'Error: ' + (e.message || e);
-      statusEl.classList.add('nc-err');
-    }
+    S.probeResult = {
+      steps: [{ step: 'probe_exception', ok: false, error: String(e.message || e), details: null }],
+      passed: 0,
+      failed: 1,
+      summary: 'probe failed',
+      premiere_version: '',
+    };
     _diagLog('error', 'probe_exception', { error: String(e.message || e) });
   } finally {
     S.probeRunning = false;
@@ -410,7 +681,6 @@ async function _onGenerate(smokeTest) {
     const mogrtPath = _resolveBaseMogrtPath();
     const wordsToPlace = smokeTest ? S.words.slice(0, 1) : S.words;
 
-    // Warn on bulk > 400 words
     if (!smokeTest && wordsToPlace.length > 400) {
       const ok = confirm(
         `You're about to place ${wordsToPlace.length} caption clips. ` +
@@ -458,7 +728,6 @@ function _getCSInterface() {
 }
 
 function _resolveBaseMogrtPath() {
-  // Resolve the bundled base_text.mogrt path relative to the extension root.
   const csInterface = _getCSInterface();
   if (!csInterface) {
     throw new Error('CSInterface not available — must run inside Premiere CEP.');
@@ -470,11 +739,6 @@ function _resolveBaseMogrtPath() {
 }
 
 function _tempWavPath() {
-  // Use the OS temp dir + a unique name. CEP gives us Node's os module
-  // via cep_node.require — os.tmpdir() returns the correct platform path:
-  //   Windows: C:\Users\<user>\AppData\Local\Temp
-  //   macOS:   /var/folders/xx/...
-  //   Linux:   /tmp
   const req = (typeof require === 'function') ? require
             : (window.cep_node && window.cep_node.require) ? window.cep_node.require
             : null;
@@ -483,27 +747,22 @@ function _tempWavPath() {
   const path = req('path');
   const tmpDir = os.tmpdir();
   const name = 'editflow_mixdown_' + Date.now() + '_' + Math.floor(Math.random() * 10000) + '.wav';
-  // path.join produces OS-native separators automatically
   return path.join(tmpDir, name);
 }
 
 async function _readFileAsBlob(path) {
-  // CEP gives us Node's fs via cep_node.require — use it to read the file
-  // into a Blob for fetch upload.
   const req = (typeof require === 'function') ? require
             : (window.cep_node && window.cep_node.require) ? window.cep_node.require
             : null;
   if (!req) throw new Error('Node require not available in CEP — cannot read WAV file.');
   const fs = req('fs');
   const buffer = fs.readFileSync(path);
-  // Convert Node Buffer to Uint8Array → Blob
   const bytes = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
   return new Blob([bytes], { type: 'audio/wav' });
 }
 
 async function _diagLog(level, msg, data) {
   try {
-    // Read BUILD_TAG from the DOM (main.js stamps #boot-tag with "build:<tag>")
     const tagEl = document.getElementById('boot-tag');
     const build = tagEl ? tagEl.textContent.replace(/^build:/, '') : 'native-captions';
     await apiPost('/api/diag/log', {

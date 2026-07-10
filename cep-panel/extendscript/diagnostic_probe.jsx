@@ -377,35 +377,82 @@ diagnosticProbe = (function() {
         // The probe MUST clean up after itself. This step never throws so a
         // cleanup that requires manual deletion does NOT mark the probe as
         // failed — Generate stays enabled if all API tests passed.
+        //
+        // Premiere 26 removed qe.project.undoAction(). We try multiple strategies:
+        //   1. TrackItem.remove() (exists on some PPro versions)
+        //   2. qe.project.undoAction() (older PPro versions)
+        //   3. Remove via track.clips collection + QE DOM clip.remove()
+        //   4. Fallback: warn user to delete manually
         report.steps.push(_step("cleanup", function() {
-            // Strategy 1: TrackItem.remove() (newer Premiere versions)
-            try {
-                if (testClip && typeof testClip.remove === 'function') {
-                    testClip.remove();
-                    return { method: "clip.remove", manualCleanupNeeded: false };
-                }
-            } catch (e) {}
+            var methods = [];
 
-            // Strategy 2: qe.project.undoAction() (most reliable across versions)
-            if (typeof qe !== 'undefined') {
+            // Strategy 1: TrackItem.remove() (newer Premiere versions)
+            if (testClip) {
                 try {
-                    qe.project.undoAction();
-                    return { method: "undo", manualCleanupNeeded: false };
+                    if (typeof testClip.remove === 'function') {
+                        testClip.remove();
+                        return { method: "clip.remove", manualCleanupNeeded: false };
+                    }
+                    methods.push("clip.remove: not a function");
                 } catch (e) {
-                    return {
-                        method: "undo_failed",
-                        error: e.toString(),
-                        manualCleanupNeeded: true,
-                        message: "qe.project.undoAction() threw — please delete the test clip manually"
-                    };
+                    methods.push("clip.remove threw: " + e.toString());
                 }
             }
 
-            // Strategy 3: no automatic cleanup available
+            // Strategy 2: qe.project.undoAction() (older PPro — removed in PPro 26)
+            if (typeof qe !== 'undefined') {
+                try {
+                    if (typeof qe.project.undoAction === 'function') {
+                        qe.project.undoAction();
+                        return { method: "undo", manualCleanupNeeded: false };
+                    }
+                    methods.push("qe.project.undoAction: not a function (PPro 26+)");
+                } catch (e) {
+                    methods.push("undo threw: " + e.toString());
+                }
+            }
+
+            // Strategy 3: Find the clip on the track and remove it via QE DOM
+            if (typeof qe !== 'undefined' && testClip) {
+                try {
+                    var qeSeq = qe.project.getActiveSequence();
+                    if (qeSeq) {
+                        var qeTrack = qeSeq.getVideoTrackAt(trackIndex);
+                        if (qeTrack) {
+                            var clipRemoved = false;
+                            try {
+                                var qeClips = qeTrack.clips;
+                                if (qeClips && qeClips.numItems !== undefined) {
+                                    for (var ci = 0; ci < qeClips.numItems; ci++) {
+                                        var qeClip = qeClips[ci];
+                                        if (qeClip && Math.abs(parseFloat(qeClip.start.ticks || 0) - playheadTicks) < 254016000000) {
+                                            if (typeof qeClip.remove === 'function') {
+                                                qeClip.remove();
+                                                clipRemoved = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            } catch (e2) {
+                                methods.push("qeClips iteration: " + e2.toString());
+                            }
+                            if (clipRemoved) {
+                                return { method: "qeClip.remove", manualCleanupNeeded: false };
+                            }
+                        }
+                    }
+                } catch (e) {
+                    methods.push("qe track clip removal: " + e.toString());
+                }
+            }
+
+            // Strategy 4: Fallback — warn user
             return {
                 method: "manual",
                 manualCleanupNeeded: true,
-                message: "qe DOM unavailable and clip.remove() not supported — please delete the test clip manually"
+                message: "Could not auto-remove the test clip. Please select the 'Graphic' clip on track " + trackIndex + " at " + playheadSec.toFixed(1) + "s and press Delete.",
+                methods_tried: methods
             };
         }));
 
