@@ -132,6 +132,20 @@ def _is_model_installed(model_name: str, fragments: list[str]) -> bool:
     return False
 
 
+def is_model_installed(model_name: str) -> bool:
+    """Public wrapper around _is_model_installed + catalog lookup.
+
+    Returns True if ``model_name`` is in the catalog AND its weights
+    are present (non-empty snapshot) in the HuggingFace hub cache.
+    Used by routes that need a quick boolean (e.g. /api/captions/transcribe's
+    409 short-circuit before the user uploads a WAV for nothing).
+    """
+    for m in _MODEL_CATALOG:
+        if m["name"] == model_name:
+            return _is_model_installed(m["name"], m["hf_repo_fragments"])
+    return False
+
+
 @router.get("/status")
 async def whisper_status():
     """Return the active model + per-model installed state + cache location."""

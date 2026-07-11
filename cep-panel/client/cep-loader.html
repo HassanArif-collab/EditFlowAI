@@ -19,8 +19,8 @@
   <base href="http://127.0.0.1:8765/panel/">
   <!-- Noto Nastaliq Urdu is bundled locally (styles/fonts.css → fonts/*.woff2)
        so Urdu renders even when CEP is offline. No Google Fonts CDN at runtime. -->
-  <link rel="stylesheet" href="styles/fonts.css?v=20260607">
-  <link rel="stylesheet" href="styles/chat.css?v=20260606c">
+  <link rel="stylesheet" href="styles/fonts.css?v=prcap1">
+  <link rel="stylesheet" href="styles/chat.css?v=prcap1">
   <title>EditFlow AI</title>
 </head>
 <body>
@@ -29,6 +29,7 @@
     <span id="boot-tag" class="boot-tag" title="Frontend build tag — must match latest commit">build:unloaded</span>
     <span class="header-spacer"></span>
     <button id="btn-review" class="icon-btn" title="Review &amp; Cut (transcript editor)">&#128221;</button>
+    <button id="btn-caption-editor" class="icon-btn" title="Animated Captions (ProRes)">&#128172;</button>
     <button id="btn-diagnostics" class="icon-btn" title="Diagnostics">&#9432;</button>
     <button id="btn-settings" class="icon-btn" title="Settings">&#9881;</button>
   </header>
@@ -227,9 +228,9 @@
   <div id="settings-overlay" class="overlay hidden"></div>
   <div id="diagnostics-popover" class="popover hidden"></div>
 
-  <script src="lib/CSInterface.js?v=20260606c"></script>
+  <script src="lib/CSInterface.js?v=prcap1"></script>
   <!-- ?v= cache-buster: force CEP to refetch each release so module hot-swap
        is reliable. Bump the value whenever any module changes. -->
-  <script type="module" src="src/main.js?v=20260606c"></script>
+  <script type="module" src="src/main.js?v=prcap1"></script>
 </body>
 </html>

@@ -19,7 +19,8 @@ var editflowModuleNames = [
     "track_manager.jsx",
     "export_manager.jsx",
     "effects_manager.jsx",
-    "capability_probe.jsx"
+    "capability_probe.jsx",
+    "caption_importer.jsx"
 ];
 
 function editflowEscapeJSON(value) {
@@ -349,6 +350,19 @@ function editflowDispatch(command, payloadData) {
             result = clipManager.processEDLOps(options);
             break;
 
+        // ── Caption Video Import (ProRes technique) ──
+        case "getCaptionSequenceSettings":
+            result = captionImporter.getSequenceSettings();
+            break;
+
+        case "importCaptionVideo":
+            result = captionImporter.importCaptionVideo(options);
+            break;
+
+        case "clearCaptionClips":
+            result = captionImporter.clearCaptionClips();
+            break;
+
         default:
             result = editflowUtils.safeStringify({
                 success: false,
@@ -362,7 +376,8 @@ function editflowDispatch(command, payloadData) {
             "removeTimelineClips", "removeTimelineRanges",
             "clearTimelineLabels", "manageTracks",
             "setAudioLevel", "normalizeAudio", "audioFade", "addMarker", "addPhraseRangeMarkers",
-            "applyEffect", "applyTransitionToAll", "setClipLabel", "processEDL"
+            "applyEffect", "applyTransitionToAll", "setClipLabel", "processEDL",
+            "importCaptionVideo", "clearCaptionClips"
         ];
         if (editflowArrayContains(modifyingCommands, command)) {
             _undoCounter++;

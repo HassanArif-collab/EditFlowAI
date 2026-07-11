@@ -4,7 +4,7 @@
  * Initializes all modules, wires up DOM events, and starts the app.
  * This file owns no business logic — it delegates to the modules.
  */
-const BUILD_TAG = 'review-9';  // bump when shipping a fix; visible in header
+const BUILD_TAG = 'pr-captions-1';  // bump when shipping a fix; visible in header
 
 // FIRST thing on parse: clear the inline boot-check banner. If the user sees
 // the banner disappear, we KNOW main.js parsed successfully and modules are
@@ -36,6 +36,7 @@ import { initSettings, openSettings, onWhisperDownloadProgress } from './setting
 // _loadOrchestrator so edits to review-view.js land on reload without a CEP
 // cache wipe. Kept in a module var + on window for the orchestrator's /review.
 let openReview = null;
+let openCaptionEditor = null;
 // Feature flag: agent mode vs. legacy orchestrator
 const AGENT_MODE = localStorage.getItem('editflow_agent_mode') === 'on';
 
@@ -84,6 +85,15 @@ async function _loadOrchestrator() {
   } catch (e) {
     console.error('[EditFlow] Failed to load review-view:', e);
   }
+
+  // Load the Caption Editor (ProRes technique) with the same cache-buster.
+  try {
+    const ceMod = await import('./caption-editor.js' + bust);
+    openCaptionEditor = ceMod.openCaptionEditor;
+    window.__editflowOpenCaptionEditor = openCaptionEditor;
+  } catch (e) {
+    console.error('[EditFlow] Failed to load caption-editor:', e);
+  }
 }
 
 const $ = (sel) => document.querySelector(sel);
@@ -104,6 +114,7 @@ const btnSend = $('#btn-send');
 const btnAttach = $('#btn-attach');
 const btnSettings = $('#btn-settings');
 const btnReview = $('#btn-review');
+const btnCaptionEditor = $('#btn-caption-editor');
 const btnDiagnostics = $('#btn-diagnostics');
 const settingsOverlay = $('#settings-overlay');
 const diagnosticsPopover = $('#diagnostics-popover');
@@ -225,6 +236,14 @@ async function init() {
     btnReview.addEventListener('click', () => {
       try { if (openReview) openReview(); else console.warn('[EditFlow] Review not loaded yet'); }
       catch (e) { console.error('[EditFlow] openReview failed:', e); }
+    });
+  }
+
+  // 9c. Wire the Caption Editor (ProRes technique) button.
+  if (btnCaptionEditor) {
+    btnCaptionEditor.addEventListener('click', () => {
+      try { if (openCaptionEditor) openCaptionEditor(); else console.warn('[EditFlow] Caption Editor not loaded yet'); }
+      catch (e) { console.error('[EditFlow] openCaptionEditor failed:', e); }
     });
   }
 
