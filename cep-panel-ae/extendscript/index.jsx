@@ -1,13 +1,9 @@
 /*
  * index.jsx - Main ExtendScript entry point for EditFlow AI AE.
- * Loads all modules and provides the editflowDispatch() command router.
+ * Provides the editflowDispatch() command router.
+ * Modules are loaded by the panel via evalScript('$.evalFile()') to ensure
+ * correct $.fileName resolution (manifest-loaded JSX has broken $.fileName).
  */
-var editflowModuleNames = [
-    "utils.jsx",
-    "caption_manager.jsx"
-];
-
-var editflowConfiguredScriptDir = "";
 
 function editflowEscapeJSON(value) {
     return String(value)
@@ -32,51 +28,6 @@ function editflowErrorResult(error, command) {
     return '{"success":false,"error":"' + editflowEscapeJSON(message) + '","command":"' + editflowEscapeJSON(cmd) + '"}';
 }
 
-function editflowGetScriptDir(scriptFile) {
-    var slashIndex = scriptFile.lastIndexOf('/');
-    var backslashIndex = scriptFile.lastIndexOf('\\');
-    var separatorIndex = Math.max(slashIndex, backslashIndex);
-    if (separatorIndex >= 0) {
-        return scriptFile.substring(0, separatorIndex).replace(/\\/g, '/');
-    }
-    try {
-        return File(scriptFile).parent.fsName.replace(/\\/g, '/');
-    } catch (e) {
-        return "";
-    }
-}
-
-function editflowLoadModule(path) {
-    try {
-        var file = new File(path);
-        if (file.exists) {
-            $.evalFile(file);
-        } else {
-            throw new Error("module not found: " + path);
-        }
-    } catch (e) {
-        var message = "Failed to load module " + path + ": " + e.toString();
-        $.writeln("EditFlow: " + message);
-    }
-}
-
-function editflowLoadAllModules(baseDir) {
-    var dir = baseDir || editflowConfiguredScriptDir;
-    if (!dir) return;
-    for (var i = 0; i < editflowModuleNames.length; i++) {
-        var path = dir + "/" + editflowModuleNames[i];
-        editflowLoadModule(path);
-    }
-}
-
-function editflowConfigureExtensionRoot(extensionRoot) {
-    var root = String(extensionRoot || "").replace(/\\/g, "/").replace(/\/+$/, "");
-    var scriptDir = root + "/extendscript";
-    editflowConfiguredScriptDir = scriptDir;
-    editflowLoadAllModules(scriptDir);
-    return editflowUtils.ok({ scriptDir: scriptDir });
-}
-
 function editflowDispatch(command, payloadData) {
     try {
         var options = {};
@@ -93,7 +44,8 @@ function editflowDispatch(command, payloadData) {
         switch (command) {
             // ── Extension Configuration ──
             case "editflowConfigureExtensionRoot":
-                result = editflowConfigureExtensionRoot(options.extensionRoot || options);
+                // No-op: modules already loaded by panel via $.evalFile()
+                result = editflowUtils.ok({ status: "ready" });
                 break;
 
             // ── Comp Info ──
