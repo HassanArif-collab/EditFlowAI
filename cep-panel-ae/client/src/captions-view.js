@@ -78,16 +78,16 @@ function _render() {
       <span id="cap-model-pill" class="cap-pill cap-pill-warn">checking model…</span>
     </div>
 
-    <div class="cap-comp-info" id="cap-comp-info">
-      ${S.compInfo && S.compInfo.duration !== undefined ? `
+<div class="cap-comp-info" id="cap-comp-info">
+      ${S.compInfo ? (S.compInfo.error ? `
+        <span class="cap-dim" style="color:#f87171;">Error: ${_esc(S.compInfo.error)}</span>
+      ` : `
         <strong>${_esc(S.compInfo.name)}</strong>
         · ${S.compInfo.width}×${S.compInfo.height}
-        · ${S.compInfo.duration.toFixed(1)}s
-        · ${S.compInfo.frameRate.toFixed(1)} fps
+        · ${S.compInfo.duration?.toFixed(1)}s
+        · ${S.compInfo.frameRate?.toFixed(1)} fps
         · ${S.compInfo.hasAudio ? '✓ has audio' : '⚠ no audio'}
-      ` : S.compInfo && S.compInfo.error ? `
-        <span class="cap-dim cap-err">ExtendScript error: ${_esc(S.compInfo.error)}</span>
-      ` : '<span class="cap-dim">No active composition. Open a comp in AE.</span>'}
+      `) : '<span class="cap-dim">No active composition. Open a comp in AE.</span>'}
     </div>
 
     <!-- Step 1: Transcribe -->
