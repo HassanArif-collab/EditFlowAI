@@ -79,12 +79,14 @@ function _render() {
     </div>
 
     <div class="cap-comp-info" id="cap-comp-info">
-      ${S.compInfo ? `
+      ${S.compInfo && S.compInfo.duration !== undefined ? `
         <strong>${_esc(S.compInfo.name)}</strong>
         · ${S.compInfo.width}×${S.compInfo.height}
         · ${S.compInfo.duration.toFixed(1)}s
         · ${S.compInfo.frameRate.toFixed(1)} fps
         · ${S.compInfo.hasAudio ? '✓ has audio' : '⚠ no audio'}
+      ` : S.compInfo && S.compInfo.error ? `
+        <span class="cap-dim cap-err">ExtendScript error: ${_esc(S.compInfo.error)}</span>
       ` : '<span class="cap-dim">No active composition. Open a comp in AE.</span>'}
     </div>
 
@@ -96,7 +98,7 @@ function _render() {
         We'll extract the audio and run Whisper transcription for word-level timestamps.
       </p>
       <div class="cap-actions">
-        <button id="cap-transcribe-btn" class="cap-btn cap-primary" ${S.busy || !S.compInfo?.hasAudio ? 'disabled' : ''}>
+        <button id="cap-transcribe-btn" class="cap-btn cap-primary" ${S.busy || !S.compInfo?.hasAudio || S.compInfo?.error ? 'disabled' : ''}>
           ${S.busy ? 'Working…' : 'Transcribe Audio'}
         </button>
         <label class="cap-btn cap-ghost" style="cursor:pointer" title="Upload a WAV/MP3 file directly">
@@ -112,7 +114,7 @@ function _render() {
         </div>
       ` : ''}
       ${S.error ? `<div class="cap-status cap-err">${_esc(S.error)}</div>` : ''}
-      ${S.words.length ? `
+      ${S.words.length && S.duration !== undefined ? `
         <div class="cap-words-info">
           <strong>${S.words.length}</strong> words transcribed
           (${S.duration.toFixed(1)}s)
@@ -219,13 +221,20 @@ async function _refreshCompInfo() {
   try {
     if (!isExtendScriptAvailable()) return;
     const resp = await callExtendScript('getCompInfo');
+    console.log('[captions] getCompInfo response:', resp);
     if (resp && resp.success) {
       S.compInfo = resp;
       const el = $('#cap-comp-info');
       if (el) _render();
+    } else {
+      console.error('[captions] getCompInfo failed:', resp?.error);
+      S.compInfo = { error: resp?.error || 'Unknown error' };
+      _render();
     }
   } catch (e) {
-    // Non-fatal
+    console.error('[captions] getCompInfo exception:', e);
+    S.compInfo = { error: e.message };
+    _render();
   }
 }
 
