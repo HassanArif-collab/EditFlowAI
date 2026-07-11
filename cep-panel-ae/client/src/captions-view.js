@@ -220,9 +220,9 @@ async function _refreshModelStatus() {
 async function _refreshCompInfo() {
   try {
     if (!isExtendScriptAvailable()) return;
-    const resp = await callExtendScript('getCompInfo');
+    const resp = await callExtendScript('ef_getCompInfo');
     console.log('[captions] getCompInfo response:', resp);
-    if (resp && resp.success) {
+    if (resp && !resp.error) {
       S.compInfo = resp;
       const el = $('#cap-comp-info');
       if (el) _render();
@@ -254,8 +254,8 @@ async function _onTranscribe() {
     // 1. Get the audio file path from the active comp
     S.status = 'Extracting audio path from comp...';
     _render();
-    const audioResp = await callExtendScript('getAudioPath');
-    if (!audioResp || !audioResp.success) {
+    const audioResp = await callExtendScript('ef_getAudioPath');
+    if (!audioResp || audioResp.error || !audioResp.path) {
       throw new Error(audioResp?.error || 'No audio found in the active comp.');
     }
 
@@ -361,7 +361,7 @@ async function _onGenerate(smokeTest) {
       S.progress = Math.round((batchStart / wordsToPlace.length) * 80) + 10;
       _render();
 
-      const resp = await callExtendScript('createCaptions', {
+      const resp = await callExtendScript('ef_createCaptions', JSON.stringify({
         words: wordsToPlace,
         preset: S.preset,
         fontSize: S.fontSize,
@@ -369,7 +369,7 @@ async function _onGenerate(smokeTest) {
         fillColor: S.fillColor,
         batchStart: batchStart,
         batchSize: batchSize,
-      });
+      }));
 
       totalPlaced += resp.placed || 0;
       if (resp.errors && resp.errors.length) {
@@ -406,7 +406,7 @@ async function _onGenerate(smokeTest) {
 
 async function _onClear() {
   try {
-    await callExtendScript('clearCaptions');
+    await callExtendScript('ef_clearCaptions');
     S.generateResult = null;
     _render();
   } catch (e) {

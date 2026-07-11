@@ -1,9 +1,10 @@
 /**
  * extendscript.js — Promise wrapper for Adobe CEP ExtendScript calls.
  *
- * v2: Single-file JSX — no more $.evalFile() module loading.
- * The manifest loads index.jsx (which contains ALL code), so we just
- * need to call editflowConfigureExtensionRoot to confirm it's ready.
+ * v3: Based on TikTalk's proven pattern.
+ *   1. Explicitly loads index.jsx via $.evalFile() from the client
+ *   2. Calls functions DIRECTLY by name (no dispatcher)
+ *   3. Returns plain strings that we parse as JSON
  */
 let _csInterface = null;
 let _esLoaded = false;
@@ -22,19 +23,43 @@ async function initExtendScript() {
 
   console.log('[extendscript] Extension root:', extensionRoot);
 
-  // The manifest already loaded index.jsx (single-file bundle).
-  // Just confirm it's ready by calling editflowConfigureExtensionRoot.
+  // Load the ExtendScript file explicitly via $.evalFile()
+  // (TikTalk pattern — don't rely on <ScriptPath> alone)
+  const jsxPath = (extensionRoot + '/extendscript/index.jsx').replace(/\\/g, '/');
+  console.log('[extendscript] Loading JSX:', jsxPath);
+
+  await new Promise((resolve, reject) => {
+    _csInterface.evalScript('$.evalFile("' + jsxPath + '")', (result) => {
+      if (result === 'EvalScript error.' || result === undefined) {
+        console.error('[extendscript] $.evalFile failed:', result);
+        reject(new Error('Failed to load ExtendScript file: ' + jsxPath));
+      } else {
+        console.log('[extendscript] JSX loaded');
+        resolve();
+      }
+    });
+  });
+
+  // Verify with ping
   try {
-    await callExtendScript('editflowConfigureExtensionRoot', extensionRoot);
+    const ping = await _evalScriptRaw('ef_ping()');
+    console.log('[extendscript] Ping result:', ping);
+    if (ping !== 'pong') {
+      console.warn('[extendscript] Unexpected ping result:', ping);
+    }
     _esLoaded = true;
     console.log('[extendscript] ExtendScript loaded successfully');
     return true;
   } catch (e) {
-    console.error('[extendscript] Init failed:', e);
-    throw e;
+    console.error('[extendscript] Ping failed:', e);
+    throw new Error('ExtendScript loaded but ping failed: ' + e.message);
   }
 }
 
+/**
+ * Call an ExtendScript function by name, returning a Promise.
+ * The function is called DIRECTLY (no dispatcher).
+ */
 async function callExtendScript(fnName, ...args) {
   if (!_csInterface) {
     if (typeof CSInterface !== 'undefined') {
@@ -45,38 +70,51 @@ async function callExtendScript(fnName, ...args) {
     throw new Error('CSInterface not available');
   }
 
-  const script = _buildScript(fnName, args);
+  // Build the script string — call the function directly
+  let script;
+  if (args.length === 0) {
+    script = `${fnName}()`;
+  } else if (args.length === 1 && typeof args[0] === 'string') {
+    // String arg — wrap in quotes (escaped)
+    script = `${fnName}(${JSON.stringify(args[0])})`;
+  } else if (args.length === 1 && typeof args[0] === 'object') {
+    // Object arg — pass as JSON string (function receives it as a string param)
+    script = `${fnName}(${JSON.stringify(JSON.stringify(args[0]))})`;
+  } else {
+    // Multiple args — serialize each
+    const serialized = args.map(a => JSON.stringify(typeof a === 'object' ? JSON.stringify(a) : a)).join(', ');
+    script = `${fnName}(${serialized})`;
+  }
 
+  const result = await _evalScriptRaw(script);
+
+  // Check for ERROR: prefix (TikTalk pattern)
+  if (typeof result === 'string' && result.indexOf('ERROR:') === 0) {
+    throw new Error(result.substring(6));
+  }
+
+  // Try to parse as JSON
+  try {
+    return JSON.parse(result);
+  } catch (_) {
+    // Not JSON — return as string
+    return result;
+  }
+}
+
+/**
+ * Raw evalScript call — returns the raw string result.
+ */
+function _evalScriptRaw(script) {
   return new Promise((resolve, reject) => {
     _csInterface.evalScript(script, (result) => {
       if (result === 'EvalScript error.' || result === undefined) {
-        reject(new Error(`ExtendScript call "${fnName}" failed (EvalScript error)`));
+        reject(new Error('EvalScript error for: ' + script.substring(0, 100)));
         return;
       }
-      try {
-        const parsed = JSON.parse(result);
-        if (parsed && parsed.success === false) {
-          reject(new Error(parsed.error || `ExtendScript "${fnName}" returned failure`));
-        } else {
-          resolve(parsed);
-        }
-      } catch (_) {
-        resolve(result);
-      }
+      resolve(result);
     });
   });
-}
-
-function _buildScript(fnName, args) {
-  const allowlist = ['editflowConfigureExtensionRoot', 'getCompInfo', 'getAudioPath', 'createCaptions', 'clearCaptions'];
-  if (allowlist.includes(fnName)) {
-    const command = fnName;
-    const payload = args[0] || '';
-    const payloadStr = typeof payload === 'string' ? payload : JSON.stringify(payload);
-    return `editflowDispatch("${command}", ${JSON.stringify(payloadStr)})`;
-  }
-  const serializedArgs = args.map(a => JSON.stringify(a)).join(', ');
-  return `${fnName}(${serializedArgs})`;
 }
 
 function isExtendScriptAvailable() {
