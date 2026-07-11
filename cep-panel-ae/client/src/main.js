@@ -1,7 +1,7 @@
 /**
  * main.js — Bootstrap for EditFlow AE panel.
  */
-const BUILD_TAG = 'ae-captions-9';
+const BUILD_TAG = 'ae-captions-10';
 
 (function _stampBoot() {
   const banner = document.getElementById('inline-boot-check');

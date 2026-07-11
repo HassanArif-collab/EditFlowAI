@@ -150,8 +150,8 @@ function ef_getAudioPath() {
 var EF_SPRING_SCALE = "f=3.0; d=6.0; t=time-inPoint;\n" +
     "if(t<0){[0,0]}else{s=100-100*Math.exp(-d*t)*Math.cos(f*2*Math.PI*t);[s,s]}";
 
-var EF_FADEUP_OP = "t=time-inPoint; linear(t,0,0.15,0,100)";
-var EF_FADEUP_POS = "t=time-inPoint; [value[0], value[1]+linear(t,0,0.15,30,0)]";
+var EF_FADEUP_OP = "t=time-inPoint; linear(t,0,0.3,0,100)";
+var EF_FADEUP_POS = "t=time-inPoint; [value[0], value[1]+linear(t,0,0.3,40,0)]";
 
 var EF_REVEAL_OP = "t=time-inPoint; linear(t,0,0.1,0,100)";
 
@@ -373,7 +373,7 @@ function ef_applyPreset(layer, cfg, g) {
     }
 }
 
-/* ── Create per-word pill background with squash & stretch ── */
+/* ── Create pill background for a group of adjacent words — scales 0→100 ── */
 function ef_createWordPill(comp, textLayer, cfg, wordStart, wordEnd) {
     try {
         var r = textLayer.sourceRectAtTime(wordStart + 0.05, false);
@@ -422,12 +422,16 @@ function ef_createWordPill(comp, textLayer, cfg, wordStart, wordEnd) {
         var textPos = textLayer.property("Position").value;
         shapeLayer.property("Position").setValue(textPos);
 
-        // Squash & stretch scale expression on the pill
-        var intensity = cfg.animIntensity || 1.0;
-        shapeLayer.property("Scale").expression = ef_squashExpr(intensity);
+        // Scale from 0 to 100 with easing (not squash — simple grow)
+        shapeLayer.property("Scale").expression =
+            "t=time-inPoint;" +
+            "if(t<0){[0,0]}else{" +
+            "p=ease(t,0,0.25,0,100);" +
+            "[p,p]" +
+            "}";
 
-        // Also fade in opacity
-        shapeLayer.property("Opacity").expression = EF_REVEAL_OP;
+        // Fade in opacity
+        shapeLayer.property("Opacity").expression = EF_FADEUP_OP;
 
         return shapeLayer;
     } catch (e) {
@@ -450,6 +454,45 @@ function ef_buildGroup(comp, g, cfg) {
     // For "fadeup_words" preset: create one text layer PER WORD
     // Each word fades up from bottom at its spoken time
     if (preset === "fadeup_words") {
+        // First pass: determine which words have pills
+        var wordHasPill = [];
+        for (var wi0 = 0; wi0 < g.words.length; wi0++) {
+            var globalIdx0 = g.words[wi0].idx;
+            var hasPill = false;
+            if (cfg.pillWords && cfg.pillWords.length > 0) {
+                for (var pi0 = 0; pi0 < cfg.pillWords.length; pi0++) {
+                    if (cfg.pillWords[pi0] === globalIdx0) { hasPill = true; break; }
+                }
+            }
+            wordHasPill.push(hasPill);
+        }
+
+        // Merge adjacent pill words into pill groups
+        // e.g., if words 4,5 both have pills → one pill spanning both
+        var pillGroups = []; // [{startIdx, endIdx, startTime, endTime}]
+        var i = 0;
+        while (i < g.words.length) {
+            if (wordHasPill[i]) {
+                var startIdx = i;
+                var endIdx = i;
+                // Extend to adjacent pill words
+                while (endIdx + 1 < g.words.length && wordHasPill[endIdx + 1]) {
+                    endIdx++;
+                }
+                pillGroups.push({
+                    startIdx: startIdx,
+                    endIdx: endIdx,
+                    startTime: g.words[startIdx].start,
+                    endTime: g.words[endIdx].end
+                });
+                i = endIdx + 1;
+            } else {
+                i++;
+            }
+        }
+
+        // Create text layers for each word
+        var wordLayers = [];
         for (var wi = 0; wi < g.words.length; wi++) {
             var w = g.words[wi];
             var wordText = allCaps ? w.text.toUpperCase() : w.text;
@@ -457,46 +500,47 @@ function ef_buildGroup(comp, g, cfg) {
             var endSec = w.end;
 
             try {
-                // Create text layer for this word
                 var textLayer = comp.layers.addText(wordText);
                 textLayer.name = "Caption: " + wordText.substr(0, 20);
                 textLayer.comment = EF_TAG;
 
-                // Style
                 ef_styleDoc(textLayer, cfg);
-
-                // Position + anchor
                 ef_setTiming(textLayer, startSec, endSec);
                 ef_centerAnchor(textLayer, comp, cfg, startSec + 0.05);
 
-                // Animation: fade up from bottom
-                var opacity = textLayer.property("Opacity");
-                var pos = textLayer.property("Position");
-                opacity.expression = EF_FADEUP_OP;
-                pos.expression = EF_FADEUP_POS;
+                // Animation: fade up from bottom (opacity 0→100 over 0.3s, position Y +40→0)
+                textLayer.property("Opacity").expression = EF_FADEUP_OP;
+                textLayer.property("Position").expression = EF_FADEUP_POS;
 
-                // Drop shadow
                 if (cfg.dropShadow) {
                     ef_applyDropShadow(textLayer, cfg);
                 }
 
-                // Check if this word should have a pill background
-                var globalIdx = w.idx;
-                var hasPill = false;
-                if (cfg.pillWords && cfg.pillWords.length > 0) {
-                    for (var pi = 0; pi < cfg.pillWords.length; pi++) {
-                        if (cfg.pillWords[pi] === globalIdx) { hasPill = true; break; }
-                    }
-                }
-
-                if (hasPill) {
-                    ef_createWordPill(comp, textLayer, cfg, startSec, endSec);
-                }
-
+                wordLayers.push(textLayer);
                 placed++;
             } catch (e) {
-                // Non-fatal — continue with next word
+                wordLayers.push(null);
             }
+        }
+
+        // Create merged pills for adjacent pill words
+        for (var pg = 0; pg < pillGroups.length; pg++) {
+            var pgStart = pillGroups[pg].startIdx;
+            var pgEnd = pillGroups[pg].endIdx;
+
+            // Find the first non-null text layer in this pill group
+            var refLayer = null;
+            for (var pl = pgStart; pl <= pgEnd; pl++) {
+                if (wordLayers[pl]) { refLayer = wordLayers[pl]; break; }
+            }
+            if (!refLayer) continue;
+
+            // Create a single pill that spans from the first word's start to the last word's end
+            // The pill sizes to the reference layer (first word) — in a future improvement,
+            // we could create a wider pill that covers all words in the group
+            ef_createWordPill(comp, refLayer, cfg,
+                pillGroups[pg].startTime,
+                pillGroups[pg].endTime);
         }
     } else {
         // Other presets: one text layer per group (original behavior)
