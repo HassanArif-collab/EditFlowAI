@@ -146,14 +146,49 @@ function ef_getAudioPath() {
 }
 
 /* ══ Expression Library ══ */
+// All expressions are parameterized — the client builds them with actual values
 
 var EF_SPRING_SCALE = "f=3.0; d=6.0; t=time-inPoint;\n" +
     "if(t<0){[0,0]}else{s=100-100*Math.exp(-d*t)*Math.cos(f*2*Math.PI*t);[s,s]}";
 
-var EF_FADEUP_OP = "t=time-inPoint; linear(t,0,0.3,0,100)";
-var EF_FADEUP_POS = "t=time-inPoint; [value[0], value[1]+linear(t,0,0.3,40,0)]";
-
 var EF_REVEAL_OP = "t=time-inPoint; linear(t,0,0.1,0,100)";
+
+// Build fade-up expressions with configurable parameters
+// fadeDur: how long the fade takes (seconds)
+// slideDist: how many pixels the word slides up (positive = starts below)
+// easing: "linear", "ease_in", "ease_out", "ease_in_out"
+function ef_buildFadeUpOp(fadeDur, easing) {
+    var d = fadeDur || 0.3;
+    var e = easing || "linear";
+    if (e === "ease_out") return "t=time-inPoint; t<0?0:(t>=" + d + "?100:easeOut(t/" + d + ")*100)";
+    if (e === "ease_in") return "t=time-inPoint; t<0?0:(t>=" + d + "?100:(t/" + d + ")*(t/" + d + ")*100)";
+    if (e === "ease_in_out") return "t=time-inPoint; t<0?0:(t>=" + d + "?100:ease(t/" + d + ")*100)";
+    return "t=time-inPoint; linear(t,0," + d + ",0,100)";
+}
+
+function ef_buildFadeUpPos(fadeDur, slideDist, easing) {
+    var d = fadeDur || 0.3;
+    var s = slideDist || 40;
+    var e = easing || "linear";
+    if (e === "ease_out") return "t=time-inPoint; t<0?[value[0],value[1]+" + s + "]:(t>=" + d + "?value:[value[0],value[1]+" + s + "-easeOut(t/" + d + ")*" + s + "])";
+    if (e === "ease_in") return "t=time-inPoint; t<0?[value[0],value[1]+" + s + "]:(t>=" + d + "?value:[value[0],value[1]+" + s + "-(t/" + d + ")*(t/" + d + ")*" + s + "])";
+    if (e === "ease_in_out") return "t=time-inPoint; t<0?[value[0],value[1]+" + s + "]:(t>=" + d + "?value:[value[0],value[1]+" + s + "-ease(t/" + d + ")*" + s + "])";
+    return "t=time-inPoint; [value[0], value[1]+linear(t,0," + d + "," + s + ",0)]";
+}
+
+// Build pill scale expression: 0 → 100 over scaleDur
+function ef_buildPillScale(scaleDur, easing) {
+    var d = scaleDur || 0.3;
+    var e = easing || "linear";
+    if (e === "ease_out") return "t=time-inPoint; t<0?[0,0]:(t>=" + d + "?[100,100]:[easeOut(t/" + d + ")*100,easeOut(t/" + d + ")*100])";
+    if (e === "ease_in") return "t=time-inPoint; t<0?[0,0]:(t>=" + d + "?[100,100]:[(t/" + d + ")*(t/" + d + ")*100,(t/" + d + ")*(t/" + d + ")*100])";
+    if (e === "ease_in_out") return "t=time-inPoint; t<0?[0,0]:(t>=" + d + "?[100,100]:[ease(t/" + d + ")*100,ease(t/" + d + ")*100])";
+    return "t=time-inPoint; t<0?[0,0]:[linear(t,0," + d + ",0,100),linear(t,0," + d + ",0,100)]";
+}
+
+// Keep old expressions for backward compat
+var EF_FADEUP_OP = ef_buildFadeUpOp(0.3, "linear");
+var EF_FADEUP_POS = ef_buildFadeUpPos(0.3, 40, "linear");
 
 var EF_BOUNCE_POS = "t=time-inPoint;\nif(t<0){value}else{d=6.0;f=2.0;o=Math.exp(-d*t)*Math.cos(f*2*Math.PI*t);[value[0],value[1]-160*o]}";
 
@@ -422,16 +457,13 @@ function ef_createWordPill(comp, textLayer, cfg, wordStart, wordEnd) {
         var textPos = textLayer.property("Position").value;
         shapeLayer.property("Position").setValue(textPos);
 
-        // Scale from 0 to 100 with easing (not squash — simple grow)
-        shapeLayer.property("Scale").expression =
-            "t=time-inPoint;" +
-            "if(t<0){[0,0]}else{" +
-            "p=ease(t,0,0.25,0,100);" +
-            "[p,p]" +
-            "}";
+        // Scale from 0 to 100 with easing (configurable duration + easing)
+        var scaleDur = cfg.pillScaleDur || 0.3;
+        var pillEasing = cfg.pillEasing || "linear";
+        shapeLayer.property("Scale").expression = ef_buildPillScale(scaleDur, pillEasing);
 
-        // Fade in opacity
-        shapeLayer.property("Opacity").expression = EF_FADEUP_OP;
+        // Fade in opacity (same duration as scale)
+        shapeLayer.property("Opacity").expression = ef_buildFadeUpOp(scaleDur, pillEasing);
 
         return shapeLayer;
     } catch (e) {
@@ -508,9 +540,12 @@ function ef_buildGroup(comp, g, cfg) {
                 ef_setTiming(textLayer, startSec, endSec);
                 ef_centerAnchor(textLayer, comp, cfg, startSec + 0.05);
 
-                // Animation: fade up from bottom (opacity 0→100 over 0.3s, position Y +40→0)
-                textLayer.property("Opacity").expression = EF_FADEUP_OP;
-                textLayer.property("Position").expression = EF_FADEUP_POS;
+                // Animation: fade up from bottom with configurable parameters
+                var fadeDur = cfg.fadeDur || 0.3;
+                var slideDist = cfg.slideDist || 40;
+                var wordEasing = cfg.wordEasing || "linear";
+                textLayer.property("Opacity").expression = ef_buildFadeUpOp(fadeDur, wordEasing);
+                textLayer.property("Position").expression = ef_buildFadeUpPos(fadeDur, slideDist, wordEasing);
 
                 if (cfg.dropShadow) {
                     ef_applyDropShadow(textLayer, cfg);
