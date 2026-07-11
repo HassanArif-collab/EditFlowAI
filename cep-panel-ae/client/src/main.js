@@ -25,6 +25,8 @@ import { initSettings, openSettings, onWhisperDownloadProgress } from './setting
 const $ = (sel) => document.querySelector(sel);
 const CLIENT_ID = 'ae-' + Math.random().toString(36).substring(2, 8);
 
+let _esError = null;
+
 document.addEventListener('DOMContentLoaded', async () => {
   console.log('[EditFlow] Initializing...');
 
@@ -35,6 +37,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     await initExtendScript();
   } catch (err) {
     console.error('[EditFlow] ExtendScript init failed:', err);
+    _esError = err.message;
+    _showExtendScriptError(err.message);
   }
 
   // Open the captions view immediately
@@ -73,6 +77,27 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   console.log('[EditFlow] Initialization complete');
 });
+
+function _showExtendScriptError(msg) {
+  try {
+    let b = document.getElementById('editflow-es-error');
+    if (!b) {
+      b = document.createElement('div');
+      b.id = 'editflow-es-error';
+      b.style.cssText = 'position:fixed;left:0;right:0;top:44px;z-index:99999;background:#5a2d2d;color:#fff;font:12px/1.4 monospace;padding:8px 10px;display:flex;gap:8px;align-items:center;border-bottom:1px solid #333';
+      document.body.appendChild(b);
+    }
+    b.innerHTML = '';
+    const span = document.createElement('span');
+    span.style.flex = '1';
+    span.textContent = 'ExtendScript connection failed: ' + String(msg).slice(0, 300);
+    const btn = document.createElement('button');
+    btn.textContent = 'Retry';
+    btn.style.cssText = 'background:#5b8def;color:#fff;border:0;border-radius:4px;padding:3px 8px;cursor:pointer';
+    btn.onclick = () => location.reload();
+    b.appendChild(span); b.appendChild(btn);
+  } catch (_) {}
+}
 
 function _showGlobalError(msg) {
   try {

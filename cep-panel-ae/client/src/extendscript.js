@@ -5,45 +5,42 @@ let _csInterface = null;
 let _esLoaded = false;
 
 async function initExtendScript() {
-  try {
-    if (typeof CSInterface === 'undefined') {
-      console.warn('[extendscript] CSInterface not available');
-      return false;
-    }
-    _csInterface = new CSInterface();
-
-    const extensionPathKey =
-      (_csInterface.SYSTEM_PATH && _csInterface.SYSTEM_PATH.EXTENSION) ||
-      'extension';
-    const extensionRoot = _csInterface.getSystemPath(extensionPathKey) ||
-                          _csInterface.getSystemPath('extension');
-
-    // Load ExtendScript modules via $.evalFile with absolute paths
-    // This avoids path resolution issues in ExtendScript (spaces in paths, etc.)
-    const modules = ['utils.jsx', 'caption_manager.jsx'];
-    for (const mod of modules) {
-      const absPath = extensionRoot.replace(/\\/g, '/') + '/extendscript/' + mod;
-      const script = `$.evalFile("${absPath}")`;
-      await new Promise((resolve, reject) => {
-        _csInterface.evalScript(script, (result) => {
-          if (result === 'EvalScript error.' || result === undefined) {
-            reject(new Error(`Failed to load ExtendScript module: ${mod}`));
-          } else {
-            resolve();
-          }
-        });
-      });
-    }
-
-    // Now configure the extension root (modules are already loaded)
-    await callExtendScript('editflowConfigureExtensionRoot', extensionRoot);
-    _esLoaded = true;
-    console.log('[extendscript] ExtendScript loaded');
-    return true;
-  } catch (e) {
-    console.warn('[extendscript] Init failed:', e);
-    return false;
+  if (typeof CSInterface === 'undefined') {
+    throw new Error('CSInterface not available');
   }
+  _csInterface = new CSInterface();
+
+  const extensionPathKey =
+    (_csInterface.SYSTEM_PATH && _csInterface.SYSTEM_PATH.EXTENSION) ||
+    'extension';
+  const extensionRoot = _csInterface.getSystemPath(extensionPathKey) ||
+                        _csInterface.getSystemPath('extension');
+
+  console.log('[extendscript] Extension root:', extensionRoot);
+
+  // Load ExtendScript modules via $.evalFile with absolute paths
+  const modules = ['utils.jsx', 'caption_manager.jsx'];
+  for (const mod of modules) {
+    const absPath = extensionRoot.replace(/\\/g, '/') + '/extendscript/' + mod;
+    const script = `$.evalFile("${absPath}")`;
+    console.log('[extendscript] Loading module:', absPath);
+    await new Promise((resolve, reject) => {
+      _csInterface.evalScript(script, (result) => {
+        if (result === 'EvalScript error.' || result === undefined) {
+          reject(new Error(`Failed to load ExtendScript module: ${mod}`));
+        } else {
+          console.log('[extendscript] Loaded:', mod, 'result:', result);
+          resolve();
+        }
+      });
+    });
+  }
+
+  // Now configure the extension root (modules are already loaded)
+  await callExtendScript('editflowConfigureExtensionRoot', extensionRoot);
+  _esLoaded = true;
+  console.log('[extendscript] ExtendScript loaded successfully');
+  return true;
 }
 
 async function callExtendScript(fnName, ...args) {
