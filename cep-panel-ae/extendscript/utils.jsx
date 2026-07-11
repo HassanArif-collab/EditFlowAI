@@ -46,6 +46,54 @@ editflowUtils = (function() {
         return comp;
     }
 
+    // Get ALL comps in the project that have audio layers
+    function getCompsWithAudio() {
+        var result = [];
+        for (var i = 1; i <= app.project.numItems; i++) {
+            var item = app.project.item(i);
+            if (item instanceof CompItem) {
+                var hasAudio = false;
+                for (var j = 1; j <= item.numLayers; j++) {
+                    try {
+                        if (item.layer(j).hasAudio) {
+                            hasAudio = true;
+                            break;
+                        }
+                    } catch (e) {}
+                }
+                if (hasAudio) {
+                    result.push(item);
+                }
+            }
+        }
+        return result;
+    }
+
+    // Get the first comp with audio (or active comp if it has audio)
+    function getBestComp() {
+        // First try active comp
+        var active = getActiveComp();
+        if (active) {
+            for (var j = 1; j <= active.numLayers; j++) {
+                try { if (active.layer(j).hasAudio) return active; } catch (e) {}
+            }
+        }
+        // Fallback: any comp with audio
+        var withAudio = getCompsWithAudio();
+        return withAudio.length > 0 ? withAudio[0] : null;
+    }
+
+    // Activate a comp (make it the frontmost)
+    function activateComp(comp) {
+        if (!comp) return false;
+        try {
+            comp.openInViewer();
+            return true;
+        } catch (e) {
+            return false;
+        }
+    }
+
     // Find an audio item in the project by name
     function findAudioItem(name) {
         for (var i = 1; i <= app.project.numItems; i++) {
@@ -90,6 +138,9 @@ editflowUtils = (function() {
         ok: ok,
         err: err,
         getActiveComp: getActiveComp,
+        getCompsWithAudio: getCompsWithAudio,
+        getBestComp: getBestComp,
+        activateComp: activateComp,
         findAudioItem: findAudioItem,
         getAudioPathFromComp: getAudioPathFromComp,
         fmt: fmt

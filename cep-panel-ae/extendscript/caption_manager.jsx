@@ -121,8 +121,8 @@ captionManager = (function() {
     // Creates 1 text layer per word, trimmed to the word's duration,
     // with animation keyframes. All layers are positioned at the same spot.
     function createCaptions(options) {
-        var comp = editflowUtils.getActiveComp();
-        if (!comp) return _err("No active composition. Open a comp in After Effects first.");
+        var comp = editflowUtils.getBestComp();
+        if (!comp) return _err("No composition with audio found. Create a comp, add audio to it, and make sure it's open.");
 
         var words = editflowUtils.getParam(options, 'words') || [];
         if (!words.length) return _err("No words to place.");
@@ -234,8 +234,8 @@ captionManager = (function() {
 
     // ── Get comp info (for the panel UI) ──
     function getCompInfo() {
-        var comp = editflowUtils.getActiveComp();
-        if (!comp) return _err("No active composition.");
+        var comp = editflowUtils.getBestComp();
+        if (!comp) return _err("No composition with audio found.");
         return _ok({
             name: comp.name,
             width: comp.width,
@@ -256,20 +256,20 @@ captionManager = (function() {
 
     // ── Get audio file path from the active comp ──
     function getAudioPath() {
-        var comp = editflowUtils.getActiveComp();
-        if (!comp) return _err("No active composition.");
+        var comp = editflowUtils.getBestComp();
+        if (!comp) return _err("No composition with audio found.");
 
         var audioPath = editflowUtils.getAudioPathFromComp(comp);
         if (!audioPath) {
-            return _err("No audio layer found in the active comp. Import an audio file and add it to the comp.");
+            return _err("No audio layer found in the comp. Import an audio file and add it to the comp.");
         }
         return _ok({ path: audioPath });
     }
 
     // ── Clear all existing caption layers ──
     function clearCaptions() {
-        var comp = editflowUtils.getActiveComp();
-        if (!comp) return _err("No active composition.");
+        var comp = editflowUtils.getBestComp();
+        if (!comp) return _err("No composition with audio found.");
 
         var removed = 0;
         app.beginUndoGroup("EditFlow: Clear Captions");
