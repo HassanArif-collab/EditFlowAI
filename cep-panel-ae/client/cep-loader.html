@@ -1,9 +1,8 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  
-  <link rel="stylesheet" href="http://127.0.0.1:8765/panel-ae/styles/captions.css?v=aecap1">
+  <link rel="stylesheet" href="http://127.0.0.1:8765/panel-ae/styles/captions.css?v=aecap2">
   <title>EditFlow AI</title>
 </head>
 <body>
@@ -15,11 +14,11 @@
   </header>
 
   <div id="inline-boot-check" style="position:fixed;top:0;left:0;right:0;padding:4px 12px;background:#5a2d2d;color:#fff;font:11px monospace;text-align:center;z-index:9999">
-    Boot pending â€” modules have not loaded yet.
+    Boot pending — modules have not loaded yet.
   </div>
   <div id="backend-check" style="position:fixed;bottom:0;left:0;right:0;padding:4px 12px;background:#3a1d1d;color:#fff;font:11px monospace;text-align:center;z-index:9999;display:none"></div>
   <script>
-    // Boot orchestrator â€” ensure the backend is up, AUTO-STARTING it if needed.
+    // Boot orchestrator — ensure the backend is up, AUTO-STARTING it if needed.
     (function () {
       var PING = 'http://127.0.0.1:8765/api/ping';
       var bootStart = Date.now();
@@ -120,7 +119,7 @@
         try { tried = sessionStorage.getItem('editflow_spawned') === '1'; } catch (e) {}
         if (!tried) {
           try { sessionStorage.setItem('editflow_spawned', '1'); } catch (e) {}
-          setTop('Backend not running â€” starting it...');
+          setTop('Backend not running — starting it...');
           logPath = spawnBackend(req, root, python);
         } else {
           setTop('Waiting for backend...');
@@ -135,7 +134,7 @@
       setTimeout(function () {
         var el = top();
         if (el && !el.dataset.cleared && Date.now() - bootStart > 9500) {
-          el.innerHTML = 'Still booting â€” if this persists, check the debug console.';
+          el.innerHTML = 'Still booting — if this persists, check the debug console.';
         }
       }, 10000);
     })();
@@ -150,7 +149,7 @@
 
   <div id="settings-overlay" class="overlay hidden"></div>
 
-  <script src="http://127.0.0.1:8765/panel-ae/lib/CSInterface.js?v=aecap1"></script>
-  <script type="module" src="http://127.0.0.1:8765/panel-ae/src/main.js?v=aecap1"></script>
+  <script src="http://127.0.0.1:8765/panel-ae/lib/CSInterface.js?v=aecap2"></script>
+  <script type="module" src="http://127.0.0.1:8765/panel-ae/src/main.js?v=aecap2"></script>
 </body>
 </html>
