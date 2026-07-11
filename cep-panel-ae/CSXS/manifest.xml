@@ -6,10 +6,6 @@
         <Extension Id="com.editflow.ae.panel" Version="1.0.0" />
     </ExtensionList>
 
-    <ExecutionList>
-        <Environment Host="AEFT" />
-    </ExecutionList>
-
     <ExecutionEnvironment>
         <HostList>
             <!-- After Effects 2022-2026 (versions 22.x-26.x) -->

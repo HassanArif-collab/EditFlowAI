@@ -19,7 +19,7 @@
 // ============================================================================
 // 1. UTILITIES
 // ============================================================================
-editflowUtils = (function() {
+var editflowUtils = (function() {
     "use strict";
 
     function getParam(options, primaryKey, secondaryKey) {
@@ -95,7 +95,7 @@ editflowUtils = (function() {
 // ============================================================================
 // 2. CAPTION MANAGER
 // ============================================================================
-captionManager = (function() {
+var captionManager = (function() {
     "use strict";
 
     function _ok(obj)  { obj = obj || {}; obj.success = true;  return editflowUtils.safeStringify(obj); }
