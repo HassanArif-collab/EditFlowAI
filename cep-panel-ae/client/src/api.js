@@ -6,7 +6,13 @@
  */
 
 function getBaseUrl() {
-  return localStorage.editflow_backend_url || 'http://localhost:8765';
+  // Auto-detect from current page origin if not explicitly set
+  if (localStorage.editflow_backend_url) return localStorage.editflow_backend_url;
+  const origin = window.location.origin;
+  if (origin.startsWith('http://') || origin.startsWith('https://')) {
+    return origin;
+  }
+  return 'http://localhost:8765';
 }
 
 function setBaseUrl(url) {

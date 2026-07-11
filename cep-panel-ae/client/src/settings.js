@@ -259,9 +259,10 @@ async function _loadWhisperModel() {
         const sizeLabel = m.size_mb >= 1024
           ? `${(m.size_mb / 1024).toFixed(1)} GB`
           : `${m.size_mb} MB`;
+        const statusDot = m.installed ? '🟢' : '🔴';
         const installTag = m.installed ? '✓ installed' : `~${sizeLabel} download`;
         const activeTag = (m.name === _whisperModel) ? ' · active' : '';
-        return `<option value="${_esc(m.name)}">${_esc(m.name)} (${sizeLabel}) - ${installTag}${activeTag}</option>`;
+        return `<option value="${_esc(m.name)}">${statusDot} ${_esc(m.name)} (${sizeLabel}) - ${installTag}${activeTag}</option>`;
       }).join('');
     }
 
