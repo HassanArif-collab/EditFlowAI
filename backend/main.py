@@ -1,4 +1,4 @@
-"""
+﻿"""
 EditFlow AI - FastAPI Application
 Simplified video editing pipeline: analyze, cut, place visuals.
 """
@@ -42,7 +42,7 @@ async def lifespan(app: FastAPI):
         status = "connected" if info.get("connected") else f"unavailable ({info.get('error', 'unknown')})"
         logger.info(f"Provider '{pid}': {status}")
 
-    # Background model discovery — keep a strong reference so the task
+    # Background model discovery â€” keep a strong reference so the task
     # isn't garbage-collected and so we can cancel it on shutdown.
     import asyncio
     discovery_task = asyncio.create_task(_background_discover())
@@ -84,7 +84,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS — allow local browser tooling and Adobe CEP's local-file origin.
+# CORS â€” allow local browser tooling and Adobe CEP's local-file origin.
 # CEP loads the panel from the extension folder, so fetch() requests can arrive
 # with Origin: null. Without this, the Scan Project button can fail at /api/ping
 # before it ever reaches the Premiere project scanner.
@@ -117,7 +117,7 @@ app.include_router(diag.router, prefix="/api")
 panel_dir = Path(__file__).parent.parent / "cep-panel" / "client"
 if panel_dir.exists():
     # Subclass StaticFiles to set no-cache headers on panel assets.
-    # The CEP runtime (CEF/Chromium) caches ES module imports aggressively —
+    # The CEP runtime (CEF/Chromium) caches ES module imports aggressively â€”
     # `import { foo } from './bar.js'` has no version query, so once bar.js
     # is fetched it's reused indefinitely. That meant every backend code
     # fix that touched a non-main.js module silently failed to reach the
@@ -131,8 +131,15 @@ if panel_dir.exists():
                 response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
                 response.headers["Pragma"] = "no-cache"
                 response.headers["Expires"] = "0"
+                response.headers["Access-Control-Allow-Origin"] = "*"
+                response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+                response.headers["Access-Control-Allow-Headers"] = "Content-Type"
             return response
     app.mount("/panel", _NoCacheStatic(directory=panel_dir, html=True), name="panel")
+# Serve the After Effects CEP panel client (cep-panel-ae/client)
+panel_ae_dir = Path(__file__).parent.parent / "cep-panel-ae" / "client"
+if panel_ae_dir.exists():
+    app.mount("/panel-ae", _NoCacheStatic(directory=panel_ae_dir, html=True), name="panel-ae")
 
 
 @app.get("/")

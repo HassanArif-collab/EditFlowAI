@@ -20,8 +20,10 @@ const BUILD_TAG = 'ae-captions-1';
 import { initExtendScript } from './extendscript.js';
 import { apiGet, apiUpload, connectWS, getBaseUrl } from './api.js';
 import { openCaptions, closeCaptions } from './captions-view.js';
+import { initSettings, openSettings, onWhisperDownloadProgress } from './settings.js';
 
 const $ = (sel) => document.querySelector(sel);
+const CLIENT_ID = 'ae-' + Math.random().toString(36).substring(2, 8);
 
 document.addEventListener('DOMContentLoaded', async () => {
   console.log('[EditFlow] Initializing...');
@@ -35,19 +37,38 @@ document.addEventListener('DOMContentLoaded', async () => {
     console.error('[EditFlow] ExtendScript init failed:', err);
   }
 
-  // Open the captions view immediately (this is the main + only view)
+  // Open the captions view immediately
   openCaptions();
+
+  // Initialize settings overlay
+  initSettings();
 
   // Wire settings button
   const btnSettings = $('#btn-settings');
   if (btnSettings) {
-    btnSettings.addEventListener('click', () => {
-      const overlay = $('#settings-overlay');
-      if (overlay) {
-        overlay.classList.remove('hidden');
-        overlay.innerHTML = '<div style="padding:20px;color:#e8e8ee"><h2>Settings</h2><p>Backend URL: <code>http://127.0.0.1:8765</code></p><p>Build: <code>' + BUILD_TAG + '</code></p><button onclick="this.parentElement.parentElement.classList.add(\'hidden\')">Close</button></div>';
+    btnSettings.addEventListener('click', () => openSettings());
+  }
+
+  // Connect WebSocket for real-time updates (whisper download progress, etc.)
+  try {
+    const ws = connectWS(CLIENT_ID);
+    ws.on('message', (data) => {
+      if (data && data.type === 'whisper_download_progress') {
+        try {
+          onWhisperDownloadProgress(data.payload || data);
+        } catch (e) {
+          console.warn('[ws] whisper_download_progress handler threw:', e);
+        }
       }
     });
+    ws.on('open', () => {
+      console.log('[ws] Connected to backend');
+    });
+    ws.on('error', () => {
+      // Silently handle — reconnection is automatic
+    });
+  } catch (e) {
+    console.warn('[ws] WebSocket init failed:', e);
   }
 
   console.log('[EditFlow] Initialization complete');
