@@ -121,11 +121,12 @@ captionManager = (function() {
     // Creates 1 text layer per word, trimmed to the word's duration,
     // with animation keyframes. All layers are positioned at the same spot.
     function createCaptions(options) {
-        var comp = editflowUtils.getBestComp();
-        if (!comp) return _err("No composition with audio found. Create a comp, add audio to it, and make sure it's open.");
+        try {
+            var comp = editflowUtils.getBestComp();
+            if (!comp) return _err("No composition with audio found. Create a comp, add audio to it, and make sure it's open.");
 
-        var words = editflowUtils.getParam(options, 'words') || [];
-        if (!words.length) return _err("No words to place.");
+            var words = editflowUtils.getParam(options, 'words') || [];
+            if (!words.length) return _err("No words to place.");
 
         var preset = editflowUtils.getParam(options, 'preset') || "pop";
         var fontSize = editflowUtils.getParam(options, 'fontSize') || 80;
@@ -213,6 +214,10 @@ captionManager = (function() {
         } finally {
             app.endUndoGroup();
         }
+        } catch (e) {
+            $.writeln('[EditFlow] createCaptions error: ' + e.toString());
+            return _err('createCaptions failed: ' + e.toString());
+        }
 
         var totalPlaced = batchStart + placed;
         var hasMore = batchEnd < words.length;
@@ -234,62 +239,77 @@ captionManager = (function() {
 
     // ── Get comp info (for the panel UI) ──
     function getCompInfo() {
-        var comp = editflowUtils.getBestComp();
-        if (!comp) return _err("No composition with audio found.");
-        return _ok({
-            name: comp.name,
-            width: comp.width,
-            height: comp.height,
-            duration: comp.duration,
-            frameRate: comp.frameRate,
-            numLayers: comp.numLayers,
-            hasAudio: (function() {
-                for (var i = 1; i <= comp.numLayers; i++) {
-                    try {
-                        if (comp.layer(i).hasAudio) return true;
-                    } catch (e) {}
-                }
-                return false;
-            })()
-        });
+        try {
+            var comp = editflowUtils.getBestComp();
+            if (!comp) return _err("No composition with audio found.");
+            return _ok({
+                name: comp.name,
+                width: comp.width,
+                height: comp.height,
+                duration: comp.duration,
+                frameRate: comp.frameRate,
+                numLayers: comp.numLayers,
+                hasAudio: (function() {
+                    for (var i = 1; i <= comp.numLayers; i++) {
+                        try {
+                            if (comp.layer(i).hasAudio) return true;
+                        } catch (e) {}
+                    }
+                    return false;
+                })()
+            });
+        } catch (e) {
+            $.writeln('[EditFlow] getCompInfo error: ' + e.toString());
+            return _err('getCompInfo failed: ' + e.toString());
+        }
     }
 
     // ── Get audio file path from the active comp ──
     function getAudioPath() {
-        var comp = editflowUtils.getBestComp();
-        if (!comp) return _err("No composition with audio found.");
+        try {
+            var comp = editflowUtils.getBestComp();
+            if (!comp) return _err("No composition with audio found.");
 
-        var audioPath = editflowUtils.getAudioPathFromComp(comp);
-        if (!audioPath) {
-            return _err("No audio layer found in the comp. Import an audio file and add it to the comp.");
+            var audioPath = editflowUtils.getAudioPathFromComp(comp);
+            if (!audioPath) {
+                return _err("No audio layer found in the comp. Import an audio file and add it to the comp.");
+            }
+            return _ok({ path: audioPath });
+        } catch (e) {
+            $.writeln('[EditFlow] getAudioPath error: ' + e.toString());
+            return _err('getAudioPath failed: ' + e.toString());
         }
-        return _ok({ path: audioPath });
     }
 
     // ── Clear all existing caption layers ──
     function clearCaptions() {
-        var comp = editflowUtils.getBestComp();
-        if (!comp) return _err("No composition with audio found.");
-
-        var removed = 0;
-        app.beginUndoGroup("EditFlow: Clear Captions");
         try {
-            // Collect layers to remove (iterate backwards since we're modifying)
-            var layersToRemove = [];
-            for (var i = 1; i <= comp.numLayers; i++) {
-                var layer = comp.layer(i);
-                if (layer.name && layer.name.indexOf("Caption: ") === 0) {
-                    layersToRemove.push(layer);
+            var comp = editflowUtils.getBestComp();
+            if (!comp) return _err("No composition with audio found.");
+
+            var removed = 0;
+            app.beginUndoGroup("EditFlow: Clear Captions");
+            try {
+                // Collect layers to remove (iterate backwards since we're modifying)
+                var layersToRemove = [];
+                for (var i = 1; i <= comp.numLayers; i++) {
+                    var layer = comp.layer(i);
+                    if (layer.name && layer.name.indexOf("Caption: ") === 0) {
+                        layersToRemove.push(layer);
+                    }
                 }
+                for (var j = 0; j < layersToRemove.length; j++) {
+                    layersToRemove[j].remove();
+                    removed++;
+                }
+            } finally {
+                app.endUndoGroup();
             }
-            for (var j = 0; j < layersToRemove.length; j++) {
-                layersToRemove[j].remove();
-                removed++;
-            }
-        } finally {
-            app.endUndoGroup();
+            return _ok({ removed: removed });
+        } catch (e) {
+            $.writeln('[EditFlow] clearCaptions error: ' + e.toString());
+            return _err('clearCaptions failed: ' + e.toString());
         }
-        return _ok({ removed: removed });
     }
 
     return {
