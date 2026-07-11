@@ -118,6 +118,7 @@ async def transcribe_mixdown(
     sequence_name: Optional[str] = Form(None),
     in_seconds: float = Form(0.0),
     out_seconds: float = Form(0.0),
+    language: Optional[str] = Form(None),
 ):
     """Receive a WAV mixdown from Premiere, transcribe it, return word-level cues.
 
@@ -174,7 +175,7 @@ async def transcribe_mixdown(
         result = await whisper_service.transcribe_fingerprinted(
             source_path=str(wav_path),
             file_fingerprint=fingerprint,
-            language=None,        # auto-detect
+            language=language if language and language != 'auto' else None,
             word_timestamps=True,
             vad_filter=True,
             progress=reporter,

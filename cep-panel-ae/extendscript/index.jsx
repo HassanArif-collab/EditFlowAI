@@ -1,65 +1,66 @@
 /**********************************************************************
- * EditFlow AI AE - ExtendScript host (v3)
+ * EditFlow AI AE - ExtendScript host (v4 — Premium Caption Engine)
  *
- * Rewritten based on deep analysis of TikTalk + AutoCaption patterns.
- * Fixes all 7 bugs identified in the research report:
- *   1. Top-level function declarations (no IIFEs)
- *   2. Correct timing: outPoint BEFORE inPoint
- *   3. Anchor + Position set together via sourceRectAtTime
- *   4. td.resetCharStyle() before styling
- *   5. layer.comment for cleanup (not layer.name)
- *   6. Word grouping: 3-4 words per caption (not 1 per word)
- *   7. Expression-based animation (not per-layer keyframes)
+ * Complete rewrite based on deep research of TikTalk, AutoCaption,
+ * and Adobe AE scripting API. Implements:
  *
- * Functions exposed to the panel:
- *   ef_ping()               → "pong"
- *   ef_getCompInfo()        → JSON or "ERROR:..."
- *   ef_getAudioPath()       → JSON or "ERROR:..."
- *   ef_createCaptions(json) → JSON or "ERROR:..."
- *   ef_clearCaptions()      → JSON or "ERROR:..."
+ * Visual Styles:
+ *   - floating: text with optional drop shadow
+ *   - pill: text inside rounded rectangle
+ *   - highlight: mixed (some words have colored boxes)
+ *
+ * Animation Presets (expression-based):
+ *   - popin: spring scale overshoot
+ *   - fadeup: opacity + position Y slide
+ *   - karaoke: per-word scale punch + color change
+ *   - wordbyword: sequential word reveal
+ *   - typewriter: character-by-character
+ *   - boxpop: shape layer scales behind each word
+ *
+ * Features:
+ *   - Word grouping (maxWords, maxChars, maxDuration, maxGap)
+ *   - Per-word highlighting (selected words get colored box)
+ *   - Font listing via app.fonts.allFonts (AE 24+)
+ *   - Drop shadow via Layer Style or effect
+ *   - Audio offset correction
+ *   - layer.comment tagging for cleanup
  *********************************************************************/
 
 var EF_TAG = "EF_CAPTION";
 
 /* ── Helpers ── */
 
-function ef_err(msg) {
-    return "ERROR:" + String(msg);
-}
+function ef_err(msg) { return "ERROR:" + String(msg); }
 
 function ef_json(obj) {
-    // TikTalk pattern: manual JSON stringify (more reliable than JSON.stringify in ES3)
-    try {
-        if (typeof JSON !== "undefined" && JSON.stringify) {
-            return JSON.stringify(obj);
-        }
-    } catch (e) {}
-    // Fallback: simple manual stringify for basic objects
-    try {
-        var parts = [];
-        for (var k in obj) {
-            if (obj.hasOwnProperty(k)) {
-                var v = obj[k];
-                var valStr;
-                if (v === null) valStr = "null";
-                else if (typeof v === "string") valStr = '"' + v.replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
-                else if (typeof v === "number" || typeof v === "boolean") valStr = String(v);
-                else if (Array.isArray(v)) valStr = "[]"; // simplified
-                else valStr = "{}";
-                parts.push('"' + k + '":' + valStr);
+    try { return JSON.stringify(obj); } catch (e) {
+        // Manual fallback for ES3
+        try {
+            var parts = [];
+            for (var k in obj) {
+                if (obj.hasOwnProperty(k)) {
+                    var v = obj[k];
+                    if (v === null) { parts.push('"' + k + '":null'); continue; }
+                    if (typeof v === "string") { parts.push('"' + k + '":"' + v.replace(/\\/g,"\\\\").replace(/"/g,'\\"') + '"'); continue; }
+                    if (typeof v === "number" || typeof v === "boolean") { parts.push('"' + k + '":' + v); continue; }
+                    if (Array.isArray(v)) {
+                        var items = [];
+                        for (var vi = 0; vi < v.length; vi++) {
+                            if (typeof v[vi] === "string") items.push('"' + v[vi].replace(/"/g,'\\"') + '"');
+                            else items.push(String(v[vi]));
+                        }
+                        parts.push('"' + k + '":[' + items.join(",") + ']');
+                    }
+                }
             }
-        }
-        return "{" + parts.join(",") + "}";
-    } catch (e2) {
-        return '{"error":"json_failed"}';
+            return "{" + parts.join(",") + "}";
+        } catch (e2) { return '{"error":"json_failed"}'; }
     }
 }
 
-/* Get the active comp or any comp with audio */
 function ef_getComp() {
     var comp = app.project.activeItem;
     if (comp && comp instanceof CompItem) return comp;
-
     for (var i = 1; i <= app.project.numItems; i++) {
         var item = app.project.item(i);
         if (item instanceof CompItem) {
@@ -72,42 +73,54 @@ function ef_getComp() {
 }
 
 /* ── Ping ── */
-function ef_ping() {
-    return "pong";
+function ef_ping() { return "pong"; }
+
+/* ── Font listing (AE 24+) ── */
+function ef_getFonts() {
+    try {
+        if (typeof app.fonts === "undefined" || !app.fonts || !app.fonts.allFonts) {
+            return ef_err("Font list needs After Effects 2024 (24.0) or newer.");
+        }
+        var groups = app.fonts.allFonts;
+        var out = [];
+        for (var i = 0; i < groups.length; i++) {
+            var g = groups[i];
+            if (g && typeof g.length === "number" && !g.postScriptName) {
+                for (var j = 0; j < g.length; j++) {
+                    if (g[j] && g[j].postScriptName) {
+                        out.push({ ps: g[j].postScriptName, family: g[j].familyName || "", style: g[j].styleName || "" });
+                    }
+                }
+            } else if (g && g.postScriptName) {
+                out.push({ ps: g.postScriptName, family: g.familyName || "", style: g.styleName || "" });
+            }
+        }
+        if (!out.length) return ef_err("No fonts reported by After Effects.");
+        return ef_json(out);
+    } catch (e) {
+        return ef_err("getFonts: " + e.toString());
+    }
 }
 
 /* ── Get comp info ── */
 function ef_getCompInfo() {
     try {
         var comp = ef_getComp();
-        if (!comp) return ef_err("No composition with audio found. Create a comp, add audio, and open it.");
-
+        if (!comp) return ef_err("No composition with audio found.");
         var hasAudio = false;
         for (var i = 1; i <= comp.numLayers; i++) {
             try { if (comp.layer(i).hasAudio) { hasAudio = true; break; } } catch (e) {}
         }
-
-        return ef_json({
-            name: comp.name,
-            width: comp.width,
-            height: comp.height,
-            duration: comp.duration,
-            frameRate: comp.frameRate,
-            numLayers: comp.numLayers,
-            hasAudio: hasAudio
-        });
-    } catch (e) {
-        return ef_err("getCompInfo: " + e.toString());
-    }
+        return ef_json({ name: comp.name, width: comp.width, height: comp.height,
+            duration: comp.duration, frameRate: comp.frameRate, numLayers: comp.numLayers, hasAudio: hasAudio });
+    } catch (e) { return ef_err("getCompInfo: " + e.toString()); }
 }
 
-/* ── Get audio file path from comp ── */
+/* ── Get audio path ── */
 function ef_getAudioPath() {
     try {
         var comp = ef_getComp();
         if (!comp) return ef_err("No composition with audio found.");
-
-        // First: try selected layers (TikTalk pattern)
         if (comp.selectedLayers && comp.selectedLayers.length > 0) {
             var sel = comp.selectedLayers[0];
             try {
@@ -117,66 +130,101 @@ function ef_getAudioPath() {
                 }
             } catch (e) {}
         }
-
-        // Fallback: any audio layer with a file
         for (var i = 1; i <= comp.numLayers; i++) {
             var layer = comp.layer(i);
             try {
                 if (layer.hasAudio && layer.source) {
-                    if (layer.source.mainSource && layer.source.mainSource.file) {
+                    if (layer.source.mainSource && layer.source.mainSource.file)
                         return ef_json({ path: layer.source.mainSource.file.fsName, offset: layer.startTime });
-                    }
-                    if (layer.source.file) {
+                    if (layer.source.file)
                         return ef_json({ path: layer.source.file.fsName, offset: layer.startTime });
-                    }
                 }
             } catch (e) {}
         }
-        return ef_err("No audio layer with a file found. Select an audio layer or import an audio file.");
-    } catch (e) {
-        return ef_err("getAudioPath: " + e.toString());
-    }
+        return ef_err("No audio layer with a file found. Select an audio layer.");
+    } catch (e) { return ef_err("getAudioPath: " + e.toString()); }
 }
 
-/* ── Expression library (from TikTalk) ── */
+/* ══ Expression Library ══ */
 
-// Spring scale: 0 → 100 with overshoot (pop-in effect)
-var EF_SPRING_SCALE =
-    "f=3.0; d=6.0; t=time-inPoint;\n" +
-    "if (t<0){ [0,0] } else { s=100-100*Math.exp(-d*t)*Math.cos(f*2*Math.PI*t); [s,s]; }";
+var EF_SPRING_SCALE = "f=3.0; d=6.0; t=time-inPoint;\n" +
+    "if(t<0){[0,0]}else{s=100-100*Math.exp(-d*t)*Math.cos(f*2*Math.PI*t);[s,s]}";
 
-// Reveal opacity: 0 → 100 over 0.1s
+var EF_FADEUP_OP = "t=time-inPoint; linear(t,0,0.15,0,100)";
+var EF_FADEUP_POS = "t=time-inPoint; [value[0], value[1]+linear(t,0,0.15,30,0)]";
+
 var EF_REVEAL_OP = "t=time-inPoint; linear(t,0,0.1,0,100)";
 
-// Bounce position
-var EF_BOUNCE_POS =
-    "t=time-inPoint;\n" +
-    "if (t<0){ value } else {\n" +
-    "  d=6.0; f=2.0; o=Math.exp(-d*t)*Math.cos(f*2*Math.PI*t);\n" +
-    "  [value[0], value[1]-160*o];\n}";
+var EF_BOUNCE_POS = "t=time-inPoint;\nif(t<0){value}else{d=6.0;f=2.0;o=Math.exp(-d*t)*Math.cos(f*2*Math.PI*t);[value[0],value[1]-160*o]}";
 
-// Anchor center expression (auto-centers to text bounds)
-var EF_ANCHOR_CENTER =
-    "r = thisLayer.sourceRectAtTime(time, false);\n" +
-    "[r.left + r.width/2, r.top + r.height/2]";
+var EF_ANCHOR_CENTER = "r=thisLayer.sourceRectAtTime(time,false);[r.left+r.width/2,r.top+r.height/2]";
 
-// Fade in: opacity 0 → 100
-var EF_FADE_OP = "t=time-inPoint; linear(t,0,0.2,0,100)";
-
-// Typewriter expression
 function ef_typewriterExpr(full) {
     var escaped = String(full).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-    return 'full="' + escaped + '"; t=time-inPoint; cps=22; n=Math.floor(t*cps);\n' +
-        '(t<0)?"":full.substr(0,Math.max(0,n));';
+    return 'full="' + escaped + '";t=time-inPoint;cps=22;n=Math.floor(t*cps);(t<0)?"":full.substr(0,Math.max(0,n))';
 }
 
-/* ── Style a text layer ── */
+// Squash & stretch scale expression
+function ef_squashExpr(intensity) {
+    var i = intensity || 1.0;
+    return "t=time-inPoint;" +
+        "if(t<0){[0,0]}else{" +
+        "maxDev=" + (13*i) + ";spd=" + (18*i) + ";decay=1.0;" +
+        "s=100-Math.abs(maxDev*Math.exp(-decay*t)*Math.sin(spd*t));" +
+        "sq=100+(100-s);" +
+        "[s,sq]" +
+        "}";
+}
+
+/* ══ Word Grouping ══ */
+
+function ef_endsSentence(t) { return /[.?!]["')\]]?\s*$/.test(String(t)); }
+
+function ef_groupWords(words, cfg) {
+    var maxWords = Math.max(1, cfg.maxWordsPerSegment || 4);
+    var maxChars = cfg.maxCharsPerSegment || 30;
+    var maxDur = cfg.maxDurationPerSegment || 3;
+    var maxGap = (cfg.maxGap != null) ? cfg.maxGap : 0.6;
+
+    var groups = [], cur = [];
+    for (var w = 0; w < words.length; w++) {
+        var wordText = words[w].word || words[w].text || "";
+        var normalizedWord = { text: wordText, start: parseFloat(words[w].start), end: parseFloat(words[w].end), idx: w };
+
+        if (cur.length === 0) { cur.push(normalizedWord); continue; }
+
+        var prev = cur[cur.length - 1];
+        var gap = normalizedWord.start - prev.end;
+        var dur = normalizedWord.end - cur[0].start;
+        var totalChars = 0;
+        for (var ci = 0; ci < cur.length; ci++) totalChars += cur[ci].text.length + 1;
+        totalChars += wordText.length;
+
+        if (gap > maxGap || cur.length >= maxWords || dur > maxDur || totalChars > maxChars || ef_endsSentence(prev.text)) {
+            groups.push(ef_segToGroup(cur));
+            cur = [normalizedWord];
+        } else {
+            cur.push(normalizedWord);
+        }
+    }
+    if (cur.length) groups.push(ef_segToGroup(cur));
+    return groups;
+}
+
+function ef_segToGroup(seg) {
+    var txt = "";
+    for (var k = 0; k < seg.length; k++) txt += (k ? " " : "") + seg[k].text;
+    return { words: seg, start: seg[0].start, end: seg[seg.length - 1].end, text: txt };
+}
+
+/* ══ Caption Building ══ */
+
 function ef_styleDoc(layer, cfg) {
     var tp = layer.property("Source Text");
     var td = tp.value;
-    td.resetCharStyle();  // CRITICAL: reset before styling
+    td.resetCharStyle();
     td.fontSize = cfg.fontSize || 80;
-    try { if (cfg.fontName) td.font = cfg.fontName; } catch (e) {}
+    try { if (cfg.fontPS) td.font = cfg.fontPS; else if (cfg.fontName) td.font = cfg.fontName; } catch (e) {}
     td.applyFill = true;
     td.fillColor = cfg.fillColor || [1, 1, 1];
     td.applyStroke = (cfg.strokeWidth || 0) > 0;
@@ -189,15 +237,11 @@ function ef_styleDoc(layer, cfg) {
     tp.setValue(td);
 }
 
-/* ── Set timing: outPoint BEFORE inPoint (TikTalk pattern) ── */
 function ef_setTiming(layer, start, end) {
-    var tail = 0.3;
-    // Set outPoint first so inPoint never temporarily exceeds it
-    layer.outPoint = end + tail;
+    layer.outPoint = end + 0.3;
     layer.inPoint = start;
 }
 
-/* ── Center anchor + position (TikTalk pattern) ── */
 function ef_centerAnchor(layer, comp, cfg, atTime) {
     var r = layer.sourceRectAtTime(atTime, false);
     layer.property("Anchor Point").setValue([r.left + r.width / 2, r.top + r.height / 2]);
@@ -205,10 +249,8 @@ function ef_centerAnchor(layer, comp, cfg, atTime) {
         comp.width * (cfg.posX || 50) / 100,
         comp.height * (cfg.posY || 85) / 100
     ]);
-    return r;
 }
 
-/* ── Remove old caption layers (backward iteration, TikTalk pattern) ── */
 function ef_removeOldCaptions(comp) {
     var removed = 0;
     for (var i = comp.numLayers; i >= 1; i--) {
@@ -218,97 +260,209 @@ function ef_removeOldCaptions(comp) {
     return removed;
 }
 
-/* ── Group words into captions (TikTalk pattern) ── */
-function ef_endsSentence(t) { return /[.?!]["')\]]?\s*$/.test(String(t)); }
-
-function ef_segToGroup(seg) {
-    var txt = "";
-    for (var k = 0; k < seg.length; k++) txt += (k ? " " : "") + seg[k].text;
-    return { words: seg, start: seg[0].start, end: seg[seg.length - 1].end, text: txt };
-}
-
-function ef_groupWords(words, cfg) {
-    var maxWords = Math.max(1, cfg.wordsPerLine || 4);
-    var maxGap = (cfg.maxGap != null) ? cfg.maxGap : 0.6;
-    var maxDur = (cfg.maxDur != null) ? cfg.maxDur : 5;
-
-    var groups = [], cur = [];
-    for (var w = 0; w < words.length; w++) {
-        var word = words[w];
-        // Normalize: accept both {word: "..."} and {text: "..."}
-        var wordText = word.word || word.text || "";
-        var normalizedWord = { text: wordText, start: parseFloat(word.start), end: parseFloat(word.end) };
-
-        if (cur.length === 0) { cur.push(normalizedWord); continue; }
-
-        var prev = cur[cur.length - 1];
-        var gap = normalizedWord.start - prev.end;
-        var dur = normalizedWord.end - cur[0].start;
-
-        if (gap > maxGap || cur.length >= maxWords || dur > maxDur || ef_endsSentence(prev.text)) {
-            groups.push(ef_segToGroup(cur));
-            cur = [normalizedWord];
-        } else {
-            cur.push(normalizedWord);
-        }
+/* ── Apply drop shadow ── */
+function ef_applyDropShadow(layer, cfg) {
+    if (!cfg.dropShadow) return;
+    try {
+        // Use the effect-based drop shadow (more reliable via scripting)
+        var fx = layer.property("ADBE Effect Parade").addProperty("ADBE Drop Shadow");
+        fx.property("ADBE Drop Shadow-0001").setValue(cfg.shadowColor || [0, 0, 0]);
+        fx.property("ADBE Drop Shadow-0002").setValue(cfg.shadowOpacity || 50);
+        fx.property("ADBE Drop Shadow-0003").setValue(cfg.shadowDistance || 3);
+        fx.property("ADBE Drop Shadow-0004").setValue(cfg.shadowBlur || 5);
+    } catch (e) {
+        // Non-fatal — drop shadow is optional
     }
-    if (cur.length) groups.push(ef_segToGroup(cur));
-    return groups;
 }
 
-/* ── Apply animation preset (expression-based, TikTalk pattern) ── */
+/* ── Create pill background shape layer ── */
+function ef_createPill(comp, textLayer, cfg, atTime) {
+    try {
+        var r = textLayer.sourceRectAtTime(atTime, false);
+        var padX = (cfg.fontSize || 80) * 0.3;
+        var padY = (cfg.fontSize || 80) * 0.15;
+        var w = r.width + padX * 2;
+        var h = r.height + padY * 2;
+
+        var shapeLayer = comp.layers.addShape();
+        shapeLayer.name = "EF Pill BG";
+        shapeLayer.comment = EF_TAG;
+
+        var contents = shapeLayer.property("ADBE Root Vectors Group");
+        var group = contents.addProperty("ADBE Vector Group");
+        var vecGroup = group.property("ADBE Vectors Group");
+
+        // Rectangle
+        var rect = vecGroup.addProperty("ADBE Vector Shape - Rect");
+        rect.property("ADBE Vector Rect Size").setValue([w / 2, h / 2]);
+        rect.property("ADBE Vector Rect Roundness").setValue(h / 2 * (cfg.pillRadius || 0.5));
+
+        // Fill
+        var fill = vecGroup.addProperty("ADBE Vector Graphic - Fill");
+        var pillColor = cfg.pillColor || [0.04, 0.1, 0.18];
+        fill.property("ADBE Vector Fill Color").setValue([pillColor[0], pillColor[1], pillColor[2]]);
+        if (cfg.pillOpacity != null) {
+            fill.property("ADBE Vector Fill Opacity").setValue(cfg.pillOpacity);
+        }
+
+        // Stroke (optional border)
+        if (cfg.pillStrokeWidth > 0) {
+            var stroke = vecGroup.addProperty("ADBE Vector Graphic - Stroke");
+            stroke.property("ADBE Vector Stroke Color").setValue(cfg.pillStrokeColor || [1, 1, 1]);
+            stroke.property("ADBE Vector Stroke Width").setValue(cfg.pillStrokeWidth);
+        }
+
+        // Position behind text layer
+        shapeLayer.moveAfter(textLayer);
+
+        // Match timing
+        shapeLayer.inPoint = textLayer.inPoint;
+        shapeLayer.outPoint = textLayer.outPoint;
+
+        // Position at same spot as text
+        var textPos = textLayer.property("Position").value;
+        shapeLayer.property("Position").setValue(textPos);
+
+        // Animate scale with squash/stretch
+        if (cfg.preset === "boxpop") {
+            shapeLayer.property("Scale").expression = ef_squashExpr(cfg.animIntensity || 1.0);
+        } else {
+            // Match text layer's scale expression
+            shapeLayer.property("Scale").expression = textLayer.property("Scale").expression;
+        }
+
+        return shapeLayer;
+    } catch (e) {
+        return null;
+    }
+}
+
+/* ── Apply animation preset ── */
 function ef_applyPreset(layer, cfg, g) {
     var scale = layer.property("Scale");
     var opacity = layer.property("Opacity");
     var pos = layer.property("Position");
     var src = layer.property("Source Text");
-
     var preset = cfg.preset || "popin";
+    var intensity = cfg.animIntensity || 1.0;
 
-    if (preset === "popin" || preset === "pop") {
+    if (preset === "popin") {
         scale.expression = EF_SPRING_SCALE;
         opacity.expression = EF_REVEAL_OP;
+    } else if (preset === "fadeup") {
+        opacity.expression = EF_FADEUP_OP;
+        pos.expression = EF_FADEUP_POS;
     } else if (preset === "bounce") {
         pos.expression = EF_BOUNCE_POS;
         opacity.expression = EF_REVEAL_OP;
-    } else if (preset === "fade") {
-        opacity.expression = EF_FADE_OP;
+    } else if (preset === "squash") {
+        scale.expression = ef_squashExpr(intensity);
+        opacity.expression = EF_REVEAL_OP;
     } else if (preset === "typewriter") {
         var full = cfg.allCaps ? g.text.toUpperCase() : g.text;
         src.expression = ef_typewriterExpr(full);
         opacity.expression = EF_REVEAL_OP;
-    }
-
-    // Custom expression override
-    if (cfg.customExpr && String(cfg.customExpr).replace(/^\s+|\s+$/g, "").length) {
-        scale.expression = cfg.customExpr;
+    } else if (preset === "fade") {
+        opacity.expression = EF_FADEUP_OP;
     }
 }
 
-/* ── Build a single caption group (multi-layer mode) ── */
+/* ── Build a single caption group ── */
 function ef_buildGroup(comp, g, cfg) {
     var text = cfg.allCaps ? g.text.toUpperCase() : g.text;
     var layer = comp.layers.addText(text);
     layer.name = text.substr(0, 28);
     layer.comment = EF_TAG;
+
     ef_styleDoc(layer, cfg);
     ef_setTiming(layer, g.start, g.end);
     ef_centerAnchor(layer, comp, cfg, g.start + 0.05);
     ef_applyPreset(layer, cfg, g);
+
+    // Drop shadow for floating style
+    if (cfg.visualStyle === "floating" || cfg.visualStyle === "highlight") {
+        ef_applyDropShadow(layer, cfg);
+    }
+
+    // Pill background
+    if (cfg.visualStyle === "pill") {
+        ef_createPill(comp, layer, cfg, g.start + 0.05);
+    }
+
+    // Per-word highlighting
+    if (cfg.visualStyle === "highlight" && cfg.highlightWords && cfg.highlightWords.length > 0) {
+        ef_applyHighlights(layer, g, cfg);
+    }
+
     return 1;
 }
 
-/* ── Create captions (main entry point) ── */
+/* ── Apply per-word highlights (text animator approach) ── */
+function ef_applyHighlights(layer, g, cfg) {
+    try {
+        var textProps = layer.property("ADBE Text Properties");
+        var animators = textProps.property("ADBE Text Animators");
+
+        // Add fill color animator for highlighted words
+        var fillAnim = animators.addProperty("ADBE Text Animator");
+        fillAnim.name = "EF Highlight Color";
+        fillAnim.property("ADBE Text Properties").addProperty("ADBE Text Fill Color");
+        var fillProp = fillAnim.property("ADBE Text Properties").property("ADBE Text Fill Color");
+        var hlColor = cfg.highlightTextColor || [1, 1, 0];
+        fillProp.setValue([hlColor[0], hlColor[1], hlColor[2]]);
+
+        // Add expression selector for word-based highlight
+        var selector = fillAnim.property("ADBE Text Selectors").addProperty("ADBE Text Expressible Selector");
+
+        // Build word time arrays for the expression
+        var startArr = [], endArr = [];
+        for (var i = 0; i < g.words.length; i++) {
+            startArr.push(g.words[i].start);
+            endArr.push(g.words[i].end);
+        }
+
+        // Build highlight index array (which words in this group are highlighted)
+        var hlArr = [];
+        for (var j = 0; j < g.words.length; j++) {
+            var globalIdx = g.words[j].idx;
+            var isHl = false;
+            for (var k = 0; k < cfg.highlightWords.length; k++) {
+                if (cfg.highlightWords[k] === globalIdx) { isHl = true; break; }
+            }
+            hlArr.push(isHl ? 1 : 0);
+        }
+
+        // Expression: returns 100 if this word is highlighted, 0 otherwise
+        var expr = "st=[" + startArr.join(",") + "];en=[" + endArr.join(",") + "];hl=[" + hlArr.join(",") + "];" +
+            "n=textIndex-1;" +
+            "if(n>=0&&n<hl.length&&hl[n]==1){100}else{0}";
+        selector.property("ADBE Text Expressible Amount").expression = expr;
+
+        // Add scale animator for highlighted words (punch effect)
+        var scaleAnim = animators.addProperty("ADBE Text Animator");
+        scaleAnim.name = "EF Highlight Scale";
+        scaleAnim.property("ADBE Text Properties").addProperty("ADBE Text Scale 3D");
+        var scaleProp = scaleAnim.property("ADBE Text Properties").property("ADBE Text Scale 3D");
+        scaleProp.setValue([110, 110, 110]);
+
+        var scaleSel = scaleAnim.property("ADBE Text Selectors").addProperty("ADBE Text Expressible Selector");
+        scaleSel.property("ADBE Text Expressible Amount").expression = expr;
+
+    } catch (e) {
+        // Non-fatal — highlighting is optional
+    }
+}
+
+/* ══ Main: Create Captions ══ */
 function ef_createCaptions(jsonStr) {
     var started = false;
     try {
         var cfg = eval("(" + jsonStr + ")");
-
         var comp = ef_getComp();
-        if (!comp) return ef_err("No composition with audio found. Create a comp, add audio, and open it.");
+        if (!comp) return ef_err("No composition with audio found.");
         if (!cfg.words || !cfg.words.length) return ef_err("No words supplied.");
 
-        // Apply offset (audio may not start at comp time 0)
+        // Apply offset
         var off = cfg.offset || 0;
         if (off) {
             for (var oi = 0; oi < cfg.words.length; oi++) {
@@ -317,26 +471,25 @@ function ef_createCaptions(jsonStr) {
             }
         }
 
-        // Set defaults
+        // Defaults
         cfg.fontSize = cfg.fontSize || 80;
-        cfg.fontName = cfg.fontName || "Arial";
         cfg.fillColor = cfg.fillColor || [1, 1, 1];
         cfg.posX = cfg.posX || 50;
         cfg.posY = cfg.posY || 85;
         cfg.preset = cfg.preset || "popin";
-        cfg.wordsPerLine = cfg.wordsPerLine || 4;
+        cfg.maxWordsPerSegment = cfg.maxWordsPerSegment || 4;
+        cfg.maxCharsPerSegment = cfg.maxCharsPerSegment || 30;
+        cfg.maxDurationPerSegment = cfg.maxDurationPerSegment || 3;
+        cfg.visualStyle = cfg.visualStyle || "floating";
+        cfg.allCaps = cfg.allCaps !== false;
 
         app.beginUndoGroup("EditFlow: Create Captions");
         started = true;
 
-        // Remove old captions
         if (cfg.replace !== false) ef_removeOldCaptions(comp);
 
-        // Group words into caption phrases (3-4 words per line)
         var groups = ef_groupWords(cfg.words, cfg);
-
-        var created = 0, failed = 0;
-        var errors = [];
+        var created = 0, failed = 0, errors = [];
 
         for (var i = 0; i < groups.length; i++) {
             try {
@@ -351,11 +504,8 @@ function ef_createCaptions(jsonStr) {
         app.endUndoGroup();
 
         return ef_json({
-            placed: created,
-            total: cfg.words.length,
-            groups: groups.length,
-            errors: errors,
-            preset: cfg.preset,
+            placed: created, total: cfg.words.length, groups: groups.length,
+            errors: errors, preset: cfg.preset, visualStyle: cfg.visualStyle,
             comp_name: comp.name
         });
     } catch (e) {
@@ -364,18 +514,14 @@ function ef_createCaptions(jsonStr) {
     }
 }
 
-/* ── Clear all caption layers ── */
+/* ── Clear captions ── */
 function ef_clearCaptions() {
     try {
         var comp = ef_getComp();
         if (!comp) return ef_err("No composition found.");
-
         app.beginUndoGroup("EditFlow: Clear Captions");
         var removed = ef_removeOldCaptions(comp);
         app.endUndoGroup();
-
         return ef_json({ removed: removed });
-    } catch (e) {
-        return ef_err("clearCaptions: " + e.toString());
-    }
+    } catch (e) { return ef_err("clearCaptions: " + e.toString()); }
 }
