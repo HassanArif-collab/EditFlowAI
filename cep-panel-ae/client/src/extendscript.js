@@ -1,5 +1,9 @@
 /**
  * extendscript.js — Promise wrapper for Adobe CEP ExtendScript calls.
+ *
+ * v2: Single-file JSX — no more $.evalFile() module loading.
+ * The manifest loads index.jsx (which contains ALL code), so we just
+ * need to call editflowConfigureExtensionRoot to confirm it's ready.
  */
 let _csInterface = null;
 let _esLoaded = false;
@@ -18,29 +22,17 @@ async function initExtendScript() {
 
   console.log('[extendscript] Extension root:', extensionRoot);
 
-  // Load ExtendScript modules via $.evalFile with absolute paths
-  const modules = ['utils.jsx', 'caption_manager.jsx'];
-  for (const mod of modules) {
-    const absPath = extensionRoot.replace(/\\/g, '/') + '/extendscript/' + mod;
-    const script = `$.evalFile("${absPath}")`;
-    console.log('[extendscript] Loading module:', absPath);
-    await new Promise((resolve, reject) => {
-      _csInterface.evalScript(script, (result) => {
-        if (result === 'EvalScript error.' || result === undefined) {
-          reject(new Error(`Failed to load ExtendScript module: ${mod}`));
-        } else {
-          console.log('[extendscript] Loaded:', mod, 'result:', result);
-          resolve();
-        }
-      });
-    });
+  // The manifest already loaded index.jsx (single-file bundle).
+  // Just confirm it's ready by calling editflowConfigureExtensionRoot.
+  try {
+    await callExtendScript('editflowConfigureExtensionRoot', extensionRoot);
+    _esLoaded = true;
+    console.log('[extendscript] ExtendScript loaded successfully');
+    return true;
+  } catch (e) {
+    console.error('[extendscript] Init failed:', e);
+    throw e;
   }
-
-  // Now configure the extension root (modules are already loaded)
-  await callExtendScript('editflowConfigureExtensionRoot', extensionRoot);
-  _esLoaded = true;
-  console.log('[extendscript] ExtendScript loaded successfully');
-  return true;
 }
 
 async function callExtendScript(fnName, ...args) {
@@ -58,7 +50,7 @@ async function callExtendScript(fnName, ...args) {
   return new Promise((resolve, reject) => {
     _csInterface.evalScript(script, (result) => {
       if (result === 'EvalScript error.' || result === undefined) {
-        reject(new Error(`ExtendScript call "${fnName}" failed`));
+        reject(new Error(`ExtendScript call "${fnName}" failed (EvalScript error)`));
         return;
       }
       try {
