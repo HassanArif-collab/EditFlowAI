@@ -403,3 +403,13 @@ select.settings-input {
   padding: 2px 6px;
 }
 .icon-btn:hover { color: #e8e8ee; }
+
+/* Live Preview */
+.cap-preview-container { background: #000; border: 1px solid rgba(255,255,255,.1);
+  border-radius: 6px; overflow: hidden; margin-bottom: 6px; aspect-ratio: 16/9; }
+.cap-preview-container canvas { width: 100%; height: 100%; display: block; }
+.cap-preview-controls { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; }
+.cap-seek { flex: 1; }
+.cap-range { flex: 1; }
+.cap-range-val { color: #9a9aa8; font-size: 11px; min-width: 35px; text-align: right; }
+.cap-btn-tiny { padding: 2px 8px; font-size: 14px; }
