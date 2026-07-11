@@ -345,10 +345,14 @@ function ef_applyPreset(layer, cfg, g) {
     var opacity = layer.property("Opacity");
     var pos = layer.property("Position");
     var src = layer.property("Source Text");
-    var preset = cfg.preset || "popin";
+    var preset = cfg.preset || "fadeup_words";
     var intensity = cfg.animIntensity || 1.0;
 
-    if (preset === "popin") {
+    if (preset === "fadeup_words") {
+        // Per-word fade up from bottom (applied per-word layer via timing)
+        opacity.expression = EF_FADEUP_OP;
+        pos.expression = EF_FADEUP_POS;
+    } else if (preset === "popin") {
         scale.expression = EF_SPRING_SCALE;
         opacity.expression = EF_REVEAL_OP;
     } else if (preset === "fadeup") {
@@ -369,34 +373,151 @@ function ef_applyPreset(layer, cfg, g) {
     }
 }
 
-/* ── Build a single caption group ── */
+/* ── Create per-word pill background with squash & stretch ── */
+function ef_createWordPill(comp, textLayer, cfg, wordStart, wordEnd) {
+    try {
+        var r = textLayer.sourceRectAtTime(wordStart + 0.05, false);
+        var padX = (cfg.fontSize || 80) * 0.25;
+        var padY = (cfg.fontSize || 80) * 0.12;
+        var w = r.width + padX * 2;
+        var h = r.height + padY * 2;
+
+        var shapeLayer = comp.layers.addShape();
+        shapeLayer.name = "EF Pill";
+        shapeLayer.comment = EF_TAG;
+
+        var contents = shapeLayer.property("ADBE Root Vectors Group");
+        var group = contents.addProperty("ADBE Vector Group");
+        var vecGroup = group.property("ADBE Vectors Group");
+
+        // Rounded rectangle
+        var rect = vecGroup.addProperty("ADBE Vector Shape - Rect");
+        rect.property("ADBE Vector Rect Size").setValue([w, h]);
+        var radiusVal = h / 2 * (cfg.pillRadius || 0.5);
+        rect.property("ADBE Vector Rect Roundness").setValue(radiusVal);
+
+        // Fill
+        var fill = vecGroup.addProperty("ADBE Vector Graphic - Fill");
+        var pillColor = cfg.pillColor || [0.04, 0.1, 0.18];
+        fill.property("ADBE Vector Fill Color").setValue([pillColor[0], pillColor[1], pillColor[2]]);
+        if (cfg.pillOpacity != null) {
+            fill.property("ADBE Vector Fill Opacity").setValue(cfg.pillOpacity);
+        }
+
+        // Stroke (border)
+        if (cfg.pillStrokeWidth > 0) {
+            var stroke = vecGroup.addProperty("ADBE Vector Graphic - Stroke");
+            stroke.property("ADBE Vector Stroke Color").setValue(cfg.pillStrokeColor || [1, 1, 1]);
+            stroke.property("ADBE Vector Stroke Width").setValue(cfg.pillStrokeWidth);
+        }
+
+        // Position behind text layer
+        shapeLayer.moveAfter(textLayer);
+
+        // Match timing to the word
+        shapeLayer.outPoint = wordEnd + 0.3;
+        shapeLayer.inPoint = wordStart;
+
+        // Position at same spot as text
+        var textPos = textLayer.property("Position").value;
+        shapeLayer.property("Position").setValue(textPos);
+
+        // Squash & stretch scale expression on the pill
+        var intensity = cfg.animIntensity || 1.0;
+        shapeLayer.property("Scale").expression = ef_squashExpr(intensity);
+
+        // Also fade in opacity
+        shapeLayer.property("Opacity").expression = EF_REVEAL_OP;
+
+        return shapeLayer;
+    } catch (e) {
+        return null;
+    }
+}
+
+/* ── Build a caption group — per-word layers with fade-up ── */
 function ef_buildGroup(comp, g, cfg) {
-    var text = cfg.allCaps ? g.text.toUpperCase() : g.text;
-    var layer = comp.layers.addText(text);
-    layer.name = text.substr(0, 28);
-    layer.comment = EF_TAG;
+    var placed = 0;
+    var allCaps = cfg.allCaps !== false;
+    var preset = cfg.preset || "fadeup_words";
+    var posX = cfg.posX || 50;
+    var posY = cfg.posY || 85;
+    var position = [
+        comp.width * posX / 100,
+        comp.height * posY / 100
+    ];
 
-    ef_styleDoc(layer, cfg);
-    ef_setTiming(layer, g.start, g.end);
-    ef_centerAnchor(layer, comp, cfg, g.start + 0.05);
-    ef_applyPreset(layer, cfg, g);
+    // For "fadeup_words" preset: create one text layer PER WORD
+    // Each word fades up from bottom at its spoken time
+    if (preset === "fadeup_words") {
+        for (var wi = 0; wi < g.words.length; wi++) {
+            var w = g.words[wi];
+            var wordText = allCaps ? w.text.toUpperCase() : w.text;
+            var startSec = w.start;
+            var endSec = w.end;
 
-    // Drop shadow for floating style
-    if (cfg.visualStyle === "floating" || cfg.visualStyle === "highlight") {
-        ef_applyDropShadow(layer, cfg);
+            try {
+                // Create text layer for this word
+                var textLayer = comp.layers.addText(wordText);
+                textLayer.name = "Caption: " + wordText.substr(0, 20);
+                textLayer.comment = EF_TAG;
+
+                // Style
+                ef_styleDoc(textLayer, cfg);
+
+                // Position + anchor
+                ef_setTiming(textLayer, startSec, endSec);
+                ef_centerAnchor(textLayer, comp, cfg, startSec + 0.05);
+
+                // Animation: fade up from bottom
+                var opacity = textLayer.property("Opacity");
+                var pos = textLayer.property("Position");
+                opacity.expression = EF_FADEUP_OP;
+                pos.expression = EF_FADEUP_POS;
+
+                // Drop shadow
+                if (cfg.dropShadow) {
+                    ef_applyDropShadow(textLayer, cfg);
+                }
+
+                // Check if this word should have a pill background
+                var globalIdx = w.idx;
+                var hasPill = false;
+                if (cfg.pillWords && cfg.pillWords.length > 0) {
+                    for (var pi = 0; pi < cfg.pillWords.length; pi++) {
+                        if (cfg.pillWords[pi] === globalIdx) { hasPill = true; break; }
+                    }
+                }
+
+                if (hasPill) {
+                    ef_createWordPill(comp, textLayer, cfg, startSec, endSec);
+                }
+
+                placed++;
+            } catch (e) {
+                // Non-fatal — continue with next word
+            }
+        }
+    } else {
+        // Other presets: one text layer per group (original behavior)
+        var text = allCaps ? g.text.toUpperCase() : g.text;
+        var layer = comp.layers.addText(text);
+        layer.name = text.substr(0, 28);
+        layer.comment = EF_TAG;
+
+        ef_styleDoc(layer, cfg);
+        ef_setTiming(layer, g.start, g.end);
+        ef_centerAnchor(layer, comp, cfg, g.start + 0.05);
+        ef_applyPreset(layer, cfg, g);
+
+        if (cfg.dropShadow) {
+            ef_applyDropShadow(layer, cfg);
+        }
+
+        placed = 1;
     }
 
-    // Pill background
-    if (cfg.visualStyle === "pill") {
-        ef_createPill(comp, layer, cfg, g.start + 0.05);
-    }
-
-    // Per-word highlighting
-    if (cfg.visualStyle === "highlight" && cfg.highlightWords && cfg.highlightWords.length > 0) {
-        ef_applyHighlights(layer, g, cfg);
-    }
-
-    return 1;
+    return placed;
 }
 
 /* ── Apply per-word highlights (text animator approach) ── */
@@ -471,7 +592,7 @@ function ef_createCaptions(jsonStr) {
         cfg.fillColor = cfg.fillColor || [1, 1, 1];
         cfg.posX = cfg.posX || 50;
         cfg.posY = cfg.posY || 85;
-        cfg.preset = cfg.preset || "popin";
+        cfg.preset = cfg.preset || "fadeup_words";
         cfg.maxWordsPerSegment = cfg.maxWordsPerSegment || 4;
         cfg.maxCharsPerSegment = cfg.maxCharsPerSegment || 30;
         cfg.maxDurationPerSegment = cfg.maxDurationPerSegment || 3;
