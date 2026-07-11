@@ -265,11 +265,13 @@ function ef_applyDropShadow(layer, cfg) {
     if (!cfg.dropShadow) return;
     try {
         // Use the effect-based drop shadow (more reliable via scripting)
+        // Properties: 0001=Color, 0002=Opacity, 0003=Angle, 0004=Distance, 0005=Softness, 0006=Shadow Only
         var fx = layer.property("ADBE Effect Parade").addProperty("ADBE Drop Shadow");
         fx.property("ADBE Drop Shadow-0001").setValue(cfg.shadowColor || [0, 0, 0]);
         fx.property("ADBE Drop Shadow-0002").setValue(cfg.shadowOpacity || 50);
-        fx.property("ADBE Drop Shadow-0003").setValue(cfg.shadowDistance || 3);
-        fx.property("ADBE Drop Shadow-0004").setValue(cfg.shadowBlur || 5);
+        fx.property("ADBE Drop Shadow-0003").setValue(135);  // Angle (135 = bottom-right)
+        fx.property("ADBE Drop Shadow-0004").setValue(cfg.shadowDistance || 3);
+        fx.property("ADBE Drop Shadow-0005").setValue(cfg.shadowBlur || 5);
     } catch (e) {
         // Non-fatal — drop shadow is optional
     }
@@ -294,7 +296,7 @@ function ef_createPill(comp, textLayer, cfg, atTime) {
 
         // Rectangle
         var rect = vecGroup.addProperty("ADBE Vector Shape - Rect");
-        rect.property("ADBE Vector Rect Size").setValue([w / 2, h / 2]);
+        rect.property("ADBE Vector Rect Size").setValue([w, h]);  // Full width/height, not half-extents
         rect.property("ADBE Vector Rect Roundness").setValue(h / 2 * (cfg.pillRadius || 0.5));
 
         // Fill
@@ -406,22 +408,17 @@ function ef_applyHighlights(layer, g, cfg) {
         // Add fill color animator for highlighted words
         var fillAnim = animators.addProperty("ADBE Text Animator");
         fillAnim.name = "EF Highlight Color";
-        fillAnim.property("ADBE Text Properties").addProperty("ADBE Text Fill Color");
-        var fillProp = fillAnim.property("ADBE Text Properties").property("ADBE Text Fill Color");
+        var fillAnimProps = fillAnim.property("ADBE Text Animator Properties");
+        fillAnimProps.addProperty("ADBE Text Fill Color");
+        var fillProp = fillAnimProps.property("ADBE Text Fill Color");
         var hlColor = cfg.highlightTextColor || [1, 1, 0];
         fillProp.setValue([hlColor[0], hlColor[1], hlColor[2]]);
 
-        // Add expression selector for word-based highlight
-        var selector = fillAnim.property("ADBE Text Selectors").addProperty("ADBE Text Expressible Selector");
+        // Add range selector with word-based units
+        var rangeSelector = fillAnim.property("ADBE Text Selectors").addProperty("ADBE Text Selector");
+        rangeSelector.property("ADBE Text Range Type2").setValue(3);  // 3 = words
 
-        // Build word time arrays for the expression
-        var startArr = [], endArr = [];
-        for (var i = 0; i < g.words.length; i++) {
-            startArr.push(g.words[i].start);
-            endArr.push(g.words[i].end);
-        }
-
-        // Build highlight index array (which words in this group are highlighted)
+        // Expression: returns 100 if this word index is highlighted, 0 otherwise
         var hlArr = [];
         for (var j = 0; j < g.words.length; j++) {
             var globalIdx = g.words[j].idx;
@@ -431,22 +428,20 @@ function ef_applyHighlights(layer, g, cfg) {
             }
             hlArr.push(isHl ? 1 : 0);
         }
-
-        // Expression: returns 100 if this word is highlighted, 0 otherwise
-        var expr = "st=[" + startArr.join(",") + "];en=[" + endArr.join(",") + "];hl=[" + hlArr.join(",") + "];" +
-            "n=textIndex-1;" +
-            "if(n>=0&&n<hl.length&&hl[n]==1){100}else{0}";
-        selector.property("ADBE Text Expressible Amount").expression = expr;
+        var expr = "hl=[" + hlArr.join(",") + "];n=textIndex-1;if(n>=0&&n<hl.length&&hl[n]==1){100}else{0}";
+        rangeSelector.property("ADBE Text Selector Amount").expression = expr;
 
         // Add scale animator for highlighted words (punch effect)
         var scaleAnim = animators.addProperty("ADBE Text Animator");
         scaleAnim.name = "EF Highlight Scale";
-        scaleAnim.property("ADBE Text Properties").addProperty("ADBE Text Scale 3D");
-        var scaleProp = scaleAnim.property("ADBE Text Properties").property("ADBE Text Scale 3D");
+        var scaleAnimProps = scaleAnim.property("ADBE Text Animator Properties");
+        scaleAnimProps.addProperty("ADBE Text Scale 3D");
+        var scaleProp = scaleAnimProps.property("ADBE Text Scale 3D");
         scaleProp.setValue([110, 110, 110]);
 
-        var scaleSel = scaleAnim.property("ADBE Text Selectors").addProperty("ADBE Text Expressible Selector");
-        scaleSel.property("ADBE Text Expressible Amount").expression = expr;
+        var scaleSel = scaleAnim.property("ADBE Text Selectors").addProperty("ADBE Text Selector");
+        scaleSel.property("ADBE Text Range Type2").setValue(3);  // 3 = words
+        scaleSel.property("ADBE Text Selector Amount").expression = expr;
 
     } catch (e) {
         // Non-fatal — highlighting is optional
