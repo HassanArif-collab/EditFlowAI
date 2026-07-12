@@ -145,6 +145,85 @@ function ef_getAudioPath() {
     } catch (e) { return ef_err("getAudioPath: " + e.toString()); }
 }
 
+/* ── Export comp audio mixdown via Render Queue ── */
+/* This handles: video clips with embedded audio, multiple clips,
+   trimmed clips — renders ALL audio exactly as the comp plays back. */
+function ef_exportCompAudioMixdown(outPath) {
+    try {
+        var comp = ef_getComp();
+        if (!comp) return ef_err("No composition found.");
+
+        var outFile = new File(outPath);
+        var outDir = outFile.parent;
+        if (!outDir.exists) { outDir.create(); }
+
+        // Add comp to render queue
+        var rq = app.project.renderQueue;
+        var rqItem = rq.items.add(comp);
+
+        // Apply the built-in AIFF 48kHz template (audio-only)
+        var om = rqItem.outputModule(1);
+        try { om.applyTemplate("AIFF 48kHz"); } catch (e) {
+            // Fallback: try "Lossless" (will include video but we only need audio)
+            try { om.applyTemplate("Lossless"); } catch (e2) {}
+        }
+
+        // Set output file path
+        om.file = outFile;
+
+        // Render — this is BLOCKING (AE will be unresponsive until done)
+        rq.render();
+
+        // Clean up: remove the item from the render queue
+        rqItem.remove();
+
+        if (!outFile.exists || outFile.length === 0) {
+            return ef_err("Audio export produced no file. Check render queue settings.");
+        }
+
+        return ef_json({ path: outFile.fsName, size: outFile.length });
+    } catch (e) {
+        return ef_err("exportCompAudioMixdown: " + e.toString());
+    }
+}
+
+/* ── Get audio inventory (all audio layers with timing info) ── */
+/* Fallback for when render queue doesn't work — backend can use ffmpeg */
+function ef_getAudioInventory() {
+    try {
+        var comp = ef_getComp();
+        if (!comp) return ef_err("No composition found.");
+
+        var layers = [];
+        for (var i = 1; i <= comp.numLayers; i++) {
+            var layer = comp.layer(i);
+            try {
+                if (layer.hasAudio && layer.source) {
+                    var filePath = null;
+                    if (layer.source.mainSource && layer.source.mainSource.file) {
+                        filePath = layer.source.mainSource.file.fsName;
+                    } else if (layer.source.file) {
+                        filePath = layer.source.file.fsName;
+                    }
+                    if (filePath) {
+                        layers.push({
+                            file: filePath,
+                            startTime: layer.startTime,
+                            inPoint: layer.inPoint,
+                            outPoint: layer.outPoint,
+                            stretch: layer.stretch,
+                            hasVideo: layer.hasVideo
+                        });
+                    }
+                }
+            } catch (e) {}
+        }
+
+        if (!layers.length) return ef_err("No audio layers with files found.");
+        return ef_json({ layers: layers, compDuration: comp.duration });
+    } catch (e) { return ef_err("getAudioInventory: " + e.toString()); }
+}
+
 /* ══ Expression Library ══ */
 // All expressions are parameterized — the client builds them with actual values
 
