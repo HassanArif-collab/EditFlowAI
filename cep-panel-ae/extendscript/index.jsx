@@ -146,8 +146,10 @@ function ef_getAudioPath() {
 }
 
 /* ── Export comp audio mixdown via Render Queue ── */
-/* This handles: video clips with embedded audio, multiple clips,
-   trimmed clips — renders ALL audio exactly as the comp plays back. */
+/* VERIFIED against official AE docs (ae-scripting.docsforadobe.dev).
+   Fixes: re-fetch OM after applyTemplate, render only our item,
+   no Lossless fallback (video template), check dir create, re-stat file.
+   Handles: video clips with embedded audio, multiple clips, trimmed clips. */
 function ef_exportCompAudioMixdown(outPath) {
     try {
         var comp = ef_getComp();
@@ -155,49 +157,96 @@ function ef_exportCompAudioMixdown(outPath) {
 
         var outFile = new File(outPath);
         var outDir = outFile.parent;
-        if (!outDir.exists) { outDir.create(); }
+        if (!outDir) return ef_err("Invalid output path: " + outPath);
+        if (!outDir.exists) {
+            if (!outDir.create()) {
+                return ef_err("Could not create output directory: " + outDir.fsName);
+            }
+        }
+        // Remove stale output so post-render size check is meaningful
+        try { if (outFile.exists) outFile.remove(); } catch (e) {}
 
         // Add comp to render queue
         var rq = app.project.renderQueue;
         var rqItem = rq.items.add(comp);
 
-        // Apply the built-in AIFF 48kHz template (audio-only)
+        // Apply audio-only template — try built-in "AIFF 48kHz" first,
+        // then search user-saved templates for AIFF or WAV in the name
         var om = rqItem.outputModule(1);
-        try { om.applyTemplate("AIFF 48kHz"); } catch (e) {
-            // Fallback: try "Lossless" (will include video but we only need audio)
-            try { om.applyTemplate("Lossless"); } catch (e2) {}
+        var candidates = ["AIFF 48kHz", "WAV 48kHz", "WAV"];
+        try {
+            var tl = om.templates;
+            for (var t = 0; t < tl.length; t++) {
+                var nm = tl[t];
+                if ((nm.indexOf("AIFF") >= 0 || nm.indexOf("WAV") >= 0) &&
+                    candidates.indexOf(nm) < 0) {
+                    candidates.push(nm);
+                }
+            }
+        } catch (e) {}
+
+        var applied = null, lastErr = "";
+        for (var c = 0; c < candidates.length; c++) {
+            try { om.applyTemplate(candidates[c]); applied = candidates[c]; break; }
+            catch (e) { lastErr = candidates[c] + ": " + e.toString(); }
+        }
+        if (!applied) {
+            try { rqItem.remove(); } catch (e) {}
+            return ef_err("No audio output template found. Save an 'AIFF 48kHz' template via Edit > Templates > Output Module. Error: " + lastErr);
         }
 
-        // Set output file path
+        // RE-FETCH the OM after applyTemplate — AE bug invalidates the reference
+        om = rqItem.outputModule(1);
         om.file = outFile;
 
-        // Render — this is BLOCKING (AE will be unresponsive until done)
+        // Make sure ONLY our item is queued — render() renders every queued item
+        for (var k = 1; k <= rq.numItems; k++) {
+            try { rq.item(k).render = (rq.item(k) === rqItem); } catch (e) {}
+        }
+
+        // RENDER — BLOCKING. AE UI will freeze until done.
         rq.render();
 
-        // Clean up: remove the item from the render queue
-        rqItem.remove();
+        // Re-stat the output file (File objects can cache pre-render state)
+        var result = new File(outFile.fsName);
+        try { rqItem.remove(); } catch (e) {}
 
-        if (!outFile.exists || outFile.length === 0) {
+        if (!result.exists || result.length === 0) {
             return ef_err("Audio export produced no file. Check render queue settings.");
         }
 
-        return ef_json({ path: outFile.fsName, size: outFile.length });
+        return ef_json({ path: result.fsName, size: result.length,
+                         template: applied, comp: comp.name });
     } catch (e) {
         return ef_err("exportCompAudioMixdown: " + e.toString());
     }
 }
 
 /* ── Get audio inventory (all audio layers with timing info) ── */
-/* Fallback for when render queue doesn't work — backend can use ffmpeg */
-function ef_getAudioInventory() {
+/* Returns comp-time values. Backend must apply trim math:
+   sourceTime = (compTime - startTime) * (100 / stretch) */
+function ef_getAudioInventory(selectedOnly) {
     try {
         var comp = ef_getComp();
         if (!comp) return ef_err("No composition found.");
 
         var layers = [];
-        for (var i = 1; i <= comp.numLayers; i++) {
-            var layer = comp.layer(i);
+        var checkLayers = [];
+
+        if (selectedOnly && comp.selectedLayers && comp.selectedLayers.length > 0) {
+            // Only selected layers
+            checkLayers = comp.selectedLayers;
+        } else {
+            // All layers
+            for (var ai = 1; ai <= comp.numLayers; ai++) {
+                checkLayers.push(comp.layer(ai));
+            }
+        }
+
+        for (var i = 0; i < checkLayers.length; i++) {
+            var layer = checkLayers[i];
             try {
+                // hasAudio is true for video layers with embedded audio too
                 if (layer.hasAudio && layer.source) {
                     var filePath = null;
                     if (layer.source.mainSource && layer.source.mainSource.file) {
@@ -208,19 +257,26 @@ function ef_getAudioInventory() {
                     if (filePath) {
                         layers.push({
                             file: filePath,
+                            name: layer.name,
                             startTime: layer.startTime,
                             inPoint: layer.inPoint,
                             outPoint: layer.outPoint,
                             stretch: layer.stretch,
-                            hasVideo: layer.hasVideo
+                            hasVideo: layer.hasVideo,
+                            hasAudio: layer.hasAudio
                         });
                     }
                 }
             } catch (e) {}
         }
 
-        if (!layers.length) return ef_err("No audio layers with files found.");
-        return ef_json({ layers: layers, compDuration: comp.duration });
+        if (!layers.length) {
+            if (selectedOnly) {
+                return ef_err("No audio layers found in selection. Select layers with audio (video clips with audio work too).");
+            }
+            return ef_err("No audio layers with files found.");
+        }
+        return ef_json({ layers: layers, count: layers.length, compDuration: comp.duration, selectedOnly: !!selectedOnly });
     } catch (e) { return ef_err("getAudioInventory: " + e.toString()); }
 }
 
