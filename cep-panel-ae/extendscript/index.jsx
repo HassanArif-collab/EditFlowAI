@@ -357,7 +357,7 @@ function ef_groupWords(words, cfg) {
     var groups = [], cur = [];
     for (var w = 0; w < words.length; w++) {
         var wordText = words[w].word || words[w].text || "";
-        var normalizedWord = { text: wordText, start: parseFloat(words[w].start), end: parseFloat(words[w].end), idx: w };
+        var normalizedWord = { text: wordText, start: parseFloat(words[w].start), end: parseFloat(words[w].end), idx: w, pill: !!words[w].pill };
 
         if (cur.length === 0) { cur.push(normalizedWord); continue; }
 
@@ -630,14 +630,7 @@ function ef_buildGroup(comp, g, cfg) {
         // First pass: determine which words have pills
         var wordHasPill = [];
         for (var wi0 = 0; wi0 < g.words.length; wi0++) {
-            var globalIdx0 = g.words[wi0].idx;
-            var hasPill = false;
-            if (cfg.pillWords && cfg.pillWords.length > 0) {
-                for (var pi0 = 0; pi0 < cfg.pillWords.length; pi0++) {
-                    if (cfg.pillWords[pi0] === globalIdx0) { hasPill = true; break; }
-                }
-            }
-            wordHasPill.push(hasPill);
+            wordHasPill.push(!!g.words[wi0].pill);
         }
 
         // Merge adjacent pill words into pill groups
