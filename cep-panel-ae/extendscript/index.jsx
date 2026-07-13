@@ -289,15 +289,13 @@ var EF_SPRING_SCALE = "f=3.0; d=6.0; t=time-inPoint;\n" +
 var EF_REVEAL_OP = "t=time-inPoint; linear(t,0,0.1,0,100)";
 
 // Build fade-up expressions with configurable parameters
-// fadeDur: how long the fade takes (seconds)
-// slideDist: how many pixels the word slides up (positive = starts below)
-// easing: "linear", "ease_in", "ease_out", "ease_in_out"
+// Uses AE's built-in linear()/ease()/easeIn()/easeOut() with CORRECT 5-arg syntax
 function ef_buildFadeUpOp(fadeDur, easing) {
     var d = fadeDur || 0.3;
     var e = easing || "linear";
-    if (e === "ease_out") return "t=time-inPoint; t<0?0:(t>=" + d + "?100:easeOut(t/" + d + ")*100)";
-    if (e === "ease_in") return "t=time-inPoint; t<0?0:(t>=" + d + "?100:(t/" + d + ")*(t/" + d + ")*100)";
-    if (e === "ease_in_out") return "t=time-inPoint; t<0?0:(t>=" + d + "?100:ease(t/" + d + ")*100)";
+    if (e === "ease_out") return "t=time-inPoint; t<0?0:(t>=" + d + "?100:easeOut(t,0," + d + ",0,100))";
+    if (e === "ease_in") return "t=time-inPoint; t<0?0:(t>=" + d + "?100:easeIn(t,0," + d + ",0,100))";
+    if (e === "ease_in_out") return "t=time-inPoint; t<0?0:(t>=" + d + "?100:ease(t,0," + d + ",0,100))";
     return "t=time-inPoint; linear(t,0," + d + ",0,100)";
 }
 
@@ -305,9 +303,9 @@ function ef_buildFadeUpPos(fadeDur, slideDist, easing) {
     var d = fadeDur || 0.3;
     var s = slideDist || 40;
     var e = easing || "linear";
-    if (e === "ease_out") return "t=time-inPoint; t<0?[value[0],value[1]+" + s + "]:(t>=" + d + "?value:[value[0],value[1]+" + s + "-easeOut(t/" + d + ")*" + s + "])";
-    if (e === "ease_in") return "t=time-inPoint; t<0?[value[0],value[1]+" + s + "]:(t>=" + d + "?value:[value[0],value[1]+" + s + "-(t/" + d + ")*(t/" + d + ")*" + s + "])";
-    if (e === "ease_in_out") return "t=time-inPoint; t<0?[value[0],value[1]+" + s + "]:(t>=" + d + "?value:[value[0],value[1]+" + s + "-ease(t/" + d + ")*" + s + "])";
+    if (e === "ease_out") return "t=time-inPoint; t<0?[value[0],value[1]+" + s + "]:(t>=" + d + "?value:[value[0],value[1]+" + s + "-easeOut(t,0," + d + ",0," + s + ")])";
+    if (e === "ease_in") return "t=time-inPoint; t<0?[value[0],value[1]+" + s + "]:(t>=" + d + "?value:[value[0],value[1]+" + s + "-easeIn(t,0," + d + ",0," + s + ")])";
+    if (e === "ease_in_out") return "t=time-inPoint; t<0?[value[0],value[1]+" + s + "]:(t>=" + d + "?value:[value[0],value[1]+" + s + "-ease(t,0," + d + ",0," + s + ")])";
     return "t=time-inPoint; [value[0], value[1]+linear(t,0," + d + "," + s + ",0)]";
 }
 
@@ -315,9 +313,9 @@ function ef_buildFadeUpPos(fadeDur, slideDist, easing) {
 function ef_buildPillScale(scaleDur, easing) {
     var d = scaleDur || 0.3;
     var e = easing || "linear";
-    if (e === "ease_out") return "t=time-inPoint; t<0?[0,0]:(t>=" + d + "?[100,100]:[easeOut(t/" + d + ")*100,easeOut(t/" + d + ")*100])";
-    if (e === "ease_in") return "t=time-inPoint; t<0?[0,0]:(t>=" + d + "?[100,100]:[(t/" + d + ")*(t/" + d + ")*100,(t/" + d + ")*(t/" + d + ")*100])";
-    if (e === "ease_in_out") return "t=time-inPoint; t<0?[0,0]:(t>=" + d + "?[100,100]:[ease(t/" + d + ")*100,ease(t/" + d + ")*100])";
+    if (e === "ease_out") return "t=time-inPoint; t<0?[0,0]:(t>=" + d + "?[100,100]:[easeOut(t,0," + d + ",0,100),easeOut(t,0," + d + ",0,100)])";
+    if (e === "ease_in") return "t=time-inPoint; t<0?[0,0]:(t>=" + d + "?[100,100]:[easeIn(t,0," + d + ",0,100),easeIn(t,0," + d + ",0,100)])";
+    if (e === "ease_in_out") return "t=time-inPoint; t<0?[0,0]:(t>=" + d + "?[100,100]:[ease(t,0," + d + ",0,100),ease(t,0," + d + ",0,100)])";
     return "t=time-inPoint; t<0?[0,0]:[linear(t,0," + d + ",0,100),linear(t,0," + d + ",0,100)]";
 }
 
@@ -394,7 +392,15 @@ function ef_styleDoc(layer, cfg) {
     var td = tp.value;
     td.resetCharStyle();
     td.fontSize = cfg.fontSize || 80;
-    try { if (cfg.fontPS) td.font = cfg.fontPS; else if (cfg.fontName) td.font = cfg.fontName; } catch (e) {}
+    // Set font — try fontPS (PostScript name), then fontName. Log if fails.
+    if (cfg.fontPS) {
+        try { td.font = cfg.fontPS; } catch (e) {
+            // Font not found — try fontName as fallback
+            if (cfg.fontName) { try { td.font = cfg.fontName; } catch (e2) {} }
+        }
+    } else if (cfg.fontName) {
+        try { td.font = cfg.fontName; } catch (e) {}
+    }
     td.applyFill = true;
     td.fillColor = cfg.fillColor || [1, 1, 1];
     td.applyStroke = (cfg.strokeWidth || 0) > 0;

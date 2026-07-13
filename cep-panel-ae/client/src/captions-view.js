@@ -93,9 +93,11 @@ function openCaptions() {
   _refreshInterval = setInterval(() => {
     const el = $('#captions-view');
     if (!el || el.classList.contains('hidden') || document.hidden) return;
+    // Don't poll while busy (transcription/generation blocks the backend)
+    if (S.busy) return;
     _refreshModelStatus();
     _refreshCompInfo();
-  }, 10000);
+  }, 30000); // 30s — less flickering, skip during busy
 }
 
 function closeCaptions() {
