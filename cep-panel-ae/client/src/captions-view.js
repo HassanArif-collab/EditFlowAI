@@ -78,11 +78,57 @@ const S = {
   activeTab: 0,
   wordEasing: 'ease_in_out', fadeDur: 0.5, slideDist: 50,
   pillEasing: 'ease_in_out', pillScaleDur: 0.5,
+  _presets: {}, _activePreset: '',
 };
 let _refreshInterval = null;
+let _persistTimer = null;
+
+/* Settings that persist across reloads and make up a named preset. */
+const SETTINGS_KEYS = [
+  'visualStyle', 'fontPS', 'fontSize', 'fillColor', 'strokeColor', 'strokeWidth',
+  'dropShadow', 'shadowColor', 'shadowOpacity', 'shadowDistance', 'shadowBlur',
+  'pillColor', 'pillOpacity', 'pillStrokeColor', 'pillStrokeWidth', 'pillRadius',
+  'highlightTextColor', 'posX', 'posY', 'maxWordsPerSegment', 'maxCharsPerSegment',
+  'maxDurationPerSegment', 'allCaps', 'preset', 'animIntensity', 'language',
+  'wordEasing', 'fadeDur', 'slideDist', 'pillEasing', 'pillScaleDur',
+];
+const BUILTIN_PRESETS = {
+  'Clean Fade-Up': { preset: 'fadeup_words', wordEasing: 'ease_out', fadeDur: 0.35, slideDist: 40, allCaps: false, fillColor: [1, 1, 1], strokeWidth: 0, dropShadow: true, fontSize: 80 },
+  'Hormozi Pop':   { preset: 'popin', allCaps: true, fillColor: [1, 1, 1], strokeColor: [0, 0, 0], strokeWidth: 6, dropShadow: true, fontSize: 90, highlightTextColor: [1, 0.85, 0] },
+  'Bounce In':     { preset: 'bounce', allCaps: false, dropShadow: true, fontSize: 84 },
+  'Typewriter':    { preset: 'typewriter', allCaps: false, dropShadow: false, fontSize: 70 },
+  'Minimal Fade':  { preset: 'fade', allCaps: false, fadeDur: 0.25, dropShadow: false, strokeWidth: 0 },
+};
+function _snapshotSettings() {
+  const o = {};
+  for (const k of SETTINGS_KEYS) o[k] = S[k];
+  return JSON.parse(JSON.stringify(o));
+}
+function _applySettings(obj) {
+  if (!obj) return;
+  for (const k of SETTINGS_KEYS) if (obj[k] !== undefined) S[k] = JSON.parse(JSON.stringify(obj[k]));
+}
+function _persistSoon() {
+  clearTimeout(_persistTimer);
+  _persistTimer = setTimeout(() => {
+    try { localStorage.editflow_ae_settings = JSON.stringify(_snapshotSettings()); } catch (_) {}
+  }, 400);
+}
+function _loadPersisted() {
+  try { _applySettings(JSON.parse(localStorage.editflow_ae_settings || 'null')); } catch (_) {}
+  try { S._presets = JSON.parse(localStorage.editflow_ae_presets || '{}') || {}; } catch (_) { S._presets = {}; }
+  try { S._activePreset = localStorage.editflow_ae_active_preset || ''; } catch (_) {}
+}
+function _savePresets() {
+  try {
+    localStorage.editflow_ae_presets = JSON.stringify(S._presets);
+    localStorage.editflow_ae_active_preset = S._activePreset;
+  } catch (_) {}
+}
 
 /* ── Public API ── */
 function openCaptions() {
+  _loadPersisted();
   _ensureStyles();
   _ensureContainer();
   _render();
@@ -123,6 +169,15 @@ function _ensureStyles() {
 }
 
 const _EXTRA_CSS = `
+/* Panel shell height chain — makes .cap-content the ONLY scroll region.
+   The old layout left #app-main unsized, so overflowing content was simply
+   clipped with no scrollbar. The redundant loader header + hero are hidden
+   so the in-view .cap-header is the single header. */
+html, body { height: 100%; overflow: hidden; margin: 0; }
+body { display: flex; flex-direction: column; }
+#app-header, #hero { display: none; }
+#app-main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
 #captions-view, .captions-view {
   --bg: #121826;
   --card: #1A202C;
@@ -138,7 +193,7 @@ const _EXTRA_CSS = `
   --radius-card: 12px;
 
   display: flex; flex-direction: column;
-  width: 100%; height: 100%; min-height: 0;
+  width: 100%; flex: 1; min-height: 0;
   background: var(--bg); color: var(--text);
   font-family: -apple-system, "Segoe UI", Inter, Roboto, sans-serif;
   font-size: 13px; overflow: hidden;
@@ -351,6 +406,8 @@ function _ensureContainer() {
     v = document.createElement('div');
     v.id = 'captions-view'; v.className = 'captions-view';
     ($('#app-main') || document.body).appendChild(v);
+    // Auto-persist any control change (select/checkbox/color/slider commit).
+    v.addEventListener('change', _persistSoon);
   }
   v.classList.remove('hidden');
   return v;
@@ -402,7 +459,6 @@ function _renderHeader() {
       <span class="cap-whisper-text">${_esc(statusText)}</span>
     </div>
     <button id="cap-btn-settings" class="cap-icon-btn" title="Settings">&#9881;</button>
-    <button id="cap-btn-close" class="cap-icon-btn" title="Close panel">✕</button>
   </div>`;
 }
 
@@ -533,8 +589,31 @@ function _renderWordRow(w, i) {
 }
 
 /* ── Tab 3: Style ── */
-function _renderTabStyle() {
+function _renderPresetBar() {
+  const names = Object.keys(S._presets).sort();
+  const userOpts = names.map((n) => `<option value="u:${_esc(n)}" ${S._activePreset === 'u:' + n ? 'selected' : ''}>${_esc(n)}</option>`).join('');
+  const builtinOpts = Object.keys(BUILTIN_PRESETS).map((n) => `<option value="b:${_esc(n)}" ${S._activePreset === 'b:' + n ? 'selected' : ''}>${_esc(n)}</option>`).join('');
   return `<div class="cap-card">
+    <div class="cap-card-title">💾 Style Presets</div>
+    <div class="cap-row">
+      <select id="cap-preset-pick" class="cap-select">
+        <option value="">— pick a preset —</option>
+        ${userOpts ? `<optgroup label="My Presets">${userOpts}</optgroup>` : ''}
+        <optgroup label="Built-in">${builtinOpts}</optgroup>
+      </select>
+    </div>
+    <div class="cap-btn-group">
+      <button id="cap-preset-save" class="cap-btn cap-btn-secondary cap-btn-tiny">Save as…</button>
+      <button id="cap-preset-update" class="cap-btn cap-btn-secondary cap-btn-tiny">Update</button>
+      <button id="cap-preset-delete" class="cap-btn cap-btn-danger cap-btn-tiny">Delete</button>
+      <button id="cap-preset-export" class="cap-btn cap-btn-secondary cap-btn-tiny">Export</button>
+      <label class="cap-btn cap-btn-secondary cap-btn-tiny" style="cursor:pointer">Import<input type="file" id="cap-preset-import" accept=".json" style="display:none" /></label>
+    </div>
+  </div>`;
+}
+
+function _renderTabStyle() {
+  return _renderPresetBar() + `<div class="cap-card">
     <div class="cap-card-title">🎨 Caption Style</div>
     ${_renderFontField()}
     <div class="cap-row">
@@ -693,7 +772,9 @@ function _renderTabAnimate() {
       </div>
       <div class="cap-animate-preview">
         <div class="cap-animate-preview-text">${_esc(previewText)}</div>
-        <button id="cap-animate-preview-btn" class="cap-animate-preview-btn">Preview in Comp ↗</button>
+        <button id="cap-animate-preview-btn" class="cap-animate-preview-btn" title="Creates TEMPORARY preview layers — your real captions are untouched">Preview in Comp (temp) ↗</button>
+        <button id="cap-remove-preview-btn" class="cap-animate-preview-btn">Remove preview</button>
+        ${S.status ? `<div class="cap-status-progress" style="font-size:9px;text-align:center;margin-top:4px;">${_esc(S.status)}</div>` : ''}
       </div>
     </div>
   </div>`;
@@ -886,7 +967,66 @@ function _refreshAllWordRows() {
   });
 }
 
+function _wirePresetBar(v) {
+  const pick = v.querySelector('#cap-preset-pick');
+  if (pick) pick.onchange = (e) => {
+    const val = e.target.value;
+    S._activePreset = val;
+    if (val.startsWith('b:')) _applySettings(BUILTIN_PRESETS[val.slice(2)]);
+    else if (val.startsWith('u:')) _applySettings(S._presets[val.slice(2)]);
+    _savePresets(); _persistSoon(); _render();
+  };
+  const save = v.querySelector('#cap-preset-save');
+  if (save) save.onclick = () => {
+    const name = (prompt('Preset name:') || '').trim();
+    if (!name) return;
+    S._presets[name] = _snapshotSettings();
+    S._activePreset = 'u:' + name;
+    _savePresets(); _render();
+  };
+  const upd = v.querySelector('#cap-preset-update');
+  if (upd) upd.onclick = () => {
+    if (!S._activePreset.startsWith('u:')) { alert('Pick one of your saved presets first (built-ins are read-only — use "Save as…").'); return; }
+    S._presets[S._activePreset.slice(2)] = _snapshotSettings();
+    _savePresets();
+    S.status = 'Preset updated.'; _render();
+    setTimeout(() => { S.status = null; _render(); }, 1500);
+  };
+  const del = v.querySelector('#cap-preset-delete');
+  if (del) del.onclick = () => {
+    if (!S._activePreset.startsWith('u:')) { alert('Only your saved presets can be deleted.'); return; }
+    const name = S._activePreset.slice(2);
+    if (!confirm(`Delete preset "${name}"?`)) return;
+    delete S._presets[name]; S._activePreset = '';
+    _savePresets(); _render();
+  };
+  const exp = v.querySelector('#cap-preset-export');
+  if (exp) exp.onclick = () => {
+    const blob = new Blob([JSON.stringify({ editflow_presets: S._presets, current: _snapshotSettings() }, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = 'editflow-caption-presets.json'; a.click();
+  };
+  const imp = v.querySelector('#cap-preset-import');
+  if (imp) imp.onchange = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(reader.result);
+        const incoming = data.editflow_presets || data;
+        let n = 0;
+        for (const k of Object.keys(incoming)) { if (incoming[k] && typeof incoming[k] === 'object') { S._presets[k] = incoming[k]; n++; } }
+        _savePresets(); _render();
+        alert(`Imported ${n} preset(s).`);
+      } catch (err) { alert('Import failed: ' + err.message); }
+    };
+    reader.readAsText(file);
+  };
+}
+
 function _wireTabStyle(v) {
+  _wirePresetBar(v);
   const fontSelect = v.querySelector('#cap-font-ps-select');
   if (fontSelect) fontSelect.onchange = (e) => { S.fontPS = e.target.value; _updatePreview(); };
   const fontInput = v.querySelector('#cap-font-ps');
@@ -932,6 +1072,8 @@ function _wireTabAnimate(v) {
   _wireRange(v, '#cap-pill-scale-dur', (val) => { S.pillScaleDur = parseFloat(val); return S.pillScaleDur.toFixed(2) + 's'; });
   const ap = v.querySelector('#cap-animate-preview-btn');
   if (ap) ap.onclick = _onAnimatePreview;
+  const rp = v.querySelector('#cap-remove-preview-btn');
+  if (rp) rp.onclick = _onRemovePreview;
 }
 
 function _wireTabGenerate(v) {
@@ -1011,6 +1153,9 @@ async function _loadFonts() {
 
 async function _onTranscribe() {
   if (S.busy) return;
+  // Re-running (words already present) forces a fresh transcription so a
+  // language change or a bad first result isn't served from cache.
+  const isRerun = S.words.length > 0;
   S.busy = true; S.error = null; S.status = 'Checking audio layers…'; S.progress = 5; _render();
   try {
     if (!S.modelInstalled) throw new Error(`Whisper model "${S.modelName}" not installed. Open Settings to download.`);
@@ -1022,11 +1167,19 @@ async function _onTranscribe() {
     if (!invResp || invResp.error) {
       throw new Error((invResp && invResp.error) || 'Cannot inspect audio in the active comp.');
     }
-    const layerCount = invResp.layers || 0;
-    const trimmed = !!invResp.trimmed;
+    // ef_getAudioInventory returns { layers: [...], count } — read the COUNT,
+    // not the array (the old `invResp.layers || 0` made both branches dead).
+    const invLayers = (invResp.layers && invResp.layers.length) ? invResp.layers : [];
+    const layerCount = invResp.count || invLayers.length || 0;
+    const firstFile = invLayers.length ? invLayers[0].file : null;
+    // Untrimmed single layer: its comp in-point sits where its source starts
+    // (|inPoint − startTime| ≈ 0). Head-trimmed layers have inPoint > startTime.
+    const singleUntrimmed = layerCount === 1 && firstFile &&
+      (invLayers[0].inPoint == null || invLayers[0].startTime == null ||
+       Math.abs((invLayers[0].inPoint || 0) - (invLayers[0].startTime || 0)) < 0.05);
     let audioBlob, audioName = 'comp_audio.wav';
 
-    if (layerCount === 1 && !trimmed) {
+    if (singleUntrimmed) {
       // Fast path: single, untrimmed audio layer → use ef_getAudioPath
       S.status = 'Extracting audio path from comp…'; S.progress = 12; _render();
       const audioResp = await callExtendScript('ef_getAudioPath');
@@ -1038,10 +1191,12 @@ async function _onTranscribe() {
       const parts = (audioResp.path || '').split(/[\\/]/);
       audioName = parts[parts.length - 1] || 'comp_audio.wav';
     } else if (layerCount >= 1) {
-      // Slow path: multi-layer or trimmed → render mixdown
+      // Slow path: multi-layer or trimmed → render mixdown. Pass the output
+      // path as a PLAIN STRING (ef_exportCompAudioMixdown(outPath)); the old
+      // JSON.stringify({outPath}) double-encoded it into an invalid file path.
       S.status = 'Rendering audio mixdown… AE will be unresponsive for a few seconds.'; S.progress = 10; _render();
-      const outPath = invResp.suggestedOutPath || _defaultMixdownPath();
-      const mixResp = await callExtendScript('ef_exportCompAudioMixdown', JSON.stringify({ outPath }));
+      const outPath = _defaultMixdownPath();
+      const mixResp = await callExtendScript('ef_exportCompAudioMixdown', outPath);
       if (!mixResp || mixResp.error || !mixResp.path) {
         throw new Error((mixResp && mixResp.error) || 'Audio mixdown render failed.');
       }
@@ -1062,6 +1217,7 @@ async function _onTranscribe() {
       out_seconds: (S.compInfo && S.compInfo.duration) || 0,
       language: S.language || 'auto',
       filename: audioName,
+      force: String(isRerun),
     }, { timeoutMs: 600000 });
 
     S.words = (resp.words || []).map((w) => ({
@@ -1213,7 +1369,8 @@ async function _onClear() {
 }
 
 async function _onAnimatePreview() {
-  // Kick a quick preview-in-comp by creating a single test caption group at the playhead.
+  // Non-destructive: creates TEMPORARY preview layers (EF_CAPTION_PREVIEW) for
+  // the group at the playhead. Real captions are never removed.
   try {
     if (!S.words.length) return;
     const t = S._previewTime || 0;
@@ -1225,9 +1382,23 @@ async function _onAnimatePreview() {
     })));
     cfg.previewOnly = true;
     await callExtendScript('ef_createCaptions', JSON.stringify(cfg));
+    S.status = 'Temporary preview added (your captions are untouched). Use "Remove preview" to clear it.';
+    _render();
+    setTimeout(() => { S.status = null; _render(); }, 4000);
   } catch (e) {
     S.error = e.message || String(e);
     _render();
+  }
+}
+
+async function _onRemovePreview() {
+  try {
+    const resp = await callExtendScript('ef_removePreview');
+    S.status = `Removed ${resp.removed || 0} preview layer(s).`;
+    _render();
+    setTimeout(() => { S.status = null; _render(); }, 2000);
+  } catch (e) {
+    S.error = e.message || String(e); _render();
   }
 }
 

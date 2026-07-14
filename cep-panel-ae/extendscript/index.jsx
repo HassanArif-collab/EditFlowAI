@@ -27,35 +27,57 @@
  *********************************************************************/
 
 var EF_TAG = "EF_CAPTION";
+var EF_PREVIEW_TAG = "EF_CAPTION_PREVIEW";
+var EF_ACTIVE_TAG = EF_TAG;   // set per run in ef_createCaptions (real vs preview)
 
 /* ── Helpers ── */
 
 function ef_err(msg) { return "ERROR:" + String(msg); }
 
-function ef_json(obj) {
-    try { return JSON.stringify(obj); } catch (e) {
-        // Manual fallback for ES3
-        try {
-            var parts = [];
-            for (var k in obj) {
-                if (obj.hasOwnProperty(k)) {
-                    var v = obj[k];
-                    if (v === null) { parts.push('"' + k + '":null'); continue; }
-                    if (typeof v === "string") { parts.push('"' + k + '":"' + v.replace(/\\/g,"\\\\").replace(/"/g,'\\"') + '"'); continue; }
-                    if (typeof v === "number" || typeof v === "boolean") { parts.push('"' + k + '":' + v); continue; }
-                    if (Array.isArray(v)) {
-                        var items = [];
-                        for (var vi = 0; vi < v.length; vi++) {
-                            if (typeof v[vi] === "string") items.push('"' + v[vi].replace(/"/g,'\\"') + '"');
-                            else items.push(String(v[vi]));
-                        }
-                        parts.push('"' + k + '":[' + items.join(",") + ']');
-                    }
-                }
-            }
-            return "{" + parts.join(",") + "}";
-        } catch (e2) { return '{"error":"json_failed"}'; }
+/* ES3-safe recursive JSON serializer. After Effects ExtendScript has NO native
+   JSON object, and several ef_* functions return arrays-of-objects (fonts,
+   audio inventory, error lists) that the old flat fallback could not encode —
+   it returned {"error":"json_failed"}, which the client surfaced as the
+   "JSON error" on timeline transcription. This encoder recurses and avoids
+   ES5-only APIs (no Array.isArray). Inbound configs are parsed via eval(). */
+function ef_escStr(s) {
+    s = String(s);
+    var out = "", i, c, code;
+    for (i = 0; i < s.length; i++) {
+        c = s.charAt(i); code = s.charCodeAt(i);
+        if (c === '"') out += '\\"';
+        else if (c === "\\") out += "\\\\";
+        else if (c === "\n") out += "\\n";
+        else if (c === "\r") out += "\\r";
+        else if (c === "\t") out += "\\t";
+        else if (code < 32) out += "\\u" + ("0000" + code.toString(16)).slice(-4);
+        else out += c;
     }
+    return out;
+}
+function ef_isArray(v) { return Object.prototype.toString.call(v) === "[object Array]"; }
+function ef_json(v) {
+    if (v === null || v === undefined) return "null";
+    var t = typeof v, i, k, parts;
+    if (t === "number") return isFinite(v) ? String(v) : "null";
+    if (t === "boolean") return v ? "true" : "false";
+    if (t === "string") return '"' + ef_escStr(v) + '"';
+    if (t === "object") {
+        if (ef_isArray(v)) {
+            parts = [];
+            for (i = 0; i < v.length; i++) parts.push(ef_json(v[i]));
+            return "[" + parts.join(",") + "]";
+        }
+        parts = [];
+        for (k in v) {
+            if (v.hasOwnProperty(k)) {
+                if (typeof v[k] === "function" || v[k] === undefined) continue;
+                parts.push('"' + ef_escStr(k) + '":' + ef_json(v[k]));
+            }
+        }
+        return "{" + parts.join(",") + "}";
+    }
+    return "null";
 }
 
 function ef_getComp() {
@@ -344,6 +366,39 @@ function ef_squashExpr(intensity) {
         "}";
 }
 
+// Per-word-layer entrance expressions. Word layers live for the whole group
+// (to avoid flicker), so the entrance is keyed to the word's OWN spoken start
+// time (ws), not the layer inPoint. Returns opacity 0→100 over fadeDur.
+// Manual easing (no AE ease() call) for ES3 safety.
+function ef_wordFadeUpOpExpr(ws, fadeDur, easing) {
+    var ws3 = Math.round(ws * 1000) / 1000;
+    var d = fadeDur || 0.3;
+    var e = easing || "linear";
+    var easeBody;
+    if (e === "ease_out") easeBody = "var ev=1-Math.pow(1-p,3);";
+    else if (e === "ease_in") easeBody = "var ev=p*p*p;";
+    else if (e === "ease_in_out") easeBody = "var ev=(p<0.5)?4*p*p*p:1-Math.pow(-2*p+2,3)/2;";
+    else easeBody = "var ev=p;";
+    return "var t=time-" + ws3 + ";var p=t/" + d + ";if(p<0)p=0;if(p>1)p=1;" +
+        easeBody + "ev*100;";
+}
+// Per-word-layer position: starts slideDist below, settles to centerY at ws+fadeDur.
+// Bakes centerY so the expression is self-contained (not relative to value).
+function ef_wordFadeUpPosExpr(ws, fadeDur, slideDist, easing, centerY) {
+    var ws3 = Math.round(ws * 1000) / 1000;
+    var d = fadeDur || 0.3;
+    var s = slideDist || 40;
+    var e = easing || "linear";
+    var cy = Math.round(centerY * 1000) / 1000;
+    var easeBody;
+    if (e === "ease_out") easeBody = "var ev=1-Math.pow(1-p,3);";
+    else if (e === "ease_in") easeBody = "var ev=p*p*p;";
+    else if (e === "ease_in_out") easeBody = "var ev=(p<0.5)?4*p*p*p:1-Math.pow(-2*p+2,3)/2;";
+    else easeBody = "var ev=p;";
+    return "var t=time-" + ws3 + ";var p=t/" + d + ";if(p<0)p=0;if(p>1)p=1;" +
+        easeBody + "[value[0]," + cy + "+(1-ev)*" + s + "];";
+}
+
 /* ══ Word Grouping ══ */
 
 function ef_endsSentence(t) { return /[.?!]["')\]]?\s*$/.test(String(t)); }
@@ -427,11 +482,12 @@ function ef_centerAnchor(layer, comp, cfg, atTime) {
     ]);
 }
 
-function ef_removeOldCaptions(comp) {
+function ef_removeOldCaptions(comp, tag) {
+    tag = tag || EF_TAG;
     var removed = 0;
     for (var i = comp.numLayers; i >= 1; i--) {
         var L = comp.layer(i);
-        try { if (L.comment === EF_TAG) { L.remove(); removed++; } } catch (e) {}
+        try { if (L.comment === tag) { L.remove(); removed++; } } catch (e) {}
     }
     return removed;
 }
@@ -450,68 +506,6 @@ function ef_applyDropShadow(layer, cfg) {
         fx.property("ADBE Drop Shadow-0005").setValue(cfg.shadowBlur || 5);
     } catch (e) {
         // Non-fatal — drop shadow is optional
-    }
-}
-
-/* ── Create pill background shape layer ── */
-function ef_createPill(comp, textLayer, cfg, atTime) {
-    try {
-        var r = textLayer.sourceRectAtTime(atTime, false);
-        var padX = (cfg.fontSize || 80) * 0.3;
-        var padY = (cfg.fontSize || 80) * 0.15;
-        var w = r.width + padX * 2;
-        var h = r.height + padY * 2;
-
-        var shapeLayer = comp.layers.addShape();
-        shapeLayer.name = "EF Pill BG";
-        shapeLayer.comment = EF_TAG;
-
-        var contents = shapeLayer.property("ADBE Root Vectors Group");
-        var group = contents.addProperty("ADBE Vector Group");
-        var vecGroup = group.property("ADBE Vectors Group");
-
-        // Rectangle
-        var rect = vecGroup.addProperty("ADBE Vector Shape - Rect");
-        rect.property("ADBE Vector Rect Size").setValue([w, h]);  // Full width/height, not half-extents
-        rect.property("ADBE Vector Rect Roundness").setValue(h / 2 * (cfg.pillRadius || 0.5));
-
-        // Fill
-        var fill = vecGroup.addProperty("ADBE Vector Graphic - Fill");
-        var pillColor = cfg.pillColor || [0.04, 0.1, 0.18];
-        fill.property("ADBE Vector Fill Color").setValue([pillColor[0], pillColor[1], pillColor[2]]);
-        if (cfg.pillOpacity != null) {
-            fill.property("ADBE Vector Fill Opacity").setValue(cfg.pillOpacity);
-        }
-
-        // Stroke (optional border)
-        if (cfg.pillStrokeWidth > 0) {
-            var stroke = vecGroup.addProperty("ADBE Vector Graphic - Stroke");
-            stroke.property("ADBE Vector Stroke Color").setValue(cfg.pillStrokeColor || [1, 1, 1]);
-            stroke.property("ADBE Vector Stroke Width").setValue(cfg.pillStrokeWidth);
-        }
-
-        // Position behind text layer
-        shapeLayer.moveAfter(textLayer);
-
-        // Match timing
-        shapeLayer.inPoint = textLayer.inPoint;
-        shapeLayer.outPoint = textLayer.outPoint;
-
-        // Position at same spot as text
-        var textPos = textLayer.property("Position").value;
-        shapeLayer.property("Position").setValue(textPos);
-
-        // Animate scale with squash/stretch
-        if (cfg.preset === "boxpop") {
-            shapeLayer.property("Scale").expression = ef_squashExpr(cfg.animIntensity || 1.0);
-        } else {
-            // Match text layer's scale expression
-            shapeLayer.property("Scale").expression = textLayer.property("Scale").expression;
-        }
-
-        return shapeLayer;
-    } catch (e) {
-        return null;
     }
 }
 
@@ -560,7 +554,7 @@ function ef_createWordPill(comp, textLayer, cfg, wordStart, wordEnd) {
 
         var shapeLayer = comp.layers.addShape();
         shapeLayer.name = "EF Pill";
-        shapeLayer.comment = EF_TAG;
+        shapeLayer.comment = EF_ACTIVE_TAG;
 
         var contents = shapeLayer.property("ADBE Root Vectors Group");
         var group = contents.addProperty("ADBE Vector Group");
@@ -657,29 +651,27 @@ function ef_buildGroup(comp, g, cfg) {
             }
         }
 
-        // Create text layers for each word
+        // Phase 1: Create text layers for each word (NO positioning yet —
+        // we measure first, then lay out horizontally like TikTalk buildKaraoke).
+        // All word layers live for the WHOLE GROUP duration so earlier words
+        // don't vanish mid-caption (fixes flicker). Per-word reveal is driven
+        // by the opacity expression keyed to each word's own start time.
+        var fadeDur = cfg.fadeDur || 0.3;
+        var slideDist = cfg.slideDist || 40;
+        var wordEasing = cfg.wordEasing || "linear";
         var wordLayers = [];
         for (var wi = 0; wi < g.words.length; wi++) {
             var w = g.words[wi];
             var wordText = allCaps ? w.text.toUpperCase() : w.text;
-            var startSec = w.start;
-            var endSec = w.end;
 
             try {
                 var textLayer = comp.layers.addText(wordText);
                 textLayer.name = "Caption: " + wordText.substr(0, 20);
-                textLayer.comment = EF_TAG;
+                textLayer.comment = EF_ACTIVE_TAG;
 
                 ef_styleDoc(textLayer, cfg);
-                ef_setTiming(textLayer, startSec, endSec);
-                ef_centerAnchor(textLayer, comp, cfg, startSec + 0.05);
-
-                // Animation: fade up from bottom with configurable parameters
-                var fadeDur = cfg.fadeDur || 0.3;
-                var slideDist = cfg.slideDist || 40;
-                var wordEasing = cfg.wordEasing || "linear";
-                textLayer.property("Opacity").expression = ef_buildFadeUpOp(fadeDur, wordEasing);
-                textLayer.property("Position").expression = ef_buildFadeUpPos(fadeDur, slideDist, wordEasing);
+                // Whole-group lifetime (not per-word) — prevents flicker.
+                ef_setTiming(textLayer, g.start, g.end);
 
                 if (cfg.dropShadow) {
                     ef_applyDropShadow(textLayer, cfg);
@@ -692,31 +684,93 @@ function ef_buildGroup(comp, g, cfg) {
             }
         }
 
-        // Create merged pills for adjacent pill words
+        // Phase 2: Measure each word + lay out horizontally, centered on posX.
+        // This is the fix for "overlapping" — previously ef_centerAnchor put
+        // every word at the same point. Now we measure + accumulate X like
+        // TikTalk's buildKaraoke (host.jsx:319-355).
+        var measureAt = g.start + 0.05;
+        var n = g.words.length;
+        var rects = [], widths = [], totalW = 0;
+        var space = (cfg.fontSize || 80) * 0.32;   // inter-word gap
+        for (var mi = 0; mi < n; mi++) {
+            if (!wordLayers[mi]) { rects.push(null); widths.push(0); continue; }
+            var r = wordLayers[mi].sourceRectAtTime(measureAt, false);
+            rects.push(r); widths.push(r.width); totalW += r.width;
+        }
+        totalW += space * Math.max(0, n - 1);
+
+        var accX = (comp.width * posX / 100) - totalW / 2;
+        var centerY = comp.height * posY / 100;
+        var wordCenters = [];  // store per-word X edges for pill sizing
+        for (var li = 0; li < n; li++) {
+            var L = wordLayers[li];
+            if (!L || !rects[li]) { wordCenters.push(null); accX += widths[li] + space; continue; }
+            var rr = rects[li];
+            // Center each word's anchor on its own glyph box, then place
+            // at the accumulated X cursor + the group's Y.
+            L.property("Anchor Point").setValue([rr.left + rr.width / 2, rr.top + rr.height / 2]);
+            L.property("Position").setValue([accX + widths[li] / 2, centerY]);
+            wordCenters.push({ left: accX, right: accX + widths[li], height: rr.height });
+            // Per-word entrance keyed to THIS word's spoken start time.
+            var ws = g.words[li].start;
+            L.property("Opacity").expression = ef_wordFadeUpOpExpr(ws, fadeDur, wordEasing);
+            L.property("Position").expression = ef_wordFadeUpPosExpr(ws, fadeDur, slideDist, wordEasing, centerY);
+            accX += widths[li] + space;
+        }
+
+        // Create merged pills for adjacent pill words — sized to span ALL
+        // words in the group (not just the first word's width).
         for (var pg = 0; pg < pillGroups.length; pg++) {
             var pgStart = pillGroups[pg].startIdx;
             var pgEnd = pillGroups[pg].endIdx;
-
-            // Find the first non-null text layer in this pill group
-            var refLayer = null;
-            for (var pl = pgStart; pl <= pgEnd; pl++) {
-                if (wordLayers[pl]) { refLayer = wordLayers[pl]; break; }
+            // Compute pill width from layout data
+            var pillLeft = Infinity, pillRight = -Infinity, pillH = 0;
+            for (var pi = pgStart; pi <= pgEnd; pi++) {
+                if (wordCenters[pi]) {
+                    if (wordCenters[pi].left < pillLeft) pillLeft = wordCenters[pi].left;
+                    if (wordCenters[pi].right > pillRight) pillRight = wordCenters[pi].right;
+                    if (wordCenters[pi].height > pillH) pillH = wordCenters[pi].height;
+                }
             }
-            if (!refLayer) continue;
-
-            // Create a single pill that spans from the first word's start to the last word's end
-            // The pill sizes to the reference layer (first word) — in a future improvement,
-            // we could create a wider pill that covers all words in the group
-            ef_createWordPill(comp, refLayer, cfg,
-                pillGroups[pg].startTime,
-                pillGroups[pg].endTime);
+            if (pillLeft >= pillRight) continue;
+            var padX = (cfg.fontSize || 80) * 0.28, padY = (cfg.fontSize || 80) * 0.16;
+            var pw = (pillRight - pillLeft) + padX * 2;
+            var ph = pillH + padY * 2;
+            var pcx = (pillLeft + pillRight) / 2;
+            var pillStart = g.words[pgStart].start;
+            try {
+                var shape = comp.layers.addShape();
+                shape.name = "EF Pill";
+                shape.comment = EF_ACTIVE_TAG;
+                var vec = shape.property("ADBE Root Vectors Group")
+                    .addProperty("ADBE Vector Group").property("ADBE Vectors Group");
+                var rect = vec.addProperty("ADBE Vector Shape - Rect");
+                rect.property("ADBE Vector Rect Size").setValue([pw, ph]);
+                rect.property("ADBE Vector Rect Roundness").setValue(ph / 2 * (cfg.pillRadius || 0.5));
+                var fill = vec.addProperty("ADBE Vector Graphic - Fill");
+                var pc = cfg.pillColor || [0.04, 0.1, 0.18];
+                fill.property("ADBE Vector Fill Color").setValue([pc[0], pc[1], pc[2]]);
+                if (cfg.pillOpacity != null) fill.property("ADBE Vector Fill Opacity").setValue(cfg.pillOpacity);
+                if ((cfg.pillStrokeWidth || 0) > 0) {
+                    var stroke = vec.addProperty("ADBE Vector Graphic - Stroke");
+                    stroke.property("ADBE Vector Stroke Color").setValue(cfg.pillStrokeColor || [1, 1, 1]);
+                    stroke.property("ADBE Vector Stroke Width").setValue(cfg.pillStrokeWidth);
+                }
+                shape.property("Position").setValue([pcx, centerY]);
+                ef_setTiming(shape, g.start, g.end);
+                shape.property("Scale").expression = ef_buildPillScale(cfg.pillScaleDur || 0.3, cfg.pillEasing || "linear");
+                shape.property("Opacity").expression = ef_buildFadeUpOp(cfg.pillScaleDur || 0.3, cfg.pillEasing || "linear");
+                // Move behind the word layers
+                shape.moveAfter(wordLayers[n - 1]);
+                placed++;
+            } catch (ePill) {}
         }
     } else {
         // Other presets: one text layer per group (original behavior)
         var text = allCaps ? g.text.toUpperCase() : g.text;
         var layer = comp.layers.addText(text);
         layer.name = text.substr(0, 28);
-        layer.comment = EF_TAG;
+        layer.comment = EF_ACTIVE_TAG;
 
         ef_styleDoc(layer, cfg);
         ef_setTiming(layer, g.start, g.end);
@@ -731,55 +785,6 @@ function ef_buildGroup(comp, g, cfg) {
     }
 
     return placed;
-}
-
-/* ── Apply per-word highlights (text animator approach) ── */
-function ef_applyHighlights(layer, g, cfg) {
-    try {
-        var textProps = layer.property("ADBE Text Properties");
-        var animators = textProps.property("ADBE Text Animators");
-
-        // Add fill color animator for highlighted words
-        var fillAnim = animators.addProperty("ADBE Text Animator");
-        fillAnim.name = "EF Highlight Color";
-        var fillAnimProps = fillAnim.property("ADBE Text Animator Properties");
-        fillAnimProps.addProperty("ADBE Text Fill Color");
-        var fillProp = fillAnimProps.property("ADBE Text Fill Color");
-        var hlColor = cfg.highlightTextColor || [1, 1, 0];
-        fillProp.setValue([hlColor[0], hlColor[1], hlColor[2]]);
-
-        // Add range selector with word-based units
-        var rangeSelector = fillAnim.property("ADBE Text Selectors").addProperty("ADBE Text Selector");
-        rangeSelector.property("ADBE Text Range Type2").setValue(3);  // 3 = words
-
-        // Expression: returns 100 if this word index is highlighted, 0 otherwise
-        var hlArr = [];
-        for (var j = 0; j < g.words.length; j++) {
-            var globalIdx = g.words[j].idx;
-            var isHl = false;
-            for (var k = 0; k < cfg.highlightWords.length; k++) {
-                if (cfg.highlightWords[k] === globalIdx) { isHl = true; break; }
-            }
-            hlArr.push(isHl ? 1 : 0);
-        }
-        var expr = "hl=[" + hlArr.join(",") + "];n=textIndex-1;if(n>=0&&n<hl.length&&hl[n]==1){100}else{0}";
-        rangeSelector.property("ADBE Text Selector Amount").expression = expr;
-
-        // Add scale animator for highlighted words (punch effect)
-        var scaleAnim = animators.addProperty("ADBE Text Animator");
-        scaleAnim.name = "EF Highlight Scale";
-        var scaleAnimProps = scaleAnim.property("ADBE Text Animator Properties");
-        scaleAnimProps.addProperty("ADBE Text Scale 3D");
-        var scaleProp = scaleAnimProps.property("ADBE Text Scale 3D");
-        scaleProp.setValue([110, 110, 110]);
-
-        var scaleSel = scaleAnim.property("ADBE Text Selectors").addProperty("ADBE Text Selector");
-        scaleSel.property("ADBE Text Range Type2").setValue(3);  // 3 = words
-        scaleSel.property("ADBE Text Selector Amount").expression = expr;
-
-    } catch (e) {
-        // Non-fatal — highlighting is optional
-    }
 }
 
 /* ══ Main: Create Captions ══ */
@@ -812,10 +817,15 @@ function ef_createCaptions(jsonStr) {
         cfg.visualStyle = cfg.visualStyle || "floating";
         cfg.allCaps = cfg.allCaps !== false;
 
-        app.beginUndoGroup("EditFlow: Create Captions");
+        // Preview runs tag their layers separately and must NEVER delete the
+        // user's real captions — that was the "Preview button wiped my captions"
+        // bug. Real runs replace real captions; both clear any stale preview.
+        EF_ACTIVE_TAG = cfg.previewOnly ? EF_PREVIEW_TAG : EF_TAG;
+        app.beginUndoGroup(cfg.previewOnly ? "EditFlow: Caption Preview" : "EditFlow: Create Captions");
         started = true;
 
-        if (cfg.replace !== false) ef_removeOldCaptions(comp);
+        ef_removeOldCaptions(comp, EF_PREVIEW_TAG);
+        if (!cfg.previewOnly && cfg.replace !== false) ef_removeOldCaptions(comp, EF_TAG);
 
         var groups = ef_groupWords(cfg.words, cfg);
         var created = 0, failed = 0, errors = [];
@@ -849,8 +859,20 @@ function ef_clearCaptions() {
         var comp = ef_getComp();
         if (!comp) return ef_err("No composition found.");
         app.beginUndoGroup("EditFlow: Clear Captions");
-        var removed = ef_removeOldCaptions(comp);
+        var removed = ef_removeOldCaptions(comp, EF_TAG) + ef_removeOldCaptions(comp, EF_PREVIEW_TAG);
         app.endUndoGroup();
         return ef_json({ removed: removed });
     } catch (e) { return ef_err("clearCaptions: " + e.toString()); }
+}
+
+/* ── Remove only the temporary preview layers ── */
+function ef_removePreview() {
+    try {
+        var comp = ef_getComp();
+        if (!comp) return ef_err("No composition found.");
+        app.beginUndoGroup("EditFlow: Remove Preview");
+        var removed = ef_removeOldCaptions(comp, EF_PREVIEW_TAG);
+        app.endUndoGroup();
+        return ef_json({ removed: removed });
+    } catch (e) { return ef_err("removePreview: " + e.toString()); }
 }

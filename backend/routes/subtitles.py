@@ -119,6 +119,7 @@ async def transcribe_mixdown(
     in_seconds: float = Form(0.0),
     out_seconds: float = Form(0.0),
     language: Optional[str] = Form(None),
+    force: bool = Form(False),
 ):
     """Receive a WAV mixdown from Premiere, transcribe it, return word-level cues.
 
@@ -139,8 +140,12 @@ async def transcribe_mixdown(
         #    re-opens the panel for the same range, and lets Whisper's
         #    transcript cache (keyed by file_fingerprint) hit on re-runs.
         active_model = whisper_service.get_active_model_name()
+        # Language MUST be part of the key — otherwise re-transcribing the same
+        # range in a different language returns the first language's cached
+        # transcript (the "can't retranscribe in another language" bug).
+        lang_key = (language or "auto").strip().lower()
         fingerprint = hashlib.sha256(
-            f"{sequence_name}|{in_seconds}|{out_seconds}|{active_model}".encode("utf-8")
+            f"{sequence_name}|{in_seconds}|{out_seconds}|{active_model}|{lang_key}".encode("utf-8")
         ).hexdigest()[:16]
 
         # 2. Persist the uploaded WAV under data/media_cache/mixdowns/.
@@ -179,6 +184,7 @@ async def transcribe_mixdown(
             word_timestamps=True,
             vad_filter=True,
             progress=reporter,
+            force=force,
             range_in=0.0,
             range_out=0.0,
         )

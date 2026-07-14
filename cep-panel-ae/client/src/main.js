@@ -1,7 +1,7 @@
 /**
  * main.js — Bootstrap for EditFlow AE panel.
  */
-const BUILD_TAG = 'ae-captions-17';
+const BUILD_TAG = 'ae-captions-18';
 
 (function _stampBoot() {
   const banner = document.getElementById('inline-boot-check');
@@ -52,6 +52,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (btnSettings) {
     btnSettings.addEventListener('click', () => openSettings());
   }
+  // The in-view header's gear dispatches this event (the loader header is hidden).
+  document.addEventListener('editflow:open-settings', () => openSettings());
 
   // Connect WebSocket for real-time updates (whisper download progress, etc.)
   try {
