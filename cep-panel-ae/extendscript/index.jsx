@@ -407,7 +407,7 @@ function ef_groupWords(words, cfg) {
     var maxWords = Math.max(1, cfg.maxWordsPerSegment || 4);
     var maxChars = cfg.maxCharsPerSegment || 30;
     var maxDur = cfg.maxDurationPerSegment || 3;
-    var maxGap = (cfg.maxGap != null) ? cfg.maxGap : 0.6;
+    var maxGap = (cfg.maxGap != null) ? cfg.maxGap : 0.4;   // tighter default = more sentence breaks
 
     var groups = [], cur = [];
     for (var w = 0; w < words.length; w++) {
@@ -423,7 +423,10 @@ function ef_groupWords(words, cfg) {
         for (var ci = 0; ci < cur.length; ci++) totalChars += cur[ci].text.length + 1;
         totalChars += wordText.length;
 
-        if (gap > maxGap || cur.length >= maxWords || dur > maxDur || totalChars > maxChars || ef_endsSentence(prev.text)) {
+        var prevEnds = ef_endsSentence(prev.text);
+        var currEnds = ef_endsSentence(wordText);
+
+        if (gap > maxGap || cur.length >= maxWords || dur > maxDur || totalChars > maxChars || prevEnds || currEnds) {
             groups.push(ef_segToGroup(cur));
             cur = [normalizedWord];
         } else {
@@ -474,10 +477,20 @@ function ef_setTiming(layer, start, end) {
 }
 
 /* Like ef_setTiming, but never lets a caption linger into the NEXT caption's
-   start — fixes consecutive sentences showing on top of each other. */
+   start — fixes consecutive sentences showing on top of each other.
+   Enforces a minimum gap of 2 frames (~67ms at 30fps) so captions never
+   visually overlap regardless of frame rate rounding. */
 function ef_setTimingCapped(layer, start, end, nextStart) {
+    var compFps = 30;   // safe default
+    try { compFps = layer.containingComp.frameRate || 30; } catch (_) {}
+    var frameDur = 1 / compFps;
+    var minGap = frameDur * 2;   // 2-frame gap
+
     var out = end + 0.3;
-    if (nextStart != null && nextStart < out) out = nextStart - 0.02;
+    if (nextStart != null) {
+        var capOut = nextStart - minGap;
+        if (capOut < out) out = capOut;
+    }
     if (out <= start) out = start + 0.1;
     layer.outPoint = out;
     layer.inPoint = start;

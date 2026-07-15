@@ -1726,7 +1726,7 @@ function _groupWordsForPreview(words) {
   const maxWords = Math.max(1, S.maxWordsPerSegment || 4);
   const maxChars = S.maxCharsPerSegment || 30;
   const maxDur = S.maxDurationPerSegment || 3;
-  const maxGap = 0.6;
+  const maxGap = 0.4;
   const groups = []; let cur = [];
   for (let i = 0; i < words.length; i++) {
     const w = words[i];
@@ -1743,8 +1743,9 @@ function _groupWordsForPreview(words) {
     let totalChars = 0;
     for (const c of cur) totalChars += c.text.length + 1;
     totalChars += wordText.length;
-    const endsSentence = /[.?!]["')\]]?\s*$/.test(prev.text);
-    if (gap > maxGap || cur.length >= maxWords || dur > maxDur || totalChars > maxChars || endsSentence) {
+    const prevEnds = /[.?!]["')\]]?\s*$/.test(prev.text);
+    const currEnds = /[.?!]["')\]]?\s*$/.test(normalized.text);
+    if (gap > maxGap || cur.length >= maxWords || dur > maxDur || totalChars > maxChars || prevEnds || currEnds) {
       groups.push(_segToGroup(cur)); cur = [normalized];
     } else { cur.push(normalized); }
   }
