@@ -82,6 +82,7 @@ const S = {
 };
 let _refreshInterval = null;
 let _persistTimer = null;
+let _wsClientId = 'ae-captions';   // set by main.js so it matches the WebSocket id
 
 /* Settings that persist across reloads and make up a named preset. */
 const SETTINGS_KEYS = [
@@ -332,6 +333,8 @@ body { display: flex; flex-direction: column; }
 .cap-word-row { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-bottom: 1px solid rgba(255,255,255,.04); }
 .cap-word-row:last-child { border-bottom: none; }
 .cap-word-row.pill-active { background: rgba(94,92,230,.05); }
+.cap-group-divider { padding: 4px 8px; font: 600 9px monospace; color: var(--text-3); background: rgba(255,255,255,.03); border-bottom: 1px solid rgba(255,255,255,.06); display: flex; justify-content: space-between; cursor: pointer; position: sticky; top: 0; }
+.cap-group-divider:hover { color: var(--secondary); }
 .cap-word-time { color: var(--text-3); font: 9px monospace; min-width: 32px; flex-shrink: 0; }
 .cap-word-input { flex: 1; background: transparent; border: 0; color: var(--text); font: inherit; font-size: 11px; padding: 2px; min-width: 0; }
 .cap-word-input:focus { outline: none; background: rgba(94,92,230,.1); border-radius: 3px; }
@@ -561,10 +564,16 @@ function _renderTabContent() {
     </div>`;
   }
   const pillCount = S.words.filter(w => w.pill).length;
-  const rows = S.words.map((w, i) => _renderWordRow(w, i)).join('');
+  const groups = _groupWordsForPreview(S.words);
+  let rows = '';
+  for (let gi = 0; gi < groups.length; gi++) {
+    const g = groups[gi];
+    rows += `<div class="cap-group-divider" data-gstart="${g.start}" title="Click to preview this caption"><span>Caption ${gi + 1}</span><span>${g.start.toFixed(2)}–${g.end.toFixed(2)}s</span></div>`;
+    for (const gw of g.words) rows += _renderWordRow(S.words[gw.idx], gw.idx);
+  }
   return `<div class="cap-card">
     <div class="cap-card-title">📝 Caption Content</div>
-    <div class="cap-card-subtitle">Edit words and toggle 💊 for pill backgrounds. Adjacent pills merge into one. <strong style="color:var(--text);">${pillCount}</strong> pill${pillCount === 1 ? '' : 's'} active.</div>
+    <div class="cap-card-subtitle">${groups.length} caption${groups.length === 1 ? '' : 's'} from ${S.words.length} words. Click a caption header to preview it. Toggle 💊 for pill backgrounds (adjacent pills merge). <strong style="color:var(--text);">${pillCount}</strong> pill${pillCount === 1 ? '' : 's'} active.</div>
     <div class="cap-btn-group" style="margin-bottom: 10px;">
       <button id="cap-pill-all" class="cap-btn cap-btn-secondary cap-btn-tiny">Pill All</button>
       <button id="cap-pill-clear" class="cap-btn cap-btn-secondary cap-btn-tiny">Clear Pills</button>
@@ -801,9 +810,11 @@ function _renderTabGenerate() {
     <div class="cap-card-title">🚀 Generate</div>
     <div class="cap-card-subtitle">Generate native AE text layers on your timeline. All layers are fully editable — no MOGRTs.</div>
     <div style="display:flex; flex-direction:column; gap:10px;">
-      <button id="cap-clear-btn" class="cap-btn cap-btn-danger cap-btn-full" ${S.busy ? 'disabled' : ''}>🗑️ Clear Existing</button>
-      <button id="cap-smoke-btn" class="cap-btn cap-btn-tertiary cap-btn-full" ${!wordCount || S.busy ? 'disabled' : ''}>🧪 Smoke Test (3 words)</button>
       <button id="cap-generate-btn" class="cap-btn cap-btn-primary cap-btn-full" ${!wordCount || S.busy ? 'disabled' : ''}>🚀 Generate All (${wordCount} words)</button>
+      ${S.busy ? `<button id="cap-cancel-btn" class="cap-btn cap-btn-secondary cap-btn-full">✕ Cancel</button>` : ''}
+      <button id="cap-smoke-btn" class="cap-btn cap-btn-tertiary cap-btn-full" ${!wordCount || S.busy ? 'disabled' : ''}>🧪 Test First Caption (temp)</button>
+      <button id="cap-srt-btn" class="cap-btn cap-btn-secondary cap-btn-full" ${!wordCount || S.busy ? 'disabled' : ''}>💾 Export SRT</button>
+      <button id="cap-clear-btn" class="cap-btn cap-btn-danger cap-btn-full" ${S.busy ? 'disabled' : ''}>🗑️ Clear Existing</button>
     </div>
     ${S.status ? `<div class="cap-status-progress" style="margin-top:10px;">${_esc(S.status)}</div>` : ''}
     ${S.busy && S.progress > 0 ? `<div class="cap-progress-bar"><div class="cap-progress-fill" style="width:${S.progress}%"></div><span class="cap-progress-text">${S.progress}%</span></div>` : ''}
@@ -936,6 +947,12 @@ function _wireTabContent(v) {
       S.words[idx].pill = !S.words[idx].pill;
       _refreshWordRow(idx);
       _updatePreview();
+    };
+  });
+  v.querySelectorAll('.cap-group-divider').forEach((d) => {
+    d.onclick = () => {
+      S._previewTime = parseFloat(d.dataset.gstart) + 0.05;
+      _updatePreview(); _updatePreviewTimeLabel();
     };
   });
   _wireRange(v, '#cap-max-words', (val) => {
@@ -1093,6 +1110,8 @@ function _wireTabGenerate(v) {
   const c = v.querySelector('#cap-clear-btn'); if (c) c.onclick = _onClear;
   const s = v.querySelector('#cap-smoke-btn'); if (s) s.onclick = () => _onGenerate(true);
   const g = v.querySelector('#cap-generate-btn'); if (g) g.onclick = () => _onGenerate(false);
+  const srt = v.querySelector('#cap-srt-btn'); if (srt) srt.onclick = _onExportSrt;
+  const cancel = v.querySelector('#cap-cancel-btn'); if (cancel) cancel.onclick = () => { S._cancelGenerate = true; };
 }
 
 /* ── Wire helpers ── */
@@ -1224,7 +1243,7 @@ async function _onTranscribe() {
     // Step 2: upload + transcribe
     S.status = 'Uploading audio + transcribing with Whisper…'; S.progress = 25; _render();
     const resp = await apiUpload('/api/subtitles/transcribe-mixdown', audioBlob, {
-      client_id: 'ae-captions',
+      client_id: _wsClientId,
       sequence_name: (S.compInfo && S.compInfo.name) || 'ae_comp',
       in_seconds: 0,
       out_seconds: (S.compInfo && S.compInfo.duration) || 0,
@@ -1257,7 +1276,7 @@ async function _onAudioUpload(event) {
   try {
     if (!S.modelInstalled) throw new Error(`Whisper model "${S.modelName}" not installed.`);
     const resp = await apiUpload('/api/subtitles/transcribe-mixdown', file, {
-      client_id: 'ae-captions',
+      client_id: _wsClientId,
       sequence_name: file.name,
       in_seconds: 0,
       out_seconds: 0,
@@ -1347,26 +1366,79 @@ function _parseSrt(text) {
 
 async function _onGenerate(smokeTest) {
   if (S.busy || !S.words.length) return;
-  S.busy = true; S.generateResult = null; S.error = null;
-  S.status = smokeTest ? 'Creating test captions…' : 'Creating captions…'; S.progress = 10; _render();
+  S.busy = true; S._cancelGenerate = false; S.generateResult = null; S.error = null;
+  S.progress = 2; S.status = smokeTest ? 'Creating test caption…' : 'Creating captions…'; _render();
+  // Work in COMPLETE caption groups so a batch never splits a caption.
+  const allGroups = _groupWordsForPreview(S.words);
+  const groups = smokeTest ? allGroups.slice(0, 1) : allGroups;
+  const result = { placed: 0, total: groups.length, groups: groups.length, errors: [], preset: S.preset };
   try {
-    const wordsToPlace = smokeTest ? S.words.slice(0, 3) : S.words;
-    S.status = `Creating ${wordsToPlace.length} word captions…`; S.progress = 30; _render();
-    const cfg = _buildConfig(wordsToPlace);
-    const resp = await callExtendScript('ef_createCaptions', JSON.stringify(cfg));
-    S.generateResult = {
-      placed: resp.placed || 0, total: wordsToPlace.length,
-      groups: resp.groups || 0, errors: resp.errors || [],
-      preset: resp.preset || S.preset, visualStyle: resp.visualStyle || S.visualStyle,
-    };
-    S.status = null; S.progress = 100;
-  } catch (e) {
-    S.generateResult = {
-      placed: 0, total: smokeTest ? Math.min(3, S.words.length) : S.words.length,
-      errors: [String(e.message || e)],
-    };
+    const BATCH = 10;   // caption groups per ExtendScript call
+    for (let i = 0; i < groups.length; i += BATCH) {
+      if (S._cancelGenerate) { result.errors.push('Cancelled by user.'); break; }
+      const batch = groups.slice(i, i + BATCH);
+      const words = [];
+      for (const g of batch) for (const w of g.words) {
+        words.push({ word: w.text, text: w.text, start: w.start, end: w.end, pill: !!w.pill });
+      }
+      const cfg = _buildConfig(words);
+      cfg.replace = (i === 0 && !smokeTest);   // clear existing only on the first real batch
+      cfg.previewOnly = !!smokeTest;           // test = non-destructive preview layers
+      const nextBatch = groups[i + BATCH];
+      cfg.nextBatchStart = nextBatch ? nextBatch.words[0].start : null;
+      const resp = await callExtendScript('ef_createCaptions', JSON.stringify(cfg));
+      if (!resp || resp.error) { result.errors.push((resp && resp.error) || 'ExtendScript error'); break; }
+      for (const er of (resp.errors || [])) result.errors.push(er);
+      result.placed = Math.min(i + BATCH, groups.length);
+      S.progress = Math.round((result.placed / groups.length) * 100);
+      S.status = `Created ${result.placed}/${groups.length} caption${groups.length === 1 ? '' : 's'}…`;
+      _updateProgressDom();
+    }
     S.status = null; S.progress = 0;
-  } finally { S.busy = false; _render(); }
+  } catch (e) {
+    result.errors.push(String(e.message || e));
+    S.status = null; S.progress = 0;
+  } finally {
+    S.generateResult = result;
+    S.busy = false; S._cancelGenerate = false; _render();
+  }
+}
+
+/* Update just the progress bar + status text without a full re-render. */
+function _updateProgressDom() {
+  const fill = document.querySelector('.cap-progress-fill');
+  const txt = document.querySelector('.cap-progress-text');
+  const st = document.querySelector('.cap-status-progress');
+  if (fill) fill.style.width = (S.progress || 0) + '%';
+  if (txt) txt.textContent = (S.progress || 0) + '%';
+  if (st && S.status) st.textContent = S.status;
+}
+
+/* WebSocket transcription progress (routed from main.js). */
+function onTranscribeProgress(payload) {
+  if (!payload || payload.task_type !== 'transcribe' || !S.busy) return;
+  const pct = Math.round(Math.max(0, Math.min(1, payload.progress || 0)) * 100);
+  S.progress = Math.max(S.progress || 0, pct);   // never regress our coarse milestones
+  if (payload.message) S.status = payload.message;
+  _updateProgressDom();
+}
+
+function setCaptionsClientId(id) { if (id) _wsClientId = id; }
+
+async function _onExportSrt() {
+  if (!S.words.length) return;
+  try {
+    const groups = _groupWordsForPreview(S.words);
+    const cues = groups.map((g) => ({ start: g.start, end: g.end, text: g.text }));
+    const name = (S.compInfo && S.compInfo.name) || 'captions';
+    const resp = await apiPost('/api/subtitles/srt', { cues, name }, { timeoutMs: 15000 });
+    S.status = resp.srt_path ? `SRT saved: ${resp.srt_path}` : 'SRT generated.';
+    try { await navigator.clipboard.writeText(resp.srt || ''); S.status += ' (copied to clipboard)'; } catch (_) {}
+    _render();
+    setTimeout(() => { S.status = null; _render(); }, 6000);
+  } catch (e) {
+    S.error = e.message || String(e); _render();
+  }
 }
 
 async function _onClear() {
@@ -1743,4 +1815,4 @@ function _esc(s) {
   return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-export { openCaptions, closeCaptions };
+export { openCaptions, closeCaptions, setCaptionsClientId, onTranscribeProgress };

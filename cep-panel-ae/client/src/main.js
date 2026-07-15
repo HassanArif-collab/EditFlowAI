@@ -19,7 +19,7 @@ const BUILD_TAG = 'ae-captions-19';
 
 import { initExtendScript } from './extendscript.js';
 import { apiGet, apiUpload, connectWS, getBaseUrl } from './api.js';
-import { openCaptions, closeCaptions } from './captions-view.js';
+import { openCaptions, closeCaptions, setCaptionsClientId, onTranscribeProgress } from './captions-view.js';
 import { initSettings, openSettings, onWhisperDownloadProgress } from './settings.js';
 
 const $ = (sel) => document.querySelector(sel);
@@ -41,6 +41,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     _showExtendScriptError(err.message);
   }
 
+  // Route transcription WebSocket progress into the captions view.
+  setCaptionsClientId(CLIENT_ID);
+
   // Open the captions view immediately
   openCaptions();
 
@@ -59,11 +62,18 @@ document.addEventListener('DOMContentLoaded', async () => {
   try {
     const ws = connectWS(CLIENT_ID);
     ws.on('message', (data) => {
-      if (data && data.type === 'whisper_download_progress') {
+      if (!data) return;
+      if (data.type === 'whisper_download_progress') {
         try {
           onWhisperDownloadProgress(data.payload || data);
         } catch (e) {
           console.warn('[ws] whisper_download_progress handler threw:', e);
+        }
+      } else if (data.type === 'progress') {
+        try {
+          onTranscribeProgress(data.payload || data);
+        } catch (e) {
+          console.warn('[ws] progress handler threw:', e);
         }
       }
     });

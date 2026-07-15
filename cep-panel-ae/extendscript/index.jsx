@@ -874,6 +874,7 @@ function ef_createCaptions(jsonStr) {
                 cfg.words[oi].start += off;
                 cfg.words[oi].end += off;
             }
+            if (cfg.nextBatchStart != null) cfg.nextBatchStart += off;
         }
 
         // Defaults
@@ -903,7 +904,8 @@ function ef_createCaptions(jsonStr) {
 
         for (var i = 0; i < groups.length; i++) {
             try {
-                var nextStart = (i + 1 < groups.length) ? groups[i + 1].start : null;
+                var nextStart = (i + 1 < groups.length) ? groups[i + 1].start
+                                : (cfg.nextBatchStart != null ? cfg.nextBatchStart : null);
                 created += ef_buildGroup(comp, groups[i], cfg, nextStart);
             } catch (ge) {
                 failed++;
