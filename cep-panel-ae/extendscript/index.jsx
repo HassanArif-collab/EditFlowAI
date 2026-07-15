@@ -472,28 +472,22 @@ function ef_styleDoc(layer, cfg) {
 }
 
 function ef_setTiming(layer, start, end) {
+    layer.inPoint = start;      // inPoint first, then outPoint
     layer.outPoint = end + 0.3;
-    layer.inPoint = start;
 }
 
 /* Like ef_setTiming, but never lets a caption linger into the NEXT caption's
    start — fixes consecutive sentences showing on top of each other.
-   Enforces a minimum gap of 2 frames (~67ms at 30fps) so captions never
-   visually overlap regardless of frame rate rounding. */
+   Enforces a fixed 50ms minimum gap so captions never visually overlap. */
 function ef_setTimingCapped(layer, start, end, nextStart) {
-    var compFps = 30;   // safe default
-    try { compFps = layer.containingComp.frameRate || 30; } catch (_) {}
-    var frameDur = 1 / compFps;
-    var minGap = frameDur * 2;   // 2-frame gap
-
     var out = end + 0.3;
     if (nextStart != null) {
-        var capOut = nextStart - minGap;
+        var capOut = nextStart - 0.05;  // 50ms hard gap
         if (capOut < out) out = capOut;
     }
     if (out <= start) out = start + 0.1;
-    layer.outPoint = out;
-    layer.inPoint = start;
+    layer.inPoint = start;   // MUST set inPoint first, then outPoint;
+    layer.outPoint = out;    // otherwise AE preserves old duration and shifts outPoint.
 }
 
 function ef_centerAnchor(layer, comp, cfg, atTime) {
@@ -608,8 +602,8 @@ function ef_createWordPill(comp, textLayer, cfg, wordStart, wordEnd) {
         shapeLayer.moveAfter(textLayer);
 
         // Match timing to the word
+        shapeLayer.inPoint = wordStart;      // inPoint first, then outPoint
         shapeLayer.outPoint = wordEnd + 0.3;
-        shapeLayer.inPoint = wordStart;
 
         // Position at same spot as text
         var textPos = textLayer.property("Position").value;
@@ -637,7 +631,7 @@ function ef_createWordPill(comp, textLayer, cfg, wordStart, wordEnd) {
 function ef_buildSingleReveal(comp, g, cfg, nextStart) {
     var allCaps = cfg.allCaps !== false;
     var fullText = allCaps ? String(g.text).toUpperCase() : g.text;
-    var layer = comp.layers.addText(fullText);
+    var layer = comp.layers.addText(" ");  // start with space, like TikTalk
     layer.name = "Caption: " + String(fullText).substr(0, 24);
     layer.comment = EF_ACTIVE_TAG;
     ef_styleDoc(layer, cfg);
@@ -652,9 +646,8 @@ function ef_buildSingleReveal(comp, g, cfg, nextStart) {
     // Word-by-word reveal via Source Text HOLD keyframes.
     try {
         var tp = layer.property("Source Text");
-        if (g.words.length && (g.words[0].start - g.start) > 0.02) {
-            var tdB = tp.value; tdB.text = ""; tp.setValueAtTime(g.start, tdB);
-        }
+        // Blank keyframe at time 0 so nothing shows until first spoken word
+        var tdB = tp.value; tdB.text = ""; tp.setValueAtTime(0, tdB);
         var acc = "";
         for (var j = 0; j < g.words.length; j++) {
             var wt = allCaps ? String(g.words[j].text).toUpperCase() : g.words[j].text;
@@ -899,6 +892,9 @@ function ef_createCaptions(jsonStr) {
         cfg.maxWordsPerSegment = cfg.maxWordsPerSegment || 4;
         cfg.maxCharsPerSegment = cfg.maxCharsPerSegment || 30;
         cfg.maxDurationPerSegment = cfg.maxDurationPerSegment || 3;
+        // Tighter gap default (0.35s) — forces sentence breaks on real pauses,
+        // avoids fusing sentences that then overlap in time.
+        cfg.maxGap = cfg.maxGap != null ? cfg.maxGap : 0.35;
         cfg.visualStyle = cfg.visualStyle || "floating";
         cfg.allCaps = cfg.allCaps !== false;
 
