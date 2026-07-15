@@ -623,43 +623,25 @@ function ef_createWordPill(comp, textLayer, cfg, wordStart, wordEnd) {
     }
 }
 
-/* ── ONE text layer for the whole sentence; words reveal at their spoken times
-   via Source Text HOLD keyframes (no fragile text animators). Self-protecting:
-   the full sentence is set first, so even if keyframing or the entrance
-   expression fails, the caption still shows as one clean layer. This is the
-   requested "one sentence = one text layer" (TikTalk single-layer style). ── */
+/* ── ONE text layer for the whole sentence. The full caption appears at once
+   with a fade-in (no word-by-word HOLD keyframes, which caused word-shifting
+   as the dynamic anchor recalculated for each new text length). ── */
 function ef_buildSingleReveal(comp, g, cfg, nextStart) {
     var allCaps = cfg.allCaps !== false;
     var fullText = allCaps ? String(g.text).toUpperCase() : g.text;
-    var layer = comp.layers.addText(" ");  // start with space, like TikTalk
+    var layer = comp.layers.addText(fullText);
     layer.name = "Caption: " + String(fullText).substr(0, 24);
     layer.comment = EF_ACTIVE_TAG;
     ef_styleDoc(layer, cfg);
 
-    // Center on posX/posY and keep centered as the line grows.
+    // Measure full text and set STATIC anchor (prevents word-shifting)
+    var measureAt = g.start + 0.05;
+    var r = layer.sourceRectAtTime(measureAt, false);
+    layer.property("Anchor Point").setValue([r.left + r.width / 2, r.top + r.height / 2]);
     layer.property("Position").setValue([
         comp.width * (cfg.posX || 50) / 100,
         comp.height * (cfg.posY || 85) / 100
     ]);
-    try { layer.property("Anchor Point").expression = EF_ANCHOR_CENTER; } catch (eA) {}
-
-    // Word-by-word reveal via Source Text HOLD keyframes.
-    try {
-        var tp = layer.property("Source Text");
-        // Blank keyframe at time 0 so nothing shows until first spoken word
-        var tdB = tp.value; tdB.text = ""; tp.setValueAtTime(0, tdB);
-        var acc = "";
-        for (var j = 0; j < g.words.length; j++) {
-            var wt = allCaps ? String(g.words[j].text).toUpperCase() : g.words[j].text;
-            acc = (j ? acc + " " : "") + wt;
-            var td = tp.value; td.text = acc;
-            tp.setValueAtTime(g.words[j].start, td);
-        }
-        var nk = tp.numKeys;
-        for (var k = 1; k <= nk; k++) {
-            tp.setInterpolationTypeAtKey(k, KeyframeInterpolationType.HOLD, KeyframeInterpolationType.HOLD);
-        }
-    } catch (eKey) { /* keep the static full sentence */ }
 
     // Whole-layer entrance (fade + slight rise) using the proven expressions.
     try {
@@ -837,8 +819,8 @@ function ef_buildGroup(comp, g, cfg, nextStart) {
                 ef_setTimingCapped(shape, g.start, g.end, nextStart);
                 shape.property("Scale").expression = ef_buildPillScale(cfg.pillScaleDur || 0.3, cfg.pillEasing || "linear");
                 shape.property("Opacity").expression = ef_buildFadeUpOp(cfg.pillScaleDur || 0.3, cfg.pillEasing || "linear");
-                // Move behind the word layers
-                shape.moveAfter(wordLayers[n - 1]);
+                // Move behind ALL word layers (wordLayers[0] is deepest)
+                shape.moveAfter(wordLayers[0]);
                 placed++;
             } catch (ePill) {}
         }

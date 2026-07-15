@@ -1557,8 +1557,15 @@ function _updatePreviewTimeLabel() {
 function _updatePreview() {
   if (!S._ctx || !S._canvas) return;
   const ctx = S._ctx, w = S._canvas.width, h = S._canvas.height;
-  // Background
-  ctx.fillStyle = '#0a0a10'; ctx.fillRect(0, 0, w, h);
+  // Background — transparent checkerboard
+  ctx.clearRect(0, 0, w, h);
+  const sq = 8;
+  for (let gy = 0; gy < h; gy += sq) {
+    for (let gx = 0; gx < w; gx += sq) {
+      ctx.fillStyle = ((gx / sq + gy / sq) % 2 === 0) ? '#1a1a2e' : '#16162a';
+      ctx.fillRect(gx, gy, sq, sq);
+    }
+  }
   // Subtle grid
   ctx.strokeStyle = 'rgba(255,255,255,.025)'; ctx.lineWidth = 1;
   for (let i = 1; i < 4; i++) {
