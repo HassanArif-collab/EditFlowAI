@@ -473,6 +473,16 @@ function ef_setTiming(layer, start, end) {
     layer.inPoint = start;
 }
 
+/* Like ef_setTiming, but never lets a caption linger into the NEXT caption's
+   start — fixes consecutive sentences showing on top of each other. */
+function ef_setTimingCapped(layer, start, end, nextStart) {
+    var out = end + 0.3;
+    if (nextStart != null && nextStart < out) out = nextStart - 0.02;
+    if (out <= start) out = start + 0.1;
+    layer.outPoint = out;
+    layer.inPoint = start;
+}
+
 function ef_centerAnchor(layer, comp, cfg, atTime) {
     var r = layer.sourceRectAtTime(atTime, false);
     layer.property("Anchor Point").setValue([r.left + r.width / 2, r.top + r.height / 2]);
@@ -606,8 +616,62 @@ function ef_createWordPill(comp, textLayer, cfg, wordStart, wordEnd) {
     }
 }
 
+/* ── ONE text layer for the whole sentence; words reveal at their spoken times
+   via Source Text HOLD keyframes (no fragile text animators). Self-protecting:
+   the full sentence is set first, so even if keyframing or the entrance
+   expression fails, the caption still shows as one clean layer. This is the
+   requested "one sentence = one text layer" (TikTalk single-layer style). ── */
+function ef_buildSingleReveal(comp, g, cfg, nextStart) {
+    var allCaps = cfg.allCaps !== false;
+    var fullText = allCaps ? String(g.text).toUpperCase() : g.text;
+    var layer = comp.layers.addText(fullText);
+    layer.name = "Caption: " + String(fullText).substr(0, 24);
+    layer.comment = EF_ACTIVE_TAG;
+    ef_styleDoc(layer, cfg);
+
+    // Center on posX/posY and keep centered as the line grows.
+    layer.property("Position").setValue([
+        comp.width * (cfg.posX || 50) / 100,
+        comp.height * (cfg.posY || 85) / 100
+    ]);
+    try { layer.property("Anchor Point").expression = EF_ANCHOR_CENTER; } catch (eA) {}
+
+    // Word-by-word reveal via Source Text HOLD keyframes.
+    try {
+        var tp = layer.property("Source Text");
+        if (g.words.length && (g.words[0].start - g.start) > 0.02) {
+            var tdB = tp.value; tdB.text = ""; tp.setValueAtTime(g.start, tdB);
+        }
+        var acc = "";
+        for (var j = 0; j < g.words.length; j++) {
+            var wt = allCaps ? String(g.words[j].text).toUpperCase() : g.words[j].text;
+            acc = (j ? acc + " " : "") + wt;
+            var td = tp.value; td.text = acc;
+            tp.setValueAtTime(g.words[j].start, td);
+        }
+        var nk = tp.numKeys;
+        for (var k = 1; k <= nk; k++) {
+            tp.setInterpolationTypeAtKey(k, KeyframeInterpolationType.HOLD, KeyframeInterpolationType.HOLD);
+        }
+    } catch (eKey) { /* keep the static full sentence */ }
+
+    // Whole-layer entrance (fade + slight rise) using the proven expressions.
+    try {
+        var fadeDur = cfg.fadeDur || 0.3;
+        var easing = cfg.wordEasing || "linear";
+        layer.property("Opacity").expression = ef_buildFadeUpOp(fadeDur, easing);
+        if ((cfg.slideDist || 0) > 0) {
+            layer.property("Position").expression = ef_buildFadeUpPos(fadeDur, cfg.slideDist, easing);
+        }
+    } catch (eE) {}
+
+    ef_setTimingCapped(layer, g.start, g.end, nextStart);
+    if (cfg.dropShadow) ef_applyDropShadow(layer, cfg);
+    return 1;
+}
+
 /* ── Build a caption group — per-word layers with fade-up ── */
-function ef_buildGroup(comp, g, cfg) {
+function ef_buildGroup(comp, g, cfg, nextStart) {
     var placed = 0;
     var allCaps = cfg.allCaps !== false;
     var preset = cfg.preset || "fadeup_words";
@@ -621,6 +685,13 @@ function ef_buildGroup(comp, g, cfg) {
     // For "fadeup_words" preset: create one text layer PER WORD
     // Each word fades up from bottom at its spoken time
     if (preset === "fadeup_words") {
+        // No pills → ONE text layer for the whole sentence with a word-by-word
+        // reveal (the requested "one sentence = one layer"). Pill captions still
+        // use per-word layers below, because each pill wraps specific words.
+        var anyPillWord = false;
+        for (var apw = 0; apw < g.words.length; apw++) if (g.words[apw].pill) { anyPillWord = true; break; }
+        if (!anyPillWord) { return ef_buildSingleReveal(comp, g, cfg, nextStart); }
+
         // First pass: determine which words have pills
         var wordHasPill = [];
         for (var wi0 = 0; wi0 < g.words.length; wi0++) {
@@ -671,7 +742,7 @@ function ef_buildGroup(comp, g, cfg) {
 
                 ef_styleDoc(textLayer, cfg);
                 // Whole-group lifetime (not per-word) — prevents flicker.
-                ef_setTiming(textLayer, g.start, g.end);
+                ef_setTimingCapped(textLayer, g.start, g.end, nextStart);
 
                 if (cfg.dropShadow) {
                     ef_applyDropShadow(textLayer, cfg);
@@ -757,7 +828,7 @@ function ef_buildGroup(comp, g, cfg) {
                     stroke.property("ADBE Vector Stroke Width").setValue(cfg.pillStrokeWidth);
                 }
                 shape.property("Position").setValue([pcx, centerY]);
-                ef_setTiming(shape, g.start, g.end);
+                ef_setTimingCapped(shape, g.start, g.end, nextStart);
                 shape.property("Scale").expression = ef_buildPillScale(cfg.pillScaleDur || 0.3, cfg.pillEasing || "linear");
                 shape.property("Opacity").expression = ef_buildFadeUpOp(cfg.pillScaleDur || 0.3, cfg.pillEasing || "linear");
                 // Move behind the word layers
@@ -773,7 +844,7 @@ function ef_buildGroup(comp, g, cfg) {
         layer.comment = EF_ACTIVE_TAG;
 
         ef_styleDoc(layer, cfg);
-        ef_setTiming(layer, g.start, g.end);
+        ef_setTimingCapped(layer, g.start, g.end, nextStart);
         ef_centerAnchor(layer, comp, cfg, g.start + 0.05);
         ef_applyPreset(layer, cfg, g);
 
@@ -832,7 +903,8 @@ function ef_createCaptions(jsonStr) {
 
         for (var i = 0; i < groups.length; i++) {
             try {
-                created += ef_buildGroup(comp, groups[i], cfg);
+                var nextStart = (i + 1 < groups.length) ? groups[i + 1].start : null;
+                created += ef_buildGroup(comp, groups[i], cfg, nextStart);
             } catch (ge) {
                 failed++;
                 errors.push("group " + i + ": " + ge.toString());

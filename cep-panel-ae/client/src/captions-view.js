@@ -235,9 +235,12 @@ body { display: flex; flex-direction: column; }
 .cap-preview-section { padding: 10px 14px; background: var(--bg); flex-shrink: 0; }
 .cap-preview-frame {
   background: #000; border: 1px solid var(--border); border-radius: 8px;
-  overflow: hidden; aspect-ratio: 16/9; position: relative;
+  overflow: hidden; position: relative;
+  display: flex; align-items: center; justify-content: center; max-height: 240px;
 }
-.cap-preview-frame canvas { width: 100%; height: 100%; display: block; }
+/* Canvas keeps its intrinsic (comp) aspect ratio and scales down to fit —
+   no stretching, so 9:16 comps preview as 9:16 and 16:9 as 16:9. */
+.cap-preview-frame canvas { max-width: 100%; max-height: 240px; width: auto; height: auto; display: block; }
 .cap-preview-controls { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
 .cap-preview-controls input[type="range"] { flex: 1; accent-color: var(--primary); }
 .cap-preview-time { color: var(--text-2); font: 10px monospace; min-width: 70px; text-align: right; }
@@ -465,8 +468,18 @@ function _renderHeader() {
 function _renderPreview() {
   const t = S._previewTime || 0, dur = S.duration || 0;
   const dis = !S.words.length ? 'disabled' : '';
+  // Match the preview canvas to the comp's aspect ratio (9:16 stays 9:16),
+  // so what you see here matches what lands in the comp. Long edge = 480px
+  // internal resolution for crisp text; the frame is bounded by max-height.
+  const cw = (S.compInfo && S.compInfo.width) || 1920;
+  const ch = (S.compInfo && S.compInfo.height) || 1080;
+  const ar = cw / ch;
+  const rw = ar >= 1 ? 480 : Math.round(480 * ar);
+  const rh = ar >= 1 ? Math.round(480 / ar) : 480;
   return `<div class="cap-preview-section">
-    <div class="cap-preview-frame"><canvas id="cap-preview-canvas" width="480" height="270"></canvas></div>
+    <div class="cap-preview-frame">
+      <canvas id="cap-preview-canvas" width="${rw}" height="${rh}"></canvas>
+    </div>
     <div class="cap-preview-controls">
       <button id="cap-preview-play" class="cap-play-btn" ${dis}>${S._previewPlaying ? '⏸' : '▶'}</button>
       <input type="range" id="cap-preview-seek" class="cap-range" min="0" max="${dur}" step="0.01" value="${t}" ${dis} />
