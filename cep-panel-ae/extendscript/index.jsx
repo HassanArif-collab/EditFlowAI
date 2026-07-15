@@ -407,7 +407,7 @@ function ef_groupWords(words, cfg) {
     var maxWords = Math.max(1, cfg.maxWordsPerSegment || 4);
     var maxChars = cfg.maxCharsPerSegment || 30;
     var maxDur = cfg.maxDurationPerSegment || 3;
-    var maxGap = (cfg.maxGap != null) ? cfg.maxGap : 0.4;   // tighter default = more sentence breaks
+    var maxGap = (cfg.maxGap != null) ? cfg.maxGap : 0.5;   // balanced: breaks real pauses, avoids false per-word splits
 
     var groups = [], cur = [];
     for (var w = 0; w < words.length; w++) {
