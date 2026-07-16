@@ -70,9 +70,10 @@ const S = {
   dropShadow: true, shadowColor: [0, 0, 0], shadowOpacity: 50, shadowDistance: 3, shadowBlur: 5,
   pillColor: [0.04, 0.1, 0.18], pillOpacity: 85, pillStrokeColor: [0.36, 0.55, 0.94], pillStrokeWidth: 2, pillRadius: 0.5,
   highlightTextColor: [1, 1, 0], highlightBoxColor: [0.04, 0.1, 0.18], highlightWords: [],
-  posX: 50, posY: 80, maxWordsPerSegment: 4, maxCharsPerSegment: 30, maxDurationPerSegment: 3, allCaps: false,
+  posX: 50, posY: 80, maxWordsPerSegment: 4, maxCharsPerSegment: 30, maxDurationPerSegment: 3, maxLinesPerSegment: 2, allCaps: false,
   preset: 'fadeup_words', animIntensity: 1.0, language: 'auto',
   _previewTime: 0, _previewPlaying: false, _canvas: null, _ctx: null, _raf: null,
+  previewHeight: 240, _resizing: false, _resizeStartY: 0, _resizeStartH: 0,
   fonts: [], _fontsLoaded: false, _showPaste: false, _pasteText: '',
   // New fields for tabbed UI + per-word pill animation
   activeTab: 0,
@@ -90,8 +91,9 @@ const SETTINGS_KEYS = [
   'dropShadow', 'shadowColor', 'shadowOpacity', 'shadowDistance', 'shadowBlur',
   'pillColor', 'pillOpacity', 'pillStrokeColor', 'pillStrokeWidth', 'pillRadius',
   'highlightTextColor', 'posX', 'posY', 'maxWordsPerSegment', 'maxCharsPerSegment',
-  'maxDurationPerSegment', 'allCaps', 'preset', 'animIntensity', 'language',
+  'maxDurationPerSegment', 'maxLinesPerSegment', 'allCaps', 'preset', 'animIntensity', 'language',
   'wordEasing', 'fadeDur', 'slideDist', 'pillEasing', 'pillScaleDur',
+  'previewHeight',
 ];
 const BUILTIN_PRESETS = {
   'Clean Fade-Up': { preset: 'fadeup_words', wordEasing: 'ease_out', fadeDur: 0.35, slideDist: 40, allCaps: false, fillColor: [1, 1, 1], strokeWidth: 0, dropShadow: true, fontSize: 80 },
@@ -133,6 +135,7 @@ function openCaptions() {
   _ensureStyles();
   _ensureContainer();
   _render();
+  _setupResizeDrag();
   _refreshModelStatus();
   _refreshCompInfo();
   _loadFonts();
@@ -147,6 +150,27 @@ function openCaptions() {
   }, 30000); // 30s — less flickering, skip during busy
 }
 
+/* ── Resize drag — set up once, works across re-renders ── */
+let _resizeDragSetup = false;
+function _setupResizeDrag() {
+  if (_resizeDragSetup) return;
+  _resizeDragSetup = true;
+  document.addEventListener('mousemove', (e) => {
+    if (!S._resizing) return;
+    const delta = e.clientY - S._resizeStartY;
+    S.previewHeight = Math.max(120, Math.min(800, S._resizeStartH + delta));
+    const frame = document.querySelector('.cap-preview-frame');
+    if (frame) frame.style.maxHeight = S.previewHeight + 'px';
+  });
+  document.addEventListener('mouseup', () => {
+    if (!S._resizing) return;
+    S._resizing = false;
+    const sec = document.querySelector('.cap-preview-section');
+    if (sec) sec.classList.remove('dragging-cap');
+    _persistSoon();
+  });
+}
+
 function closeCaptions() {
   const v = $('#captions-view');
   if (v) v.classList.add('hidden');
@@ -154,258 +178,15 @@ function closeCaptions() {
   if (_refreshInterval) { clearInterval(_refreshInterval); _refreshInterval = null; }
 }
 
-/* ── Styles ── */
+/* ── Styles ─ */
 function _ensureStyles() {
   if (!document.getElementById('cap-style-link')) {
     const link = document.createElement('link');
     link.id = 'cap-style-link'; link.rel = 'stylesheet';
-    link.href = 'styles/captions.css?v=aecap8';
+    link.href = 'styles/captions.css?v=aecap9';
     document.head.appendChild(link);
   }
-  if (!document.getElementById('cap-extra-styles')) {
-    const style = document.createElement('style');
-    style.id = 'cap-extra-styles'; style.textContent = _EXTRA_CSS;
-    document.head.appendChild(style);
-  }
 }
-
-const _EXTRA_CSS = `
-/* Panel shell height chain — makes .cap-content the ONLY scroll region.
-   The old layout left #app-main unsized, so overflowing content was simply
-   clipped with no scrollbar. The redundant loader header + hero are hidden
-   so the in-view .cap-header is the single header. */
-html, body { height: 100%; overflow: hidden; margin: 0; }
-body { display: flex; flex-direction: column; }
-#app-header, #hero { display: none; }
-#app-main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-
-#captions-view, .captions-view {
-  --bg: #121826;
-  --card: #1A202C;
-  --primary: #5E5CE6;
-  --secondary: #3B82F6;
-  --success: #10B981;
-  --error: #EF4444;
-  --text: #FFFFFF;
-  --text-2: #9CA3AF;
-  --text-3: #6B7280;
-  --border: #2D3748;
-  --radius-btn: 8px;
-  --radius-card: 12px;
-
-  display: flex; flex-direction: column;
-  width: 100%; flex: 1; min-height: 0;
-  background: var(--bg); color: var(--text);
-  font-family: -apple-system, "Segoe UI", Inter, Roboto, sans-serif;
-  font-size: 13px; overflow: hidden;
-}
-
-/* ── Header (fixed) ── */
-.cap-header {
-  display: flex; align-items: center; gap: 8px; padding: 10px 14px;
-  background: var(--card); border-bottom: 1px solid var(--border); flex-shrink: 0;
-}
-.cap-header-logo { font-weight: 700; font-size: 15px; }
-.cap-header-version { font: 10px monospace; color: var(--text-3); }
-.cap-header-spacer { flex: 1; }
-.cap-whisper-status {
-  display: flex; align-items: center; gap: 5px; padding: 3px 10px;
-  border-radius: 20px; font-size: 10px;
-  background: rgba(16,185,129,.1); border: 1px solid rgba(16,185,129,.3);
-}
-.cap-whisper-status.is-offline { background: rgba(239,68,68,.1); border-color: rgba(239,68,68,.3); }
-.cap-whisper-status.is-missing { background: rgba(234,179,8,.1); border-color: rgba(234,179,8,.3); }
-.cap-whisper-dot {
-  width: 6px; height: 6px; border-radius: 50%; background: var(--success);
-  box-shadow: 0 0 6px var(--success);
-}
-.cap-whisper-status.is-offline .cap-whisper-dot { background: var(--error); box-shadow: 0 0 6px var(--error); }
-.cap-whisper-status.is-missing .cap-whisper-dot { background: #facc15; box-shadow: 0 0 6px #facc15; }
-.cap-whisper-text { color: var(--success); font-weight: 600; }
-.cap-whisper-status.is-offline .cap-whisper-text { color: var(--error); }
-.cap-whisper-status.is-missing .cap-whisper-text { color: #facc15; }
-.cap-icon-btn {
-  width: 28px; height: 28px; border-radius: 50%; background: var(--card);
-  border: 1px solid var(--border); color: var(--text-2); cursor: pointer;
-  display: flex; align-items: center; justify-content: center; font-size: 14px;
-  transition: all .15s;
-}
-.cap-icon-btn:hover { background: var(--border); color: var(--text); }
-
-/* ── Preview (fixed) ── */
-.cap-preview-section { padding: 10px 14px; background: var(--bg); flex-shrink: 0; }
-.cap-preview-frame {
-  background: #000; border: 1px solid var(--border); border-radius: 8px;
-  overflow: hidden; position: relative;
-  display: flex; align-items: center; justify-content: center; max-height: 240px;
-}
-/* Canvas keeps its intrinsic (comp) aspect ratio and scales down to fit —
-   no stretching, so 9:16 comps preview as 9:16 and 16:9 as 16:9. */
-.cap-preview-frame canvas { max-width: 100%; max-height: 240px; width: auto; height: auto; display: block; }
-.cap-preview-controls { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
-.cap-preview-controls input[type="range"] { flex: 1; accent-color: var(--primary); }
-.cap-preview-time { color: var(--text-2); font: 10px monospace; min-width: 70px; text-align: right; }
-.cap-play-btn {
-  width: 28px; height: 28px; border-radius: 50%; background: var(--primary);
-  border: none; color: white; cursor: pointer; display: flex; align-items: center;
-  justify-content: center; font-size: 12px; flex-shrink: 0;
-}
-.cap-play-btn:disabled { opacity: .4; cursor: not-allowed; }
-
-/* ── Tab Bar (fixed) ── */
-.cap-tab-bar {
-  display: flex; background: var(--card); border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border); flex-shrink: 0;
-}
-.cap-tab {
-  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px;
-  padding: 8px 4px; cursor: pointer; transition: all .15s; position: relative;
-  background: transparent; border: none; color: inherit; font: inherit;
-}
-.cap-tab-icon { width: 22px; height: 22px; opacity: .5; transition: all .15s; }
-.cap-tab-label { font-size: 9px; color: var(--text-3); transition: all .15s; }
-.cap-tab:hover .cap-tab-icon { opacity: .7; }
-.cap-tab:hover .cap-tab-label { color: var(--text-2); }
-.cap-tab.active .cap-tab-icon { opacity: 1; filter: brightness(0) invert(1) sepia(1) saturate(5) hue-rotate(240deg); }
-.cap-tab.active .cap-tab-label { color: var(--primary); font-weight: 600; }
-.cap-tab.active::after {
-  content: ''; position: absolute; bottom: 0; left: 20%; right: 20%; height: 2px;
-  background: var(--primary); border-radius: 2px 2px 0 0;
-}
-.cap-tab-num {
-  position: absolute; top: 4px; right: 8px; width: 14px; height: 14px;
-  border-radius: 50%; background: var(--border); color: var(--text-3);
-  font-size: 8px; display: flex; align-items: center; justify-content: center; font-weight: 600;
-}
-.cap-tab.active .cap-tab-num { background: var(--primary); color: white; }
-.cap-icon-svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-
-/* ── Content Area (scrolls) ── */
-.cap-content { flex: 1; overflow-y: auto; padding: 14px; min-height: 0; }
-.cap-content::-webkit-scrollbar { width: 6px; }
-.cap-content::-webkit-scrollbar-track { background: transparent; }
-.cap-content::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-
-/* ── Cards ── */
-.cap-card {
-  background: var(--card); border: 1px solid var(--border);
-  border-radius: var(--radius-card); padding: 14px; margin-bottom: 12px;
-}
-.cap-card-title { font-size: 14px; font-weight: 600; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
-.cap-card-subtitle { font-size: 11px; color: var(--text-2); margin-bottom: 12px; line-height: 1.4; }
-
-/* ── Buttons ── */
-.cap-btn {
-  padding: 10px 16px; border-radius: var(--radius-btn); cursor: pointer;
-  font: inherit; font-size: 12px; font-weight: 500; border: none;
-  transition: all .15s; display: inline-flex; align-items: center; gap: 6px;
-  justify-content: center;
-}
-.cap-btn:hover:not(:disabled) { opacity: .9; transform: translateY(-1px); }
-.cap-btn:disabled { opacity: .4; cursor: not-allowed; }
-.cap-btn-primary { background: var(--primary); color: white; }
-.cap-btn-secondary { background: var(--border); color: white; }
-.cap-btn-tertiary { background: transparent; border: 1px solid var(--secondary); color: var(--secondary); }
-.cap-btn-danger { background: transparent; border: 1px solid var(--error); color: var(--error); }
-.cap-btn-full { width: 100%; }
-.cap-btn-group { display: flex; gap: 8px; flex-wrap: wrap; }
-.cap-btn-group .cap-btn { flex: 1; min-width: 0; }
-.cap-btn-tiny { padding: 4px 10px; font-size: 10px; }
-
-/* ── Form Controls ── */
-.cap-row { display: flex; align-items: center; gap: 10px; margin: 10px 0; }
-.cap-label { min-width: 80px; color: var(--text-2); font-size: 11px; }
-.cap-select, .cap-input {
-  background: var(--bg); color: var(--text); border: 1px solid var(--border);
-  border-radius: 6px; padding: 6px 10px; flex: 1; font: inherit; font-size: 11px;
-  min-width: 0;
-}
-.cap-select:focus, .cap-input:focus { outline: none; border-color: var(--primary); }
-.cap-range { flex: 1; accent-color: var(--primary); min-width: 0; }
-.cap-range-val { color: var(--text-2); font: 10px monospace; min-width: 34px; text-align: right; }
-.cap-color-input { width: 32px; height: 26px; border: 1px solid var(--border); border-radius: 4px; cursor: pointer; background: transparent; padding: 0; flex-shrink: 0; }
-.cap-checkbox { accent-color: var(--primary); width: 16px; height: 16px; cursor: pointer; }
-
-/* ── Word List ── */
-.cap-word-list { max-height: 240px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
-.cap-word-list::-webkit-scrollbar { width: 4px; }
-.cap-word-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
-.cap-word-row { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-bottom: 1px solid rgba(255,255,255,.04); }
-.cap-word-row:last-child { border-bottom: none; }
-.cap-word-row.pill-active { background: rgba(94,92,230,.05); }
-.cap-group-divider { padding: 4px 8px; font: 600 9px monospace; color: var(--text-3); background: rgba(255,255,255,.03); border-bottom: 1px solid rgba(255,255,255,.06); display: flex; justify-content: space-between; cursor: pointer; position: sticky; top: 0; }
-.cap-group-divider:hover { color: var(--secondary); }
-.cap-word-time { color: var(--text-3); font: 9px monospace; min-width: 32px; flex-shrink: 0; }
-.cap-word-input { flex: 1; background: transparent; border: 0; color: var(--text); font: inherit; font-size: 11px; padding: 2px; min-width: 0; }
-.cap-word-input:focus { outline: none; background: rgba(94,92,230,.1); border-radius: 3px; }
-.cap-word-pill-btn { background: transparent; border: 1px solid transparent; cursor: pointer; font-size: 11px; padding: 2px 6px; border-radius: 3px; opacity: .4; transition: all .15s; flex-shrink: 0; }
-.cap-word-pill-btn.active { opacity: 1; background: rgba(94,92,230,.2); border-color: rgba(94,92,230,.4); }
-
-/* ── Status ── */
-.cap-status-ok { color: var(--success); font-size: 11px; }
-.cap-status-err { color: var(--error); font-size: 11px; word-break: break-word; }
-.cap-status-progress { color: var(--text-2); font-size: 11px; word-break: break-word; }
-.cap-status-badge {
-  display: inline-block; padding: 3px 10px; border-radius: 20px;
-  font-size: 10px; font-weight: 600;
-}
-.cap-status-badge-ok { background: rgba(16,185,129,.15); color: var(--success); border: 1px solid rgba(16,185,129,.3); }
-.cap-status-badge-err { background: rgba(239,68,68,.15); color: var(--error); border: 1px solid rgba(239,68,68,.3); }
-.cap-status-badge-warn { background: rgba(234,179,8,.15); color: #facc15; border: 1px solid rgba(234,179,8,.3); }
-.cap-progress-bar { position: relative; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; height: 18px; margin: 8px 0; overflow: hidden; }
-.cap-progress-fill { position: absolute; left: 0; top: 0; bottom: 0; background: linear-gradient(90deg, var(--primary), var(--secondary)); transition: width .3s ease; }
-.cap-progress-text { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #fff; font: 600 10px monospace; text-shadow: 0 1px 2px rgba(0,0,0,.6); }
-
-/* ── Animate Tab layout ── */
-.cap-animate-layout { display: flex; gap: 12px; }
-.cap-animate-controls { flex: 1.2; min-width: 0; }
-.cap-animate-preview {
-  flex: 1; background: var(--bg); border: 1px solid var(--border);
-  border-radius: 8px; padding: 10px; display: flex; flex-direction: column;
-  align-items: center; justify-content: center; gap: 8px; min-height: 100px;
-}
-.cap-animate-preview-text { font-size: 18px; font-weight: 700; color: var(--primary); }
-.cap-animate-preview-btn { font-size: 9px; color: var(--secondary); cursor: pointer; text-decoration: underline; background: transparent; border: 0; padding: 0; }
-
-/* ── Subgroup ── */
-.cap-subgroup { margin-top: 10px; padding: 10px; background: rgba(0,0,0,.2); border-radius: 8px; border: 1px solid rgba(255,255,255,.04); }
-.cap-subgroup-title { font-size: 9px; color: var(--text-3); margin-bottom: 6px; text-transform: uppercase; letter-spacing: .05em; font-weight: 600; }
-
-/* ── Result ── */
-.cap-result { margin-top: 10px; padding: 10px; background: rgba(255,255,255,.03); border-radius: 8px; font-size: 11px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.cap-result-summary { margin-top: 12px; padding: 10px; background: var(--bg); border-radius: 6px; font-size: 10px; color: var(--text-3); line-height: 1.5; }
-.cap-result-summary strong { color: var(--text-2); }
-
-/* ── Comp info bar (Transcribe tab) ── */
-.cap-comp-bar {
-  background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
-  padding: 10px; margin-bottom: 12px; font-size: 11px; color: var(--text-2);
-  display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
-}
-.cap-comp-bar strong { color: var(--text); font-weight: 600; }
-.cap-comp-bar .cap-audio-yes { color: var(--success); }
-.cap-comp-bar .cap-audio-no { color: var(--error); }
-
-/* ── Paste area ── */
-.cap-paste-area { margin-top: 8px; }
-.cap-paste-area textarea {
-  width: 100%; min-height: 100px; background: var(--bg); color: var(--text);
-  border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px;
-  font: 11px monospace; resize: vertical;
-}
-.cap-paste-area textarea:focus { outline: none; border-color: var(--primary); }
-
-/* ── Tab content visibility ── */
-.cap-tab-content { display: none; }
-.cap-tab-content.active { display: block; }
-
-/* ── Misc ── */
-.cap-hint { color: var(--text-2); font-size: 11px; line-height: 1.5; margin: 4px 0 8px; }
-.cap-error-list { margin: 4px 0 0; padding-left: 18px; color: var(--error); font-size: 11px; }
-.cap-drawer { width: 100%; margin-top: 4px; }
-.cap-drawer summary { cursor: pointer; color: var(--text-2); font-size: 11px; }
-`;
-
 function _ensureContainer() {
   let v = $('#captions-view');
   if (!v) {
@@ -480,7 +261,7 @@ function _renderPreview() {
   const rw = ar >= 1 ? 480 : Math.round(480 * ar);
   const rh = ar >= 1 ? Math.round(480 / ar) : 480;
   return `<div class="cap-preview-section">
-    <div class="cap-preview-frame">
+    <div class="cap-preview-frame" style="max-height:${S.previewHeight}px; aspect-ratio:${cw}/${ch};">
       <canvas id="cap-preview-canvas" width="${rw}" height="${rh}"></canvas>
     </div>
     <div class="cap-preview-controls">
@@ -488,6 +269,7 @@ function _renderPreview() {
       <input type="range" id="cap-preview-seek" class="cap-range" min="0" max="${dur}" step="0.01" value="${t}" ${dis} />
       <span class="cap-preview-time" id="cap-preview-time">${t.toFixed(1)}s / ${dur.toFixed(1)}s</span>
     </div>
+    <div class="cap-preview-resize-bar" title="Drag to resize preview"><div></div></div>
   </div>`;
 }
 
@@ -589,11 +371,18 @@ function _renderTabContent() {
       </div>
       <div class="cap-row">
         <label class="cap-label">Max Chars</label>
-        <input type="number" class="cap-input" id="cap-max-chars" min="10" max="80" value="${S.maxCharsPerSegment}" style="flex:0;width:60px" />
+        <input type="number" class="cap-input cap-input-num" id="cap-max-chars" min="10" max="80" value="${S.maxCharsPerSegment}" style="width:60px" />
+        <span class="cap-range-val" id="cap-max-chars-val">${S.maxCharsPerSegment}</span>
       </div>
       <div class="cap-row">
         <label class="cap-label">Max Dur (s)</label>
-        <input type="number" class="cap-input" id="cap-max-dur" min="1" max="10" step="0.5" value="${S.maxDurationPerSegment}" style="flex:0;width:60px" />
+        <input type="number" class="cap-input cap-input-num" id="cap-max-dur" min="1" max="10" step="0.5" value="${S.maxDurationPerSegment}" style="width:60px" />
+        <span class="cap-range-val" id="cap-max-dur-val">${S.maxDurationPerSegment}</span>
+      </div>
+      <div class="cap-row">
+        <label class="cap-label">Max Lines</label>
+        <input type="range" class="cap-range" id="cap-max-lines" min="1" max="5" value="${S.maxLinesPerSegment}" />
+        <span class="cap-range-val" id="cap-max-lines-val">${S.maxLinesPerSegment}</span>
       </div>
     </div>
   </div>`;
@@ -900,6 +689,21 @@ function _wirePreview(v) {
     _updatePreview();
     _updatePreviewTimeLabel();
   };
+  // Resize drag — start from any point inside the preview section
+  const sec = v.querySelector('.cap-preview-section');
+  if (sec) {
+    sec.addEventListener('mousedown', (e) => {
+      // Only start resize from bottom ~40px of the section
+      const rect = sec.getBoundingClientRect();
+      const fromBottom = rect.bottom - e.clientY;
+      if (fromBottom > 40) return; // too far up, don't resize
+      e.preventDefault();
+      S._resizing = true;
+      S._resizeStartY = e.clientY;
+      S._resizeStartH = S.previewHeight;
+      sec.classList.add('dragging-cap');
+    });
+  }
 }
 
 function _wireTabTranscribe(v) {
@@ -959,14 +763,24 @@ function _wireTabContent(v) {
     S.maxWordsPerSegment = parseInt(val, 10);
     return String(S.maxWordsPerSegment);
   });
+  _wireRange(v, '#cap-max-lines', (val) => {
+    S.maxLinesPerSegment = parseInt(val, 10);
+    return String(S.maxLinesPerSegment);
+  });
   const mc = v.querySelector('#cap-max-chars');
-  if (mc) mc.onchange = (e) => {
-    S.maxCharsPerSegment = Math.max(10, Math.min(80, parseInt(e.target.value, 10) || 30));
+  if (mc) mc.oninput = (e) => {
+    const v = Math.max(10, Math.min(80, parseInt(e.target.value, 10) || 10));
+    S.maxCharsPerSegment = v;
+    const lbl = document.getElementById('cap-max-chars-val');
+    if (lbl) lbl.textContent = v;
     _updatePreview();
   };
   const md = v.querySelector('#cap-max-dur');
-  if (md) md.onchange = (e) => {
-    S.maxDurationPerSegment = Math.max(1, Math.min(10, parseFloat(e.target.value) || 3));
+  if (md) md.oninput = (e) => {
+    const v = Math.max(1, Math.min(10, parseFloat(e.target.value) || 1));
+    S.maxDurationPerSegment = v;
+    const lbl = document.getElementById('cap-max-dur-val');
+    if (lbl) lbl.textContent = v;
     _updatePreview();
   };
 }
@@ -1507,6 +1321,7 @@ function _buildConfig(words) {
     highlightWords: S.highlightWords.slice(),
     posX: S.posX, posY: S.posY, maxWordsPerSegment: S.maxWordsPerSegment,
     maxCharsPerSegment: S.maxCharsPerSegment, maxDurationPerSegment: S.maxDurationPerSegment,
+    maxLinesPerSegment: S.maxLinesPerSegment,
     allCaps: S.allCaps, preset: S.preset, animIntensity: S.animIntensity,
     wordEasing: S.wordEasing, fadeDur: S.fadeDur, slideDist: S.slideDist,
     pillEasing: S.pillEasing, pillScaleDur: S.pillScaleDur,
@@ -1557,15 +1372,10 @@ function _updatePreviewTimeLabel() {
 function _updatePreview() {
   if (!S._ctx || !S._canvas) return;
   const ctx = S._ctx, w = S._canvas.width, h = S._canvas.height;
-  // Background — transparent checkerboard
+  // Background — dark semi-transparent video-player-style overlay
   ctx.clearRect(0, 0, w, h);
-  const sq = 8;
-  for (let gy = 0; gy < h; gy += sq) {
-    for (let gx = 0; gx < w; gx += sq) {
-      ctx.fillStyle = ((gx / sq + gy / sq) % 2 === 0) ? '#1a1a2e' : '#16162a';
-      ctx.fillRect(gx, gy, sq, sq);
-    }
-  }
+  ctx.fillStyle = 'rgba(18, 24, 40, 0.88)';
+  ctx.fillRect(0, 0, w, h);
   // Subtle grid
   ctx.strokeStyle = 'rgba(255,255,255,.025)'; ctx.lineWidth = 1;
   for (let i = 1; i < 4; i++) {
