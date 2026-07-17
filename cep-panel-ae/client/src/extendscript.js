@@ -121,4 +121,21 @@ function isExtendScriptAvailable() {
   return _esLoaded && _csInterface !== null;
 }
 
-export { initExtendScript, callExtendScript, isExtendScriptAvailable };
+/**
+ * Capture the current After Effects playhead frame to a PNG and return
+ * its path/time/comp info. Returns the parsed JSON result from ef_getCurrentFrame().
+ */
+async function getCurrentFrame() {
+  return callExtendScript('ef_getCurrentFrame');
+}
+
+/**
+ * Read the ExtendScript debug log written by ef_getCurrentFrame (numbered
+ * step trace). Used by the 📋 Log button to show exactly where a capture
+ * failed. Returns { log, path } or { error }.
+ */
+async function readDebugLog() {
+  return callExtendScript('ef_readDebugLog');
+}
+
+export { initExtendScript, callExtendScript, isExtendScriptAvailable, getCurrentFrame, readDebugLog };

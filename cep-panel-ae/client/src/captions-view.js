@@ -80,6 +80,8 @@ const S = {
   wordEasing: 'ease_in_out', fadeDur: 0.5, slideDist: 50,
   pillEasing: 'ease_in_out', pillScaleDur: 0.5,
   _presets: {}, _activePreset: '',
+  // Captured AE playhead frame (shown as preview background until hidden)
+  compFrameUrl: null, compFrameTime: null, compFrameCompName: null,
 };
 let _refreshInterval = null;
 let _persistTimer = null;
@@ -183,7 +185,7 @@ function _ensureStyles() {
   if (!document.getElementById('cap-style-link')) {
     const link = document.createElement('link');
     link.id = 'cap-style-link'; link.rel = 'stylesheet';
-    link.href = 'styles/captions.css?v=aecap9';
+    link.href = 'styles/captions.css?v=aecap10';
     document.head.appendChild(link);
   }
 }
@@ -260,8 +262,15 @@ function _renderPreview() {
   const ar = cw / ch;
   const rw = ar >= 1 ? 480 : Math.round(480 * ar);
   const rh = ar >= 1 ? Math.round(480 / ar) : 480;
+  const frameOverlay = S.compFrameUrl ? `
+    <div class="cap-frame-overlay">
+      <img src="${S.compFrameUrl}" alt="AE frame at ${(S.compFrameTime || 0).toFixed(2)}s" />
+      <div class="cap-frame-badge">AE: ${(S.compFrameTime || 0).toFixed(2)}s · ${_esc(S.compFrameCompName || '')}</div>
+      <button id="cap-frame-hide" class="cap-icon-btn cap-frame-hide" title="Hide frame">✕</button>
+    </div>` : '';
   return `<div class="cap-preview-section">
-    <div class="cap-preview-frame" style="max-height:${S.previewHeight}px; aspect-ratio:${cw}/${ch};">
+    <div class="cap-preview-frame${S.compFrameUrl ? ' cap-has-frame' : ''}" style="max-height:${S.previewHeight}px; aspect-ratio:${cw}/${ch};">
+      ${frameOverlay}
       <canvas id="cap-preview-canvas" width="${rw}" height="${rh}"></canvas>
     </div>
     <div class="cap-preview-controls">
@@ -304,6 +313,8 @@ function _renderTabTranscribe() {
       <button id="cap-transcribe-btn" class="cap-btn cap-btn-primary" ${td ? 'disabled' : ''}>${S.busy ? 'Working…' : '🎙️ From Comp'}</button>
       <label class="cap-btn cap-btn-secondary" style="cursor:pointer" title="Upload WAV/MP3/M4A">📁 Upload<input type="file" id="cap-audio-upload" accept=".wav,.mp3,.m4a,audio/*" style="display:none" ${S.busy ? 'disabled' : ''} /></label>
       <button id="cap-paste-btn" class="cap-btn cap-btn-secondary" ${S.busy ? 'disabled' : ''}>📋 Paste</button>
+      <button id="cap-frame-btn" class="cap-btn cap-btn-secondary" ${S.busy ? 'disabled' : ''} title="Capture current AE frame (F)">🖼 Frame</button>
+      <button id="cap-debug-log-btn" class="cap-btn cap-btn-secondary" ${S.busy ? 'disabled' : ''} title="Show the ExtendScript debug log (where a capture failed)">📋 Log</button>
     </div>
     <div class="cap-row">
       <label class="cap-label">Language</label>
@@ -691,6 +702,11 @@ function _wirePreview(v) {
   };
   // Resize drag — start from any point inside the preview section
   const sec = v.querySelector('.cap-preview-section');
+  const hideFrame = v.querySelector('#cap-frame-hide');
+  if (hideFrame) hideFrame.onclick = () => {
+    S.compFrameUrl = null; S.compFrameTime = null; S.compFrameCompName = null;
+    _render();
+  };
   if (sec) {
     sec.addEventListener('mousedown', (e) => {
       // Only start resize from bottom ~40px of the section
@@ -719,6 +735,10 @@ function _wireTabTranscribe(v) {
   const pc = v.querySelector('#cap-paste-cancel');
   if (pc) pc.onclick = () => { S._showPaste = false; S._pasteText = ''; _render(); };
   const pp = v.querySelector('#cap-paste-parse'); if (pp) pp.onclick = _onPasteParse;
+  const frameBtn = v.querySelector('#cap-frame-btn');
+  if (frameBtn) frameBtn.onclick = _onCaptureFrame;
+  const logBtn = v.querySelector('#cap-debug-log-btn');
+  if (logBtn) logBtn.onclick = _onReadDebugLog;
   const pt = v.querySelector('#cap-paste-text'); if (pt) pt.oninput = (e) => { S._pasteText = e.target.value; };
   const ls = v.querySelector('#cap-language'); if (ls) ls.onchange = (e) => { S.language = e.target.value; };
 }
@@ -1083,6 +1103,66 @@ async function _onTranscribe() {
   } finally { S.busy = false; _render(); }
 }
 
+async function _onCaptureFrame() {
+  if (S.busy) return;
+  S.busy = true;
+  S.error = null;
+  S.status = 'Capturing frame from After Effects…';
+  _render();
+  try {
+    const { getCurrentFrame } = await import('./extendscript.js');
+    const resp = await getCurrentFrame();
+    if (resp && resp.error) throw new Error(resp.error);
+    if (!resp || !resp.path) throw new Error('No frame returned');
+    // Build a proper file:// URL. A bare 'file://' + path fails on Windows:
+    // drive letters need a leading slash (file:///C:/...) AND spaces/special
+    // chars must be %-encoded, otherwise the <img> silently fails to load and
+    // the user sees the dark panel background bleeding through (looked like a
+    // "black overlay"). encodeURI keeps ':/' and '/' intact, encodes only spaces.
+    S.compFrameUrl = _filePathToUrl(resp.path);
+    S.compFrameTime = resp.time;
+    S.compFrameCompName = resp.compName;
+    S.status = `Captured frame at ${Number(resp.time).toFixed(2)}s (${resp.compName})`;
+  } catch (e) {
+    S.error = 'Frame capture failed: ' + (e.message || e);
+    S.compFrameUrl = null;
+    S.compFrameTime = null;
+    S.compFrameCompName = null;
+  } finally {
+    S.busy = false;
+    _render();
+  }
+}
+
+async function _onReadDebugLog() {
+  S.error = null;
+  S.status = 'Reading debug log…';
+  _render();
+  try {
+    const { readDebugLog } = await import('./extendscript.js');
+    const resp = await readDebugLog();
+    if (resp && resp.error) {
+      S.error = resp.error;
+      S.status = null;
+      _render();
+      return;
+    }
+    // Show the numbered step trace in the same status area as errors, and
+    // also log to the console + copy to clipboard for easy sharing.
+    const logText = (resp && resp.log) || '(empty log)';
+    const logPath = (resp && resp.path) || '';
+    S.status = null;
+    S.error = '📋 Frame debug log (' + logPath + '):\n\n' + logText +
+              '\n\n(copied to clipboard; last line = where it stopped)';
+    try { await navigator.clipboard.writeText(logText + '\n\n[' + logPath + ']'); } catch (_) {}
+  } catch (e) {
+    S.error = 'Could not read debug log: ' + (e.message || e);
+    S.status = null;
+  } finally {
+    _render();
+  }
+}
+
 async function _onAudioUpload(event) {
   const file = event.target.files && event.target.files[0];
   if (!file || S.busy) return;
@@ -1372,15 +1452,19 @@ function _updatePreviewTimeLabel() {
 function _updatePreview() {
   if (!S._ctx || !S._canvas) return;
   const ctx = S._ctx, w = S._canvas.width, h = S._canvas.height;
-  // Background — dark semi-transparent video-player-style overlay
   ctx.clearRect(0, 0, w, h);
-  ctx.fillStyle = 'rgba(18, 24, 40, 0.88)';
-  ctx.fillRect(0, 0, w, h);
-  // Subtle grid
-  ctx.strokeStyle = 'rgba(255,255,255,.025)'; ctx.lineWidth = 1;
-  for (let i = 1; i < 4; i++) {
-    ctx.beginPath(); ctx.moveTo((w * i) / 4, 0); ctx.lineTo((w * i) / 4, h); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(0, (h * i) / 4); ctx.lineTo(w, (h * i) / 4); ctx.stroke();
+  // When a captured AE frame is shown, keep the canvas transparent so the
+  // frame shows clearly behind the live caption text (no dark overlay).
+  if (!S.compFrameUrl) {
+    // Background — dark semi-transparent video-player-style overlay
+    ctx.fillStyle = 'rgba(18, 24, 40, 0.88)';
+    ctx.fillRect(0, 0, w, h);
+    // Subtle grid
+    ctx.strokeStyle = 'rgba(255,255,255,.025)'; ctx.lineWidth = 1;
+    for (let i = 1; i < 4; i++) {
+      ctx.beginPath(); ctx.moveTo((w * i) / 4, 0); ctx.lineTo((w * i) / 4, h); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, (h * i) / 4); ctx.lineTo(w, (h * i) / 4); ctx.stroke();
+    }
   }
   if (!S.words.length) {
     ctx.fillStyle = '#5a5a6a'; ctx.font = '11px sans-serif';
@@ -1598,6 +1682,19 @@ function _defaultMixdownPath() {
     }
   } catch (_) { /* fall through */ }
   return '/tmp/editflow_mixdown_' + Date.now() + '.wav';
+}
+
+/* Convert an OS file path into a loadable file:// URL.
+   CEP/Chromium rejects un-encoded local URLs (spaces, missing 3rd slash on
+   Windows drives), which makes the captured frame <img> fail to render and
+   the dark panel shows through — the "black overlay" symptom. */
+function _filePathToUrl(p) {
+  let s = String(p || '').replace(/\\/g, '/');
+  // Encode each path segment so spaces/special chars don't break the URL,
+  // but preserve the scheme + drive colon ('file:///C:').
+  s = s.split('/').map((seg, i) => (i === 0 ? seg : encodeURIComponent(seg))).join('/');
+  // Windows drive path like "C:/..." → needs three slashes: file:///C:/...
+  return s.startsWith('/') ? ('file://' + s) : ('file:///' + s);
 }
 
 function _rgbToHex(rgb) {

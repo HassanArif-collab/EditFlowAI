@@ -138,6 +138,279 @@ function ef_getCompInfo() {
     } catch (e) { return ef_err("getCompInfo: " + e.toString()); }
 }
 
+/* ── Capture current playhead frame to PNG ── */
+/* PRIMARY: CompItem.saveFrameToPng(time, file) — available in modern AE
+   (feature-detected below), renders the frame straight to a real PNG with no
+   render queue, no output-module templates, no ffmpeg and no
+   displayStartTime range math.
+   FALLBACK (older builds): Render Queue single-frame render (this install
+   only ships Photoshop/TIFF/H.264 templates — no PNG), then ffmpeg converts
+   to PNG. Every step is numbered ([1]..[N]) and written to debug.log. */
+function ef_getCurrentFrame() {
+    var logLines = [];
+    function log(m) { logLines.push(String(m)); }
+    function writeLog() {
+        try {
+            var tf = new Folder(Folder.temp.fsName + "/EditFlowAE_Frames");
+            if (!tf.exists) { try { tf.create(); } catch (e2) {} }
+            var lf = new File(Folder.temp.fsName + "/EditFlowAE_Frames/debug.log");
+            try { if (lf.exists) lf.remove(); } catch (e3) {}
+            lf.open("w");
+            lf.write(logLines.join("\r\n"));
+            lf.close();
+        } catch (e) {}
+    }
+    function escStr(s) {
+        s = String(s); var out = "", i, c;
+        for (i = 0; i < s.length; i++) {
+            c = s.charAt(i);
+            if (c === '"') out += '\\"';
+            else if (c === "\\") out += "\\\\";
+            else if (c === "\n") out += "\\n";
+            else if (c === "\r") out += "\\r";
+            else out += c;
+        }
+        return out;
+    }
+    try {
+        log("[1] start getCurrentFrame");
+
+        // [2] active comp — typeof guards avoid throwing on missing props
+        var comp = null;
+        try { comp = app.project.activeItem; } catch (e) { log("[2] ERR activeItem: " + e.toString()); }
+        if (!comp) { log("[2] no active item"); writeLog(); return ef_err("No active composition. Click inside a comp first."); }
+        var isComp = false;
+        try { isComp = (comp instanceof CompItem); } catch (e) { log("[2] instanceof ERR: " + e.toString()); }
+        if (!isComp) { log("[2] active item is not a comp"); writeLog(); return ef_err("Active item is not a composition."); }
+        log("[2] ok comp");
+
+        // [3] read comp timing properties defensively (some props may be missing
+        // in older AE builds — each wrapped so one missing prop can't abort all).
+        var currentTime = 0, dispStart = 0, compDur = 0, frameDur = 0.04;
+        try { currentTime = comp.time; } catch (e) { log("[3] ERR comp.time: " + e.toString()); }
+        try { dispStart = comp.displayStartTime || 0; } catch (e) { log("[3] ERR displayStartTime: " + e.toString()); dispStart = 0; }
+        try { compDur = comp.duration || 0; } catch (e) { log("[3] ERR duration: " + e.toString()); compDur = 0; }
+        try { frameDur = comp.frameDuration || 0.04; } catch (e) { log("[3] ERR frameDuration: " + e.toString()); frameDur = 0.04; }
+
+        // Compute the absolute timeSpanStart the Render Queue expects. When a
+        // comp has a non-zero displayStartTime (timeline offset to match a
+        // source clip), the RQ rejects values below it and renders a BLACK
+        // frame with a "frames outside of range" warning. Shift & clamp.
+        var spanStart = currentTime;
+        if (currentTime < dispStart) spanStart = currentTime + dispStart;
+        var lo = dispStart;
+        var hi = dispStart + compDur - frameDur;
+        if (spanStart < lo) spanStart = lo;
+        if (hi > lo && spanStart > hi) spanStart = hi;
+        log("[3] time=" + currentTime + " displayStart=" + dispStart + " dur=" + compDur + " frameDur=" + frameDur + " spanStart=" + spanStart + " range=[" + lo + "," + hi + "]");
+
+        // [4] temp folder
+        var tempFolder = new Folder(Folder.temp.fsName + "/EditFlowAE_Frames");
+        if (!tempFolder.exists && !tempFolder.create()) {
+            log("[4] folder create failed: " + tempFolder.fsName); writeLog();
+            return ef_err("Could not create temp folder: " + tempFolder.fsName);
+        }
+        log("[4] ok folder");
+
+        // [5] output path
+        var baseName = "frame_" + Date.now() + "_" + Math.random().toString(36).substr(2, 9);
+        var outBase = tempFolder.fsName + "/" + baseName;
+        var outFile = new File(outBase + ".png");
+        try { if (outFile.exists) outFile.remove(); } catch (e) {}
+        log("[5] outBase=" + outBase);
+
+        // [5d] PRIMARY: direct PNG export — comp.saveFrameToPng(time, file).
+        // time is plain comp time (same space as comp.time), so no
+        // displayStartTime shifting is needed here at all.
+        var hasDirect = false;
+        try { hasDirect = (typeof comp.saveFrameToPng === "function"); } catch (e) {}
+        log("[5d] saveFrameToPng available=" + hasDirect);
+        if (hasDirect) {
+            try {
+                comp.saveFrameToPng(currentTime, outFile);
+                var chk = new File(outFile.fsName);
+                var chkLen = 0;
+                try { chkLen = chk.length; } catch (e) {}
+                log("[5d] direct result exists=" + chk.exists + " size=" + chkLen);
+                if (chk.exists && chkLen > 4096) {
+                    var compNameD = "";
+                    try { compNameD = comp.name || ""; } catch (e) {}
+                    var cwD = 0, chD = 0;
+                    try { cwD = comp.width || 0; } catch (e) {}
+                    try { chD = comp.height || 0; } catch (e) {}
+                    log("[OK] (direct) path=" + chk.fsName + " size=" + chkLen);
+                    writeLog();
+                    return '{"path":"' + escStr(chk.fsName) + '","time":' + Number(currentTime) +
+                           ',"compName":"' + escStr(compNameD) + '","width":' + Number(cwD) +
+                           ',"height":' + Number(chD) + ',"method":"saveFrameToPng"}';
+                }
+                log("[5d] direct produced no/tiny file — falling back to Render Queue");
+            } catch (eD) {
+                log("[5d] direct ERR: " + eD.toString() + " — falling back to Render Queue");
+            }
+        }
+
+        // [6] render queue + output module
+        var rq = app.project.renderQueue;
+        var rqItem = rq.items.add(comp);
+        var om = rqItem.outputModule(1);
+        log("[6] ok rq item added");
+
+        // [7] pick an image-capable output template (inline, no nested fn —
+        // ExtendScript ES3 scoping of nested function decls can be unreliable).
+        var templates = [];
+        try { templates = om.templates; } catch (e) { log("[7] ERR templates: " + e.toString()); }
+        if (!templates) templates = [];
+        log("[7] templates=" + templates.join(" | "));
+        var preferred = [];
+        var subs = ["PNG", "PHOTOSHOP", "TIFF", "LOSSLESS", "HIGH QUALITY"];
+        for (var si = 0; si < subs.length; si++) {
+            var sub = subs[si];
+            for (var ti = 0; ti < templates.length; ti++) {
+                if (String(templates[ti]).toUpperCase().indexOf(sub) >= 0) preferred.push(templates[ti]);
+            }
+        }
+        if (preferred.length === 0) preferred = templates.slice();
+        var applied = null;
+        for (var ci = 0; ci < preferred.length; ci++) {
+            try { om.applyTemplate(preferred[ci]); applied = preferred[ci]; break; }
+            catch (e) { log("[7] template fail " + preferred[ci] + ": " + e.toString()); }
+        }
+        if (!applied) {
+            try { rqItem.remove(); } catch (e) {}
+            log("[7] no usable template"); writeLog();
+            return ef_err("No output template found in Render Queue.");
+        }
+        log("[7] ok template=" + applied);
+
+        // [8] re-fetch OM (applyTemplate can invalidate the ref) + set file
+        om = rqItem.outputModule(1);
+        om.file = outFile;
+        log("[8] ok output file set");
+
+        // [9] single-frame span (clamped above so AE never renders blank)
+        rqItem.timeSpanStart = spanStart;
+        rqItem.timeSpanDuration = frameDur;
+        log("[9] ok span set");
+
+        // [10] render only our item
+        for (var k = 1; k <= rq.numItems; k++) {
+            try { rq.item(k).render = (rq.item(k) === rqItem); } catch (e) {}
+        }
+        log("[10] ok render flags set, rendering…");
+        rq.render(); // blocking
+        log("[10] ok render done");
+
+        try { rqItem.remove(); } catch (e) {}
+
+        // [11] locate produced file (render may change extension / add suffix)
+        var exts = [".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".psd"];
+        var produced = null;
+        var producedFile = new File(outBase + ".png");
+        if (producedFile.exists && producedFile.length > 0) produced = producedFile;
+        if (!produced) {
+            var folder = new Folder(tempFolder.fsName);
+            var files = folder.getFiles(baseName + "*");
+            for (var fi = 0; fi < files.length; fi++) {
+                var f = files[fi];
+                var lower = String(f.name).toLowerCase();
+                var okExt = false;
+                for (var ei = 0; ei < exts.length; ei++) {
+                    if (lower.length >= exts[ei].length &&
+                        lower.indexOf(exts[ei]) === lower.length - exts[ei].length) { okExt = true; break; }
+                }
+                var isFile = false;
+                try { isFile = (f instanceof File); } catch (e) {}
+                var fLen = 0;
+                try { fLen = f.length; } catch (e) {}
+                if (okExt && isFile && fLen > 0) { produced = f; break; }
+            }
+        }
+        if (!produced || produced.length === 0) {
+            log("[11] file missing after render"); writeLog();
+            return ef_err("Frame export failed — no image file produced at " + outBase);
+        }
+        log("[11] ok produced=" + produced.fsName + " size=" + produced.length);
+
+        // [12] convert non-png (.psd/.tif) to .png via FFmpeg for browser display
+        var finalPng = new File(outBase + ".png");
+        var producedName = String(produced.name).toLowerCase();
+        var isPng = producedName.length >= 4 &&
+                    producedName.indexOf(".png") === producedName.length - 4;
+        if (!isPng) {
+            try { if (finalPng.exists) finalPng.remove(); } catch (e) {}
+            // -frames:v 1 -update 1 are OUTPUT options and MUST come after -i;
+            // placed before -i, ffmpeg rejects the whole command ("cannot be
+            // applied to input url"). Without them the image2 muxer treats the
+            // output path as a sequence pattern and writes a broken stub PNG.
+            var ffmpeg = "ffmpeg -y -i \"" + produced.fsName + "\" -frames:v 1 -update 1 \"" + finalPng.fsName + "\"";
+            log("[12] ffmpeg: " + ffmpeg);
+            var rc = -1;
+            try { rc = system.callSystem ? system.callSystem(ffmpeg) : system(ffmpeg); } catch (e) { log("[12] ffmpeg ERR: " + e.toString()); }
+            log("[12] ffmpeg rc=" + rc);
+        }
+
+        var outResult = isPng ? produced : finalPng;
+        var rExists = false, rLen = 0;
+        try { rExists = outResult.exists; rLen = outResult.length; } catch (e) {}
+        // A tiny PNG (< 4KB) is a broken stub from a failed conversion. Never
+        // hand back the .psd/.tif instead — Chromium cannot display those, so
+        // the panel would show a black frame. A clear error beats black.
+        if (!rExists || rLen < 4096) {
+            log("[12] PNG conversion failed (exists=" + rExists + " size=" + rLen + ")"); writeLog();
+            return ef_err("Frame rendered but PNG conversion failed (is ffmpeg on PATH?). Click 📋 Log for the step trace.");
+        }
+        log("[12] ok outResult=" + outResult.fsName + " size=" + rLen);
+
+        // [13] build JSON manually (do NOT use ef_json — its
+        // Object.prototype.toString.call path triggers "Function Object is
+        // undefined" on some ExtendScript builds).
+        var compNameStr = "";
+        try { compNameStr = comp.name || ""; } catch (e) {}
+        var cw = 0, ch = 0;
+        try { cw = comp.width || 0; } catch (e) {}
+        try { ch = comp.height || 0; } catch (e) {}
+        var resultPath = "";
+        try { resultPath = outResult.fsName; } catch (e) {}
+        log("[13] OK path=" + resultPath + " size=" + rLen);
+        writeLog();
+        var json = '{"path":"' + escStr(resultPath) + '","time":' + Number(currentTime) +
+                   ',"compName":"' + escStr(compNameStr) + '","width":' + Number(cw) +
+                   ',"height":' + Number(ch) + '}';
+        return json;
+    } catch (e) {
+        var emsg = e.toString();
+        log("[!] EXCEPTION " + emsg + "  line=" + (e.line || "?") + "  name=" + (e.name || "?"));
+        writeLog();
+        return ef_err("getCurrentFrame: " + emsg + " (see debug.log — click 📋 Log)");
+    }
+}
+
+/* ── Read the debug log (so the CEP panel can show WHERE a capture failed) ── */
+function ef_readDebugLog() {
+    try {
+        var lf = new File(Folder.temp.fsName + "/EditFlowAE_Frames/debug.log");
+        if (!lf.exists) return ef_err("No debug log yet. Click 🖼 Frame first.");
+        lf.open("r");
+        var contents = lf.read();
+        lf.close();
+        // Manual JSON to avoid ef_json's Object.prototype.toString path.
+        var esc = "";
+        for (var i = 0; i < contents.length; i++) {
+            var c = contents.charAt(i);
+            if (c === '"') esc += '\\"';
+            else if (c === "\\") esc += "\\\\";
+            else if (c === "\n") esc += "\\n";
+            else if (c === "\r") esc += "";
+            else if (c === "\t") esc += "\\t";
+            else esc += c;
+        }
+        return '{"log":"' + esc + '","path":"' + lf.fsName.replace(/\\/g, "/") + '"}';
+    } catch (e) {
+        return ef_err("readDebugLog: " + e.toString());
+    }
+}
+
 /* ── Get audio path ── */
 function ef_getAudioPath() {
     try {
