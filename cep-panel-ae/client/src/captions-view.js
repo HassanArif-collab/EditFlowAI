@@ -28,7 +28,7 @@
  */
 import { apiGet, apiPost, apiUpload, getBaseUrl } from './api.js';
 import { callExtendScript, isExtendScriptAvailable } from './extendscript.js';
-import { groupWords } from './caption-model.js';
+import { groupWords, wrapLines, wordAnim, captionTiming, EASINGS, LAYOUT } from './caption-model.js';
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -46,7 +46,7 @@ const PRESETS = [
   ['typewriter', 'Typewriter'],
   ['fade', 'Simple Fade'],
 ];
-const EASINGS = [
+const EASING_OPTIONS = [
   ['linear', 'Linear'],
   ['ease_in', 'Ease In'],
   ['ease_out', 'Ease Out'],
@@ -73,6 +73,7 @@ const S = {
   highlightTextColor: [1, 1, 0], highlightBoxColor: [0.04, 0.1, 0.18], highlightWords: [],
   posX: 50, posY: 80, maxWordsPerSegment: 4, maxCharsPerSegment: 30, maxDurationPerSegment: 3, maxLinesPerSegment: 2, allCaps: false,
   preset: 'fadeup_words', animIntensity: 1.0, language: 'auto',
+  overlapFrames: 2, minDisplayDur: 0.7,
   _previewTime: 0, _previewPlaying: false, _canvas: null, _ctx: null, _raf: null,
   previewHeight: 240, _resizing: false, _resizeStartY: 0, _resizeStartH: 0,
   fonts: [], _fontsLoaded: false, _showPaste: false, _pasteText: '',
@@ -96,6 +97,7 @@ const SETTINGS_KEYS = [
   'highlightTextColor', 'posX', 'posY', 'maxWordsPerSegment', 'maxCharsPerSegment',
   'maxDurationPerSegment', 'maxLinesPerSegment', 'allCaps', 'preset', 'animIntensity', 'language',
   'wordEasing', 'fadeDur', 'slideDist', 'pillEasing', 'pillScaleDur',
+  'overlapFrames', 'minDisplayDur',
   'previewHeight',
 ];
 const BUILTIN_PRESETS = {
@@ -122,6 +124,8 @@ function _persistSoon() {
 }
 function _loadPersisted() {
   try { _applySettings(JSON.parse(localStorage.editflow_ae_settings || 'null')); } catch (_) {}
+  // Max Lines used to go up to 5 but never did anything; now it's real (1-2).
+  S.maxLinesPerSegment = Math.min(2, Math.max(1, S.maxLinesPerSegment || 1));
   try { S._presets = JSON.parse(localStorage.editflow_ae_presets || '{}') || {}; } catch (_) { S._presets = {}; }
   try { S._activePreset = localStorage.editflow_ae_active_preset || ''; } catch (_) {}
 }
@@ -135,6 +139,7 @@ function _savePresets() {
 /* ── Public API ── */
 function openCaptions() {
   _loadPersisted();
+  _devCompOverride();
   _ensureStyles();
   _ensureContainer();
   _render();
@@ -151,6 +156,22 @@ function openCaptions() {
     _refreshModelStatus();
     _refreshCompInfo();
   }, 30000); // 30s — less flickering, skip during busy
+}
+
+/* Browser-only test hook: '#comp=1080x1920' fakes a comp so the preview can
+   be verified at any aspect ratio without After Effects. Real users never type
+   this hash; when present it also pins comp info so the poll can't clobber it. */
+function _devCompOverride() {
+  try {
+    const m = (location.hash || '').match(/comp=(\d+)x(\d+)/);
+    if (m) {
+      S._devComp = true;
+      S.compInfo = {
+        name: `DEV ${m[1]}×${m[2]}`, width: +m[1], height: +m[2],
+        duration: 60, frameRate: 30, numLayers: 0, hasAudio: false,
+      };
+    }
+  } catch (_) {}
 }
 
 /* ── Resize drag — set up once, works across re-renders ── */
@@ -357,23 +378,15 @@ function _renderTabContent() {
       <div class="cap-card-subtitle">No words yet. Go to the Transcribe tab first.</div>
     </div>`;
   }
-  const pillCount = S.words.filter(w => w.pill).length;
-  const groups = _groupWordsForPreview(S.words);
-  let rows = '';
-  for (let gi = 0; gi < groups.length; gi++) {
-    const g = groups[gi];
-    rows += `<div class="cap-group-divider" data-gstart="${g.start}" title="Click to preview this caption"><span>Caption ${gi + 1}</span><span>${g.start.toFixed(2)}–${g.end.toFixed(2)}s</span></div>`;
-    for (const gw of g.words) rows += _renderWordRow(S.words[gw.idx], gw.idx);
-  }
   return `<div class="cap-card">
     <div class="cap-card-title">📝 Caption Content</div>
-    <div class="cap-card-subtitle">${groups.length} caption${groups.length === 1 ? '' : 's'} from ${S.words.length} words. Click a caption header to preview it. Toggle 💊 for pill backgrounds (adjacent pills merge). <strong style="color:var(--text);">${pillCount}</strong> pill${pillCount === 1 ? '' : 's'} active.</div>
+    <div class="cap-card-subtitle" id="cap-content-summary">${_contentSummaryHTML()}</div>
     <div class="cap-btn-group" style="margin-bottom: 10px;">
       <button id="cap-pill-all" class="cap-btn cap-btn-secondary cap-btn-tiny">Pill All</button>
       <button id="cap-pill-clear" class="cap-btn cap-btn-secondary cap-btn-tiny">Clear Pills</button>
       <span style="margin-left:auto; color:var(--text-3); font-size:10px; align-self:center;">${S.words.length} words</span>
     </div>
-    <div class="cap-word-list" id="cap-word-list">${rows}</div>
+    <div class="cap-word-list" id="cap-word-list">${_buildWordListHTML()}</div>
     <div class="cap-subgroup">
       <div class="cap-subgroup-title">Segment Settings</div>
       <div class="cap-row">
@@ -393,11 +406,45 @@ function _renderTabContent() {
       </div>
       <div class="cap-row">
         <label class="cap-label">Max Lines</label>
-        <input type="range" class="cap-range" id="cap-max-lines" min="1" max="5" value="${S.maxLinesPerSegment}" />
+        <input type="range" class="cap-range" id="cap-max-lines" min="1" max="2" value="${S.maxLinesPerSegment}" />
         <span class="cap-range-val" id="cap-max-lines-val">${S.maxLinesPerSegment}</span>
       </div>
     </div>
   </div>`;
+}
+
+function _contentSummaryHTML() {
+  const groups = _groupWordsForPreview(S.words);
+  const pillCount = S.words.filter((w) => w.pill).length;
+  return `${groups.length} caption${groups.length === 1 ? '' : 's'} from ${S.words.length} words. Click a caption header to preview it. Toggle 💊 for pill backgrounds (adjacent pills merge). <strong style="color:var(--text);">${pillCount}</strong> pill${pillCount === 1 ? '' : 's'} active.`;
+}
+
+function _buildWordListHTML() {
+  const groups = _groupWordsForPreview(S.words);
+  let rows = '';
+  for (let gi = 0; gi < groups.length; gi++) {
+    const g = groups[gi];
+    rows += `<div class="cap-group-divider" data-gstart="${g.start}" title="Click to preview this caption"><span>Caption ${gi + 1}</span><span>${g.start.toFixed(2)}–${g.end.toFixed(2)}s</span></div>`;
+    for (const gw of g.words) rows += _renderWordRow(S.words[gw.idx], gw.idx);
+  }
+  return rows;
+}
+
+function _refreshSummary() {
+  const summary = document.querySelector('#cap-content-summary');
+  if (summary) summary.innerHTML = _contentSummaryHTML();
+}
+
+/* Rebuild the caption list + summary after a segment-setting change, so the
+   caption headers can't go stale (they used to update only on full re-render). */
+function _refreshContentList() {
+  const v = $('#captions-view');
+  if (!v) return;
+  const list = v.querySelector('#cap-word-list');
+  if (list) list.innerHTML = _buildWordListHTML();
+  const summary = v.querySelector('#cap-content-summary');
+  if (summary) summary.innerHTML = _contentSummaryHTML();
+  _wireTabContent(v);
 }
 
 function _renderWordRow(w, i) {
@@ -548,7 +595,7 @@ function _renderFontField() {
 /* ── Tab 4: Animate ── */
 function _renderTabAnimate() {
   const presetOpts = PRESETS.map((p) => `<option value="${p[0]}" ${S.preset === p[0] ? 'selected' : ''}>${_esc(p[1])}</option>`).join('');
-  const easingOpts = (cur) => EASINGS.map((e) => `<option value="${e[0]}" ${cur === e[0] ? 'selected' : ''}>${_esc(e[1])}</option>`).join('');
+  const easingOpts = (cur) => EASING_OPTIONS.map((e) => `<option value="${e[0]}" ${cur === e[0] ? 'selected' : ''}>${_esc(e[1])}</option>`).join('');
   const previewText = S.allCaps ? 'CAPTION' : 'Caption';
   return `<div class="cap-card">
     <div class="cap-card-title">✨ Animation</div>
@@ -748,12 +795,12 @@ function _wireTabContent(v) {
   const pillAll = v.querySelector('#cap-pill-all');
   if (pillAll) pillAll.onclick = () => {
     S.words.forEach((w) => { w.pill = true; });
-    _refreshAllWordRows(); _updatePreview();
+    _refreshAllWordRows(); _refreshSummary(); _updatePreview();
   };
   const pillClear = v.querySelector('#cap-pill-clear');
   if (pillClear) pillClear.onclick = () => {
     S.words.forEach((w) => { w.pill = false; });
-    _refreshAllWordRows(); _updatePreview();
+    _refreshAllWordRows(); _refreshSummary(); _updatePreview();
   };
   v.querySelectorAll('.cap-word-input').forEach((input) => {
     input.oninput = (e) => {
@@ -771,6 +818,7 @@ function _wireTabContent(v) {
       if (isNaN(idx) || !S.words[idx]) return;
       S.words[idx].pill = !S.words[idx].pill;
       _refreshWordRow(idx);
+      _refreshSummary();
       _updatePreview();
     };
   });
@@ -782,26 +830,30 @@ function _wireTabContent(v) {
   });
   _wireRange(v, '#cap-max-words', (val) => {
     S.maxWordsPerSegment = parseInt(val, 10);
+    _refreshContentList();
     return String(S.maxWordsPerSegment);
   });
   _wireRange(v, '#cap-max-lines', (val) => {
     S.maxLinesPerSegment = parseInt(val, 10);
+    _refreshContentList();
     return String(S.maxLinesPerSegment);
   });
   const mc = v.querySelector('#cap-max-chars');
   if (mc) mc.oninput = (e) => {
-    const v = Math.max(10, Math.min(80, parseInt(e.target.value, 10) || 10));
-    S.maxCharsPerSegment = v;
+    const val = Math.max(10, Math.min(80, parseInt(e.target.value, 10) || 10));
+    S.maxCharsPerSegment = val;
     const lbl = document.getElementById('cap-max-chars-val');
-    if (lbl) lbl.textContent = v;
+    if (lbl) lbl.textContent = val;
+    _refreshContentList();
     _updatePreview();
   };
   const md = v.querySelector('#cap-max-dur');
   if (md) md.oninput = (e) => {
-    const v = Math.max(1, Math.min(10, parseFloat(e.target.value) || 1));
-    S.maxDurationPerSegment = v;
+    const val = Math.max(1, Math.min(10, parseFloat(e.target.value) || 1));
+    S.maxDurationPerSegment = val;
     const lbl = document.getElementById('cap-max-dur-val');
-    if (lbl) lbl.textContent = v;
+    if (lbl) lbl.textContent = val;
+    _refreshContentList();
     _updatePreview();
   };
 }
@@ -993,6 +1045,7 @@ async function _refreshModelStatus() {
 }
 
 async function _refreshCompInfo() {
+  if (S._devComp) return;   // dev comp override pinned via #comp= hash
   let newInfo;
   try {
     if (!isExtendScriptAvailable()) return;
@@ -1474,138 +1527,194 @@ function _updatePreview() {
     return;
   }
   const t = S._previewTime || 0;
+  // ponytail: regroups + relayouts every rAF frame (as the old code did);
+  // memoize on a words/settings revision if long transcripts ever chug.
   const groups = _groupWordsForPreview(S.words);
-  // Find active group: most recent group whose any word is visible
-  let ag = null, bestStart = -1;
-  for (const g of groups) {
-    let vis = false;
-    for (const wd of g.words) {
-      if (t >= wd.start && t < wd.end + S.fadeDur) { vis = true; break; }
+  const frameRate = (S.compInfo && S.compInfo.frameRate) || 30;
+  // Same timing rule the generated AE layers get: hold until next + overlap.
+  const timing = captionTiming(groups, {
+    frameDur: 1 / frameRate,
+    overlapFrames: S.overlapFrames,
+    minDur: S.minDisplayDur,
+    tailHold: 0.5,
+  });
+  let any = false;
+  for (let gi = 0; gi < groups.length; gi++) {
+    if (t >= timing[gi].in && t < timing[gi].out) {
+      _drawCaption(ctx, w, h, groups[gi], t);
+      any = true;
     }
-    if (vis && g.start > bestStart) { bestStart = g.start; ag = g; }
   }
-  if (!ag) {
+  if (!any) {
     ctx.fillStyle = '#3a3a45'; ctx.font = '10px sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(`(no caption at ${t.toFixed(2)}s)`, w / 2, h / 2);
-    return;
   }
+}
 
-  // Font setup
+/* Draw one caption group at time t. Every pixel value scales by ONE factor
+   (canvasWidth / compWidth) so the preview is proportionally exact for any
+   comp aspect — the old ×1.5 font fudge and mixed scale bases are gone. */
+function _drawCaption(ctx, w, h, g, t) {
   const compW = (S.compInfo && S.compInfo.width) || 1920;
-  const fontSize = S.fontSize * (w / compW * 1.5);
-  const fontWeight = /bold|black|heavy|semibold/i.test(S.fontPS || '') ? 'bold' : 'normal';
-  const fontFamily = _fontFamilyFromPS(S.fontPS);
-  ctx.font = `${fontWeight} ${fontSize}px ${fontFamily}, sans-serif`;
+  const px = w / compW;
+  const fontPx = S.fontSize * px;
+  ctx.font = _canvasFont(fontPx);
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  const cx = w * (S.posX / 100), cy = h * (S.posY / 100);
 
-  // Layout words horizontally
-  const wordTexts = ag.words.map((wd) => S.allCaps ? (wd.text || '').toUpperCase() : (wd.text || ''));
-  const wordWidths = wordTexts.map((txt) => ctx.measureText(txt).width);
-  const spaceW = ctx.measureText(' ').width;
-  const totalW = wordWidths.reduce((s, x) => s + x, 0) + spaceW * Math.max(0, wordTexts.length - 1);
-  let curX = cx - totalW / 2;
-  const wordPositions = [];
-  for (let i = 0; i < ag.words.length; i++) {
-    wordPositions.push({ x: curX + wordWidths[i] / 2, w: wordWidths[i] });
-    curX += wordWidths[i] + spaceW;
+  const lines = wrapLines(g, {
+    maxCharsPerSegment: S.maxCharsPerSegment,
+    maxLinesPerSegment: S.maxLinesPerSegment,
+  });
+  const lineHeight = S.fontSize * LAYOUT.lineHeightEm * px;
+  const space = S.fontSize * LAYOUT.wordGapEm * px;
+  const cx = w * (S.posX / 100);
+  const blockCy = h * (S.posY / 100);
+
+  // Measure + position every word, line by line.
+  const layout = [];
+  let maxLineW = 0;
+  for (let li = 0; li < lines.length; li++) {
+    const ln = lines[li];
+    const texts = [], widths = [];
+    let lineW = 0;
+    for (let i = ln.startIdx; i <= ln.endIdx; i++) {
+      const txt = S.allCaps ? (g.words[i].text || '').toUpperCase() : (g.words[i].text || '');
+      const ww = ctx.measureText(txt).width;
+      texts.push(txt); widths.push(ww); lineW += ww;
+    }
+    lineW += space * Math.max(0, texts.length - 1);
+    if (lineW > maxLineW) maxLineW = lineW;
+    const y = blockCy + (li - (lines.length - 1) / 2) * lineHeight;
+    let x = cx - lineW / 2;
+    const pos = [];
+    for (let k = 0; k < widths.length; k++) {
+      pos.push({ x: x + widths[k] / 2, left: x, right: x + widths[k] });
+      x += widths[k] + space;
+    }
+    layout.push({ ln, texts, widths, pos, y });
   }
 
-  const pgs = _getPillGroups(ag.words);
+  // Auto-shrink parity with the jsx fit guard: scale the caption block down
+  // when a line would overflow the comp width.
+  const fitMax = w * LAYOUT.fitMaxWidthRatio;
+  const fit = maxLineW > fitMax ? fitMax / maxLineW : 1;
+  ctx.save();
+  if (fit < 1) {
+    ctx.translate(cx, blockCy);
+    ctx.scale(fit, fit);
+    ctx.translate(-cx, -blockCy);
+  }
 
-  // Pills (scale-up on appear)
-  for (const pg of pgs) {
-    const ps = _getPillScale(pg.startTime, t);
-    const rs = Math.max(0.001, ps);
-    let cw = 0;
-    for (let i = pg.startIdx; i <= pg.endIdx; i++) {
-      cw += wordWidths[i];
-      if (i < pg.endIdx) cw += spaceW;
-    }
-    const pcx = (wordPositions[pg.startIdx].x - wordWidths[pg.startIdx] / 2
-               + wordPositions[pg.endIdx].x + wordWidths[pg.endIdx] / 2) / 2;
-    const padX = fontSize * 0.25, padY = fontSize * 0.12;
-    const pw = (cw + padX * 2) * rs, ph = (fontSize + padY * 2) * rs;
-    const r = (fontSize + padY * 2) / 2 * S.pillRadius * rs;
-    const a = ps * (S.pillOpacity / 100);
-    if (a < 0.01) continue;
-    ctx.fillStyle = _rgbaToCss(S.pillColor, a);
-    _roundRect(ctx, pcx - pw / 2, cy - ph / 2, Math.max(1, pw), Math.max(1, ph), Math.max(0, r));
-    ctx.fill();
-    if (S.pillStrokeWidth > 0 && ps > 0.05) {
-      ctx.strokeStyle = _rgbaToCss(S.pillStrokeColor, ps);
-      ctx.lineWidth = S.pillStrokeWidth * (w / 480) * rs;
-      ctx.stroke();
+  // Pills first (behind text) — each run appears at ITS first word's time
+  // and stays until the caption ends (mirrors the AE layers).
+  for (const L of layout) {
+    const runs = _pillRuns(g.words, L.ln.startIdx, L.ln.endIdx);
+    for (const run of runs) {
+      const ps = _pillScale(g.words[run.a].start, t);
+      if (ps <= 0.001) continue;
+      const rs = Math.max(0.001, ps);
+      const padX = S.fontSize * LAYOUT.pillPadXEm * px;
+      const padY = S.fontSize * LAYOUT.pillPadYEm * px;
+      const left = L.pos[run.a - L.ln.startIdx].left;
+      const right = L.pos[run.b - L.ln.startIdx].right;
+      const pw = (right - left + padX * 2) * rs;
+      const ph = (fontPx + padY * 2) * rs;
+      const pcx = (left + right) / 2;
+      const r = (fontPx + padY * 2) / 2 * S.pillRadius * rs;
+      const a = ps * (S.pillOpacity / 100);
+      ctx.fillStyle = _rgbaToCss(S.pillColor, a);
+      _roundRect(ctx, pcx - pw / 2, L.y - ph / 2, Math.max(1, pw), Math.max(1, ph), Math.max(0, r));
+      ctx.fill();
+      if (S.pillStrokeWidth > 0 && ps > 0.05) {
+        ctx.strokeStyle = _rgbaToCss(S.pillStrokeColor, ps);
+        ctx.lineWidth = S.pillStrokeWidth * px * rs;
+        ctx.stroke();
+      }
     }
   }
 
-  // Words (fade-up on appear)
-  for (let i = 0; i < ag.words.length; i++) {
-    const wd = ag.words[i];
-    if (t < wd.start) continue;
-    const an = _getFadeUp(wd.start, t);
-    if (an.opacity <= 0.01) continue;
-    const wx = wordPositions[i].x;
-    const wy = cy + an.offsetY * (h / 270);
-    if (S.dropShadow && an.opacity > 0.1) {
-      ctx.shadowColor = _rgbaToCss(S.shadowColor, (S.shadowOpacity / 100) * an.opacity);
-      ctx.shadowBlur = S.shadowBlur * (w / 480);
-      ctx.shadowOffsetX = S.shadowDistance * (w / 480) * 0.7;
-      ctx.shadowOffsetY = S.shadowDistance * (w / 480) * 0.7;
-    } else {
-      ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+  // Words — animation comes from the shared model, so each preset previews
+  // its real motion (pop overshoot, bounce, squash, typewriter, fades).
+  const params = {
+    fadeDur: S.fadeDur, slideDist: S.slideDist,
+    easing: S.wordEasing, intensity: S.animIntensity,
+  };
+  const capAnim = wordAnim(S.preset, { ...params, start: g.start }, t);
+  for (const L of layout) {
+    for (let k = 0; k < L.texts.length; k++) {
+      const wd = g.words[L.ln.startIdx + k];
+      const an = capAnim.captionLevel ? capAnim : wordAnim(S.preset, { ...params, start: wd.start }, t);
+      if (an.opacity <= 0.01) continue;
+      const wx = L.pos[k].x;
+      const wy = L.y + an.dy * px;
+      ctx.save();
+      if (an.scaleX !== 1 || an.scaleY !== 1) {
+        ctx.translate(wx, wy);
+        ctx.scale(Math.max(0.001, an.scaleX), Math.max(0.001, an.scaleY));
+        ctx.translate(-wx, -wy);
+      }
+      if (S.dropShadow && an.opacity > 0.1) {
+        ctx.shadowColor = _rgbaToCss(S.shadowColor, (S.shadowOpacity / 100) * an.opacity);
+        ctx.shadowBlur = S.shadowBlur * px;
+        ctx.shadowOffsetX = S.shadowDistance * px * 0.7;
+        ctx.shadowOffsetY = S.shadowDistance * px * 0.7;
+      }
+      if (S.strokeWidth > 0) {
+        ctx.strokeStyle = _rgbaToCss(S.strokeColor, an.opacity);
+        ctx.lineWidth = S.strokeWidth * 2 * px;
+        ctx.lineJoin = 'round';
+        ctx.strokeText(L.texts[k], wx, wy);
+      }
+      ctx.fillStyle = _rgbaToCss(S.fillColor, an.opacity);
+      ctx.fillText(L.texts[k], wx, wy);
+      ctx.restore();
     }
-    if (S.strokeWidth > 0) {
-      ctx.strokeStyle = _rgbaToCss(S.strokeColor, an.opacity);
-      ctx.lineWidth = S.strokeWidth * 2 * (w / 480);
-      ctx.lineJoin = 'round';
-      ctx.strokeText(wordTexts[i], wx, wy);
-    }
-    ctx.fillStyle = _rgbaToCss(S.fillColor, an.opacity);
-    ctx.fillText(wordTexts[i], wx, wy);
-    ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0;
   }
+  ctx.restore();
 }
 
-function _applyEasing(t, type) {
-  t = Math.max(0, Math.min(1, t));
-  if (type === 'ease_in') return t * t;
-  if (type === 'ease_out') return 1 - (1 - t) * (1 - t);
-  if (type === 'ease_in_out') return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
-  return t; // linear
-}
-function _getFadeUp(wordStart, t) {
-  const dt = t - wordStart;
-  if (dt < 0) return { opacity: 0, offsetY: S.slideDist };
-  if (dt < S.fadeDur) {
-    const p = _applyEasing(dt / S.fadeDur, S.wordEasing);
-    return { opacity: p, offsetY: S.slideDist * (1 - p) };
+/* Canvas font from the AE font list (family + style → weight/italic); the
+   PS-name heuristic is only the no-AE fallback. This is what makes font
+   picks actually change the preview. */
+function _canvasFont(fontPx) {
+  let family = null, style = '';
+  if (S._fontsLoaded && S.fonts.length) {
+    const f = S.fonts.find((x) => x.ps === S.fontPS);
+    if (f && f.family) { family = f.family; style = f.style || ''; }
   }
-  return { opacity: 1, offsetY: 0 };
+  if (!family) { family = _fontFamilyFromPS(S.fontPS); style = S.fontPS || ''; }
+  let weight = 400;
+  if (/black|heavy/i.test(style)) weight = 900;
+  else if (/extrabold|ultra/i.test(style)) weight = 800;
+  else if (/semibold|demi/i.test(style)) weight = 600;
+  else if (/bold/i.test(style)) weight = 700;
+  else if (/medium/i.test(style)) weight = 500;
+  else if (/light|thin/i.test(style)) weight = 300;
+  const italic = /italic|oblique/i.test(style) ? 'italic ' : '';
+  return `${italic}${weight} ${fontPx}px "${family}", sans-serif`;
 }
-function _getPillScale(pillStart, t) {
+
+function _pillScale(pillStart, t) {
   const dt = t - pillStart;
   if (dt < 0) return 0;
-  if (dt < S.pillScaleDur) return _applyEasing(dt / S.pillScaleDur, S.pillEasing);
+  if (dt < S.pillScaleDur) return (EASINGS[S.pillEasing] || EASINGS.linear)(dt / S.pillScaleDur);
   return 1;
 }
-function _getPillGroups(groupWords) {
-  const pg = [];
-  let i = 0;
-  while (i < groupWords.length) {
-    if (groupWords[i].pill) {
+
+/* Merged runs of adjacent pill words within word index range [a, b]. */
+function _pillRuns(words, a, b) {
+  const runs = [];
+  let i = a;
+  while (i <= b) {
+    if (words[i].pill) {
       let e = i;
-      while (e + 1 < groupWords.length && groupWords[e + 1].pill) e++;
-      pg.push({
-        startIdx: i, endIdx: e,
-        startTime: groupWords[i].start,
-        endTime: groupWords[e].end,
-      });
+      while (e + 1 <= b && words[e + 1].pill) e++;
+      runs.push({ a: i, b: e });
       i = e + 1;
     } else i++;
   }
-  return pg;
+  return runs;
 }
 
 function _roundRect(ctx, x, y, w, h, r) {
@@ -1629,8 +1738,7 @@ function _groupWordsForPreview(words) {
     maxWordsPerSegment: S.maxWordsPerSegment,
     maxCharsPerSegment: S.maxCharsPerSegment,
     maxDurationPerSegment: S.maxDurationPerSegment,
-    // Clamped to 1 until the 2-line preview render lands (Task 2.3).
-    maxLinesPerSegment: 1,
+    maxLinesPerSegment: S.maxLinesPerSegment,
     maxGap: 0.4,
   });
 }
