@@ -639,6 +639,19 @@ function _renderTabAnimate() {
             <span class="cap-range-val" id="cap-pill-scale-dur-val">${S.pillScaleDur.toFixed(2)}s</span>
           </div>
         </div>
+        <div class="cap-subgroup">
+          <div class="cap-subgroup-title">Timing</div>
+          <div class="cap-row">
+            <label class="cap-label" title="Each caption stays on screen until the next one starts, plus this many frames of overlap — so sentences don't flash or gap.">Overlap</label>
+            <input type="range" class="cap-range" id="cap-overlap-frames" min="0" max="10" value="${S.overlapFrames}" />
+            <span class="cap-range-val" id="cap-overlap-frames-val">${S.overlapFrames}f</span>
+          </div>
+          <div class="cap-row">
+            <label class="cap-label" title="A caption is never shown for less than this, even for very short words.">Min Display</label>
+            <input type="range" class="cap-range" id="cap-min-dur" min="0.3" max="2.0" step="0.1" value="${S.minDisplayDur}" />
+            <span class="cap-range-val" id="cap-min-dur-val">${S.minDisplayDur.toFixed(1)}s</span>
+          </div>
+        </div>
       </div>
       <div class="cap-animate-preview">
         <div class="cap-animate-preview-text">${_esc(previewText)}</div>
@@ -987,6 +1000,8 @@ function _wireTabAnimate(v) {
   const pe = v.querySelector('#cap-pill-easing');
   if (pe) pe.onchange = (e) => { S.pillEasing = e.target.value; _updatePreview(); };
   _wireRange(v, '#cap-pill-scale-dur', (val) => { S.pillScaleDur = parseFloat(val); return S.pillScaleDur.toFixed(2) + 's'; });
+  _wireRange(v, '#cap-overlap-frames', (val) => { S.overlapFrames = parseInt(val, 10); return S.overlapFrames + 'f'; });
+  _wireRange(v, '#cap-min-dur', (val) => { S.minDisplayDur = parseFloat(val); return S.minDisplayDur.toFixed(1) + 's'; });
   const ap = v.querySelector('#cap-animate-preview-btn');
   if (ap) ap.onclick = _onAnimatePreview;
   const rp = v.querySelector('#cap-remove-preview-btn');
@@ -1316,24 +1331,20 @@ async function _onGenerate(smokeTest) {
   if (S.busy || !S.words.length) return;
   S.busy = true; S._cancelGenerate = false; S.generateResult = null; S.error = null;
   S.progress = 2; S.status = smokeTest ? 'Creating test caption…' : 'Creating captions…'; _render();
-  // Work in COMPLETE caption groups so a batch never splits a caption.
-  const allGroups = _groupWordsForPreview(S.words);
+  // Compute groups + line wrap + in/out timing ONCE over the whole transcript
+  // (so a group's "hold until next" is correct even across batch boundaries),
+  // then batch. The jsx consumes these verbatim — no re-grouping in AE.
+  const allGroups = _buildGroupsPayload();
   const groups = smokeTest ? allGroups.slice(0, 1) : allGroups;
   const result = { placed: 0, total: groups.length, groups: groups.length, errors: [], preset: S.preset };
   try {
     const BATCH = 10;   // caption groups per ExtendScript call
     for (let i = 0; i < groups.length; i += BATCH) {
       if (S._cancelGenerate) { result.errors.push('Cancelled by user.'); break; }
-      const batch = groups.slice(i, i + BATCH);
-      const words = [];
-      for (const g of batch) for (const w of g.words) {
-        words.push({ word: w.text, text: w.text, start: w.start, end: w.end, pill: !!w.pill });
-      }
-      const cfg = _buildConfig(words);
+      const cfg = _buildConfig();
+      cfg.groups = groups.slice(i, i + BATCH);
       cfg.replace = (i === 0 && !smokeTest);   // clear existing only on the first real batch
       cfg.previewOnly = !!smokeTest;           // test = non-destructive preview layers
-      const nextBatch = groups[i + BATCH];
-      cfg.nextBatchStart = nextBatch ? nextBatch.words[0].start : null;
       const resp = await callExtendScript('ef_createCaptions', JSON.stringify(cfg));
       if (!resp || resp.error) { result.errors.push((resp && resp.error) || 'ExtendScript error'); break; }
       for (const er of (resp.errors || [])) result.errors.push(er);
@@ -1350,6 +1361,31 @@ async function _onGenerate(smokeTest) {
     S.generateResult = result;
     S.busy = false; S._cancelGenerate = false; _render();
   }
+}
+
+/* Build the group payload the jsx consumes: each group carries its words,
+   line assignments (char-budget wrap), and in/out points. Timing is computed
+   over the FULL group list so batch slicing preserves each group's
+   hold-until-next behaviour. */
+function _buildGroupsPayload() {
+  const groups = _groupWordsForPreview(S.words);
+  const frameRate = (S.compInfo && S.compInfo.frameRate) || 30;
+  const timing = captionTiming(groups, {
+    frameDur: 1 / frameRate,
+    overlapFrames: S.overlapFrames,
+    minDur: S.minDisplayDur,
+    tailHold: 0.5,
+  });
+  return groups.map((g, i) => ({
+    words: g.words.map((w) => ({ text: w.text, start: w.start, end: w.end, pill: !!w.pill })),
+    start: g.start, end: g.end,
+    text: g.text,
+    lines: wrapLines(g, {
+      maxCharsPerSegment: S.maxCharsPerSegment,
+      maxLinesPerSegment: S.maxLinesPerSegment,
+    }).map((l) => ({ startIdx: l.startIdx, endIdx: l.endIdx })),
+    tIn: timing[i].in, tOut: timing[i].out,
+  }));
 }
 
 /* Update just the progress bar + status text without a full re-render. */
@@ -1407,12 +1443,11 @@ async function _onAnimatePreview() {
   try {
     if (!S.words.length) return;
     const t = S._previewTime || 0;
-    const groups = _groupWordsForPreview(S.words);
-    let active = groups.find((g) => t >= g.start && t < g.end) || groups[0];
+    const all = _buildGroupsPayload();
+    const active = all.find((g) => t >= g.tIn && t < g.tOut) || all.find((g) => t >= g.start && t < g.end) || all[0];
     if (!active) return;
-    const cfg = _buildConfig(active.words.map((w) => ({
-      word: w.text, text: w.text, start: w.start, end: w.end, pill: !!w.pill,
-    })));
+    const cfg = _buildConfig();
+    cfg.groups = [active];
     cfg.previewOnly = true;
     await callExtendScript('ef_createCaptions', JSON.stringify(cfg));
     S.status = 'Temporary preview added (your captions are untouched). Use "Remove preview" to clear it.';
@@ -1435,16 +1470,11 @@ async function _onRemovePreview() {
   }
 }
 
-function _buildConfig(words) {
-  const hasPills = words.some((w) => w.pill);
+/* Style + animation settings for a generation call. The caption groups
+   (words, lines, timing) are attached separately as cfg.groups. */
+function _buildConfig() {
   return {
-    words: words.map((w) => ({
-      word: w.word || w.text || '',
-      text: w.word || w.text || '',
-      start: w.start, end: w.end,
-      pill: !!w.pill,
-    })),
-    visualStyle: hasPills ? 'pill' : S.visualStyle,
+    visualStyle: S.visualStyle,
     fontPS: S.fontPS, fontSize: S.fontSize,
     fillColor: S.fillColor, strokeColor: S.strokeColor, strokeWidth: S.strokeWidth,
     dropShadow: S.dropShadow, shadowColor: S.shadowColor, shadowOpacity: S.shadowOpacity,
