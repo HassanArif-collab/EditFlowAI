@@ -48,6 +48,13 @@ test('groupWords breaks after sentence-ending word, including urdu', () => {
   assert.equal(gu.length, 2);
 });
 
+test('groupWords keeps the sentence-ending word WITH its sentence (no orphans)', () => {
+  const g = M.groupWords(words(['to:0:0.1', 'my:0.1:0.2', 'channel.:0.2:0.4', 'Today:0.5:0.7']), GOPTS);
+  assert.equal(g.length, 2);
+  assert.equal(g[0].text, 'to my channel.');
+  assert.equal(g[1].text, 'Today');
+});
+
 test('groupWords char budget scales with maxLines', () => {
   const w = words(['aaaaaaaaaa:0:0.1', 'bbbbbbbbbb:0.1:0.2', 'cccccccccc:0.2:0.3', 'dddddddddd:0.3:0.4']);
   const one = M.groupWords(w, { ...GOPTS, maxCharsPerSegment: 22, maxLinesPerSegment: 1 });

@@ -67,8 +67,10 @@ export function groupWords(words, opts) {
     for (const c of cur) chars += c.text.length + 1;
     chars += text.length;
 
+    // Break AFTER a sentence-ending word (prev), never before the current
+    // word — the old `currEnds` rule orphaned "channel." into its own caption.
     if (gap > maxGap || cur.length >= maxWords || dur > maxDur ||
-        chars > charBudget || SENTENCE_END.test(prev.text) || SENTENCE_END.test(text)) {
+        chars > charBudget || SENTENCE_END.test(prev.text)) {
       groups.push(_toGroup(cur));
       cur = [norm];
     } else {

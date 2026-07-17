@@ -12,6 +12,12 @@
       "runtimeExecutable": "python",
       "runtimeArgs": ["-m", "http.server", "5601", "--directory", "cep-panel/client"],
       "port": 5601
+    },
+    {
+      "name": "backend",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["run.py", "--prod"],
+      "port": 8765
     }
   ]
 }

@@ -28,6 +28,7 @@
  */
 import { apiGet, apiPost, apiUpload, getBaseUrl } from './api.js';
 import { callExtendScript, isExtendScriptAvailable } from './extendscript.js';
+import { groupWords } from './caption-model.js';
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -1623,41 +1624,15 @@ function _roundRect(ctx, x, y, w, h, r) {
 }
 
 function _groupWordsForPreview(words) {
-  // Mirrors ef_groupWords in index.jsx for live preview
-  const maxWords = Math.max(1, S.maxWordsPerSegment || 4);
-  const maxChars = S.maxCharsPerSegment || 30;
-  const maxDur = S.maxDurationPerSegment || 3;
-  const maxGap = 0.4;
-  const groups = []; let cur = [];
-  for (let i = 0; i < words.length; i++) {
-    const w = words[i];
-    const wordText = w.word || w.text || '';
-    if (!wordText) continue;
-    const normalized = {
-      text: wordText, start: w.start, end: w.end,
-      idx: i, pill: !!w.pill,
-    };
-    if (cur.length === 0) { cur.push(normalized); continue; }
-    const prev = cur[cur.length - 1];
-    const gap = normalized.start - prev.end;
-    const dur = normalized.end - cur[0].start;
-    let totalChars = 0;
-    for (const c of cur) totalChars += c.text.length + 1;
-    totalChars += wordText.length;
-    const prevEnds = /[.?!]["')\]]?\s*$/.test(prev.text);
-    const currEnds = /[.?!]["')\]]?\s*$/.test(normalized.text);
-    if (gap > maxGap || cur.length >= maxWords || dur > maxDur || totalChars > maxChars || prevEnds || currEnds) {
-      groups.push(_segToGroup(cur)); cur = [normalized];
-    } else { cur.push(normalized); }
-  }
-  if (cur.length) groups.push(_segToGroup(cur));
-  return groups;
-}
-
-function _segToGroup(seg) {
-  let txt = '';
-  for (let k = 0; k < seg.length; k++) txt += (k ? ' ' : '') + seg[k].text;
-  return { words: seg, start: seg[0].start, end: seg[seg.length - 1].end, text: txt };
+  // Single source of truth shared with tests + (Phase 3) the jsx config.
+  return groupWords(words, {
+    maxWordsPerSegment: S.maxWordsPerSegment,
+    maxCharsPerSegment: S.maxCharsPerSegment,
+    maxDurationPerSegment: S.maxDurationPerSegment,
+    // Clamped to 1 until the 2-line preview render lands (Task 2.3).
+    maxLinesPerSegment: 1,
+    maxGap: 0.4,
+  });
 }
 
 /* ── Helpers ── */
