@@ -162,15 +162,70 @@ def test_transcribe_mixdown_200_returns_word_list():
 
     # Top-level fields. Fingerprint is the range-based sha256[:16], not
     # the file content hash — verifies the hash uses sequence_name +
-    # in/out + active_model (NOT file bytes).
+    # in/out + active_model + language + engine + vocab (NOT file bytes).
     import hashlib
     expected_fp = hashlib.sha256(
-        "Main Seq|0.0|1.0|small".encode("utf-8")
+        "Main Seq|0.0|1.0|small|auto|auto|".encode("utf-8")
     ).hexdigest()[:16]
     assert body["fingerprint"] == expected_fp
     assert body["duration"] == 1.0
     assert body["model"] == "small"
     assert body["engine"] == "faster_whisper"
+
+
+def test_transcribe_mixdown_passes_vocab_through_and_keys_cache_on_it():
+    """The custom-vocabulary box only works if the route hands vocab to
+    the whisper service (initial_prompt/hotwords) — and different vocab
+    must produce a different fingerprint or stale cached transcripts
+    would shadow the new spelling."""
+    fake = _fake_transcript_result([("Alhamdulillah", 0.0, 0.8, 0.9)])
+    mock_tf = AsyncMock(return_value=fake)
+    with patch.object(_subtitles, "is_model_installed", return_value=True), \
+         patch.object(_subtitles.whisper_service, "get_active_model_name", return_value="small"), \
+         patch.object(_subtitles.whisper_service, "transcribe_fingerprinted", new=mock_tf):
+        resp = client.post(
+            "/api/subtitles/transcribe-mixdown",
+            files={"file": ("mix.wav", b"fake-audio-bytes", "audio/wav")},
+            data={
+                "sequence_name": "Main Seq",
+                "in_seconds": "0.0",
+                "out_seconds": "1.0",
+                "engine": "whisper",   # forces the plain-whisper path
+                "vocab": "Alhamdulillah, EditFlow",
+            },
+        )
+    assert resp.status_code == 200, resp.text
+    assert mock_tf.await_args.kwargs["vocab"] == "Alhamdulillah, EditFlow"
+
+    import hashlib
+    expected_fp = hashlib.sha256(
+        "Main Seq|0.0|1.0|small|auto|whisper|Alhamdulillah, EditFlow".encode("utf-8")
+    ).hexdigest()[:16]
+    assert resp.json()["fingerprint"] == expected_fp
+
+
+def test_transcribe_mixdown_sanitizes_word_overlaps():
+    """Engines emit overlapping word times; the route must clamp them
+    (word-by-word caption animation turns every overlap into a visible
+    double-flash). Proves sanitize_words is actually wired in."""
+    fake = _fake_transcript_result([
+        ("first", 0.0, 0.9, 0.9),    # overlaps into the next word
+        ("second", 0.5, 1.0, 0.9),
+    ])
+    with patch.object(_subtitles, "is_model_installed", return_value=True), \
+         patch.object(_subtitles.whisper_service, "get_active_model_name", return_value="small"), \
+         patch.object(_subtitles.whisper_service, "transcribe_fingerprinted",
+                      new=AsyncMock(return_value=fake)):
+        resp = client.post(
+            "/api/subtitles/transcribe-mixdown",
+            files={"file": ("mix.wav", b"fake-audio-bytes", "audio/wav")},
+            data={"sequence_name": "S", "in_seconds": "0", "out_seconds": "1",
+                  "engine": "whisper"},
+        )
+    assert resp.status_code == 200, resp.text
+    words = resp.json()["words"]
+    assert words[0]["end"] == 0.5      # clamped to next start
+    assert words[1]["start"] == 0.5
 
 
 def test_transcribe_mixdown_500_when_transcribe_raises():

@@ -134,3 +134,9 @@ test('single-layer pill builders exist (AE-side, exercised via bridge)', () => {
     assert.equal(typeof sandbox[fn], 'function', fn);
   }
 });
+
+test('agent dev-loop tools exist (AE-side, exercised via bridge)', () => {
+  for (const fn of ['ef_dumpLayers', 'ef_renderFrameAt', 'ef_setupTestComp']) {
+    assert.equal(typeof sandbox[fn], 'function', fn);
+  }
+});

@@ -34,6 +34,11 @@ async def lifespan(app: FastAPI):
     logger.info("EditFlow AI starting up...")
     init_dirs()
 
+    # Attach the rotating file handler so relayed panel/jsx events actually
+    # land in data/logs/editflow.log (diag /log/tail reads that file).
+    from .utils.logsink import init_file_logging
+    init_file_logging()
+
     from .models.sqlite_registry import sqlite_registry
     sqlite_registry.initialize()
     logger.info("SQLite registry initialized")
