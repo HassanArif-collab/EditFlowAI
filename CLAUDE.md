@@ -32,3 +32,14 @@ A test that can't fail when business logic changes is wrong.
 ## Rule 8 — Match the codebase's conventions, even if you disagree
 Conformance > taste inside the codebase.
 If you think a convention is harmful, surface it. Don't fork it silently.
+
+## Rule 9 — AE/CEP API questions: local docs first
+Grep `docs/adobe/` (INDEX.md maps topics) before web-searching AE
+scripting, expressions, or CEP questions. Cite the file you used.
+
+## Rule 10 — AE code claims require bridge evidence
+When the AE agent bridge is reachable (backend started with
+EDITFLOW_AGENT_BRIDGE=1 — see docs/ae-agent-workflow.md), "works in AE"
+claims need evidence: an ef_dumpLayers assertion and/or a rendered frame
+from /api/ae-bridge/frame. When the bridge is not reachable, say
+"not yet AE-verified" and point at docs/ae-captions-runbook.md.
