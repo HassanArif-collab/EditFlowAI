@@ -28,6 +28,7 @@ from ..services.subtitles.cue_builder import (
 )
 from ..services.subtitles.presets import load_presets
 from ..services.subtitles.srt_export import cues_to_srt
+from ..services.subtitles.word_sanitizer import sanitize_words
 from ..services.whisper_service import whisper_service
 from ..utils.progress import ProgressReporter
 from .whisper_admin import is_model_installed
@@ -111,6 +112,15 @@ async def srt(req: SrtReq):
     return {"srt": text, "srt_path": srt_path}
 
 
+def _whisperx_model_size(active_model: str) -> str:
+    """Map a full model name (e.g. 'Systran/faster-whisper-large-v3') to the
+    plain size string WhisperX loads ('large-v3')."""
+    name = active_model or "large-v3"
+    if "faster-whisper-" in name:
+        name = name.split("faster-whisper-")[-1]
+    return name
+
+
 @router.post("/transcribe-mixdown")
 async def transcribe_mixdown(
     file: UploadFile = File(...),
@@ -120,6 +130,8 @@ async def transcribe_mixdown(
     out_seconds: float = Form(0.0),
     language: Optional[str] = Form(None),
     force: bool = Form(False),
+    engine: str = Form("auto"),
+    vocab: str = Form(""),
 ):
     """Receive a WAV mixdown from Premiere, transcribe it, return word-level cues.
 
@@ -144,8 +156,12 @@ async def transcribe_mixdown(
         # range in a different language returns the first language's cached
         # transcript (the "can't retranscribe in another language" bug).
         lang_key = (language or "auto").strip().lower()
+        vocab = (vocab or "").strip()
+        # Engine + vocab are part of the key: whisperx vs whisper timings
+        # differ, and vocab biasing changes the transcript.
         fingerprint = hashlib.sha256(
-            f"{sequence_name}|{in_seconds}|{out_seconds}|{active_model}|{lang_key}".encode("utf-8")
+            f"{sequence_name}|{in_seconds}|{out_seconds}|{active_model}|{lang_key}"
+            f"|{engine}|{vocab}".encode("utf-8")
         ).hexdigest()[:16]
 
         # 2. Persist the uploaded WAV under data/media_cache/mixdowns/.
@@ -177,20 +193,48 @@ async def transcribe_mixdown(
         #    range-based fingerprint, not a content hash — re-runs of the
         #    same In/Out hit the cache even if the WAV bytes differ.
         reporter = ProgressReporter(task_type="transcribe", client_id=client_id)
-        result = await whisper_service.transcribe_fingerprinted(
-            source_path=str(wav_path),
-            file_fingerprint=fingerprint,
-            language=language if language and language != 'auto' else None,
-            word_timestamps=True,
-            vad_filter=True,
-            progress=reporter,
-            force=force,
-            range_in=0.0,
-            range_out=0.0,
-        )
+        lang = language if language and language != 'auto' else None
+
+        # 4a. WhisperX forced alignment (engine auto|whisperx): ~50ms word
+        #     boundaries vs ~200-300ms from plain faster-whisper — visible
+        #     in word-by-word caption animation. Any failure falls back to
+        #     the whisper path below and the response `engine` says which ran.
+        result = None
+        engine_used = None
+        if engine in ("auto", "whisperx"):
+            try:
+                from ..services.transcribe.whisperx_engine import WhisperXEngine
+                wx = WhisperXEngine(model_size=_whisperx_model_size(active_model))
+                if wx.is_available():
+                    # ponytail: no transcript cache / progress ticks on the
+                    # whisperx path yet — add if slow runs get annoying.
+                    result = await wx.transcribe(
+                        str(wav_path), language=lang, word_timestamps=True,
+                    )
+                    engine_used = "whisperx"
+            except Exception as wx_exc:  # noqa: BLE001
+                logger.warning("whisperx failed, falling back to whisper: %s", wx_exc)
+                result = None
+
+        if result is None:
+            result = await whisper_service.transcribe_fingerprinted(
+                source_path=str(wav_path),
+                file_fingerprint=fingerprint,
+                language=lang,
+                word_timestamps=True,
+                vad_filter=True,
+                progress=reporter,
+                force=force,
+                range_in=0.0,
+                range_out=0.0,
+                vocab=vocab or None,
+            )
+            engine_used = result.engine
 
         # 5. Flatten segments → word list. TranscriptWord.probability maps
-        #    to the spec's `confidence` field name.
+        #    to the spec's `confidence` field name. sanitize_words guards
+        #    against overlaps, zero durations and missing timestamps
+        #    (whisperx defaults unalignable tokens to 0).
         words_out: list[dict] = []
         for seg in result.segments:
             for w in seg.words:
@@ -200,13 +244,14 @@ async def transcribe_mixdown(
                     "end": w.end,
                     "confidence": w.probability,
                 })
+        words_out = sanitize_words(words_out)
 
         return {
             "words": words_out,
             "fingerprint": fingerprint,
             "duration": result.duration,
             "model": result.model or active_model,
-            "engine": result.engine,
+            "engine": engine_used or result.engine,
         }
 
     except HTTPException:

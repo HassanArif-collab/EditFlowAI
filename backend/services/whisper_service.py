@@ -774,6 +774,7 @@ class WhisperService:
         word_timestamps: bool = True,
         vad_filter: bool = True,
         progress: Optional[ProgressReporter] = None,
+        vocab: Optional[str] = None,
     ) -> TranscriptResult:
         """Transcribe a video file.
 
@@ -844,6 +845,8 @@ class WhisperService:
             # of it is the CPU-bound work. Both the call and the iteration must run
             # off the event loop.
             def _transcribe_call():
+                # Custom vocabulary biasing (recurring names, transliterated
+                # terms): both params verified present in faster-whisper 1.2.1.
                 return self._model.transcribe(
                     str(audio_path),
                     task="transcribe",
@@ -851,6 +854,8 @@ class WhisperService:
                     vad_filter=vad_filter,
                     word_timestamps=word_timestamps,
                     beam_size=5,
+                    initial_prompt=vocab or None,
+                    hotwords=vocab or None,
                 )
 
             segments_iter, info = await asyncio.to_thread(_transcribe_call)
@@ -1003,6 +1008,7 @@ class WhisperService:
         force: bool = False,
         range_in: float = 0.0,
         range_out: float = 0.0,
+        vocab: Optional[str] = None,
     ) -> TranscriptResult:
         """Transcribe a media file with content-addressed deduplication.
 
@@ -1108,6 +1114,7 @@ class WhisperService:
             word_timestamps=word_timestamps,
             vad_filter=vad_filter,
             progress=progress,
+            vocab=vocab,
         )
 
         # After model is loaded, refresh model_revision

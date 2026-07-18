@@ -72,7 +72,7 @@ const S = {
   pillColor: [0.04, 0.1, 0.18], pillOpacity: 85, pillStrokeColor: [0.36, 0.55, 0.94], pillStrokeWidth: 2, pillRadius: 0.5,
   highlightTextColor: [1, 1, 0], highlightBoxColor: [0.04, 0.1, 0.18], highlightWords: [],
   posX: 50, posY: 80, maxWordsPerSegment: 4, maxCharsPerSegment: 30, maxDurationPerSegment: 3, maxLinesPerSegment: 2, allCaps: false,
-  boxWidthPct: 90,
+  boxWidthPct: 90, alignEngine: 'auto', customVocab: '',
   preset: 'fadeup_words', animIntensity: 1.0, language: 'auto',
   overlapFrames: 2, minDisplayDur: 0.7,
   _previewTime: 0, _previewPlaying: false, _canvas: null, _ctx: null, _raf: null,
@@ -98,7 +98,7 @@ const SETTINGS_KEYS = [
   'highlightTextColor', 'posX', 'posY', 'maxWordsPerSegment', 'maxCharsPerSegment',
   'maxDurationPerSegment', 'maxLinesPerSegment', 'allCaps', 'preset', 'animIntensity', 'language',
   'wordEasing', 'fadeDur', 'slideDist', 'pillEasing', 'pillScaleDur',
-  'overlapFrames', 'minDisplayDur', 'boxWidthPct',
+  'overlapFrames', 'minDisplayDur', 'boxWidthPct', 'alignEngine', 'customVocab',
   'previewHeight',
 ];
 const BUILTIN_PRESETS = {
@@ -347,6 +347,18 @@ function _renderTabTranscribe() {
     <div class="cap-row">
       <label class="cap-label">Language</label>
       <select id="cap-language" class="cap-select">${LANGUAGES.map((l) => `<option value="${l[0]}" ${S.language === l[0] ? 'selected' : ''}>${_esc(l[1])}</option>`).join('')}</select>
+    </div>
+    <div class="cap-row">
+      <label class="cap-label" title="WhisperX aligns word times to ~50ms; plain Whisper is faster but coarser (~200-300ms)">Alignment</label>
+      <select id="cap-align-engine" class="cap-select">
+        <option value="auto" ${S.alignEngine === 'auto' ? 'selected' : ''}>Auto (best available)</option>
+        <option value="whisperx" ${S.alignEngine === 'whisperx' ? 'selected' : ''}>Accurate (WhisperX)</option>
+        <option value="whisper" ${S.alignEngine === 'whisper' ? 'selected' : ''}>Fast (Whisper)</option>
+      </select>
+    </div>
+    <div class="cap-row" style="align-items:flex-start;">
+      <label class="cap-label" title="Names and recurring terms, comma-separated — biases spelling (e.g. transliterated Arabic phrases)">Vocabulary</label>
+      <textarea id="cap-custom-vocab" class="cap-input" rows="2" placeholder="Alhamdulillah, SubhanAllah, EditFlow…" style="flex:1;resize:vertical;">${_esc(S.customVocab)}</textarea>
     </div>
     ${S._showPaste ? `<div class="cap-paste-area">
       <textarea id="cap-paste-text" placeholder="Paste SRT cues or a JSON array of {word,start,end} objects...">${_esc(S._pasteText)}</textarea>
@@ -821,6 +833,8 @@ function _wireTabTranscribe(v) {
   if (logBtn) logBtn.onclick = _onReadDebugLog;
   const pt = v.querySelector('#cap-paste-text'); if (pt) pt.oninput = (e) => { S._pasteText = e.target.value; };
   const ls = v.querySelector('#cap-language'); if (ls) ls.onchange = (e) => { S.language = e.target.value; };
+  const ae = v.querySelector('#cap-align-engine'); if (ae) ae.onchange = (e) => { S.alignEngine = e.target.value; };
+  const cv2 = v.querySelector('#cap-custom-vocab'); if (cv2) cv2.oninput = (e) => { S.customVocab = e.target.value; };
 }
 
 function _wireTabContent(v) {
@@ -1175,6 +1189,8 @@ async function _onTranscribe() {
       in_seconds: 0,
       out_seconds: (S.compInfo && S.compInfo.duration) || 0,
       language: S.language || 'auto',
+      engine: S.alignEngine || 'auto',
+      vocab: S.customVocab || '',
       filename: audioName,
       force: String(isRerun),
     }, { timeoutMs: 600000 });
@@ -1268,6 +1284,8 @@ async function _onAudioUpload(event) {
       in_seconds: 0,
       out_seconds: 0,
       language: S.language || 'auto',
+      engine: S.alignEngine || 'auto',
+      vocab: S.customVocab || '',
       filename: file.name,
     }, { timeoutMs: 600000 });
     S.words = (resp.words || []).map((w) => ({
