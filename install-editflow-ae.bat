@@ -289,7 +289,7 @@ Write-Step "Step 7/7 - Verifying installation..."
 $checks = @(
     @{Name="Install dir"; Path=$InstallDir},
     @{Name="AE panel"; Path=(Join-Path $InstallDir "cep-panel-ae\CSXS\manifest.xml")},
-    @{Name="AE ExtendScript"; Path=(Join-Path $InstallDir "cep-panel-ae\extendscript\caption_manager.jsx")},
+    @{Name="AE ExtendScript"; Path=(Join-Path $InstallDir "cep-panel-ae\extendscript\index.jsx")},
     @{Name="Backend code"; Path=(Join-Path $InstallDir "backend\main.py")},
     @{Name="Python venv"; Path=$pyExe},
     @{Name="Panel link"; Path=$targetDir},
