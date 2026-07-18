@@ -674,7 +674,7 @@ function ef_wordFadeUpPosExpr(ws, fadeDur, slideDist, easing, centerY) {
 
 /* ══ Word Grouping ══ */
 
-function ef_endsSentence(t) { return /[.?!]["')\]]?\s*$/.test(String(t)); }
+function ef_endsSentence(t) { return /[.?!؟۔।؛。！？…]["')\]]?\s*$/.test(String(t)); }
 
 function ef_groupWords(words, cfg) {
     var maxWords = Math.max(1, cfg.maxWordsPerSegment || 4);
@@ -761,6 +761,17 @@ function ef_setTimingCapped(layer, start, end, nextStart) {
     if (out <= start) out = start + 0.1;
     layer.inPoint = start;   // MUST set inPoint first, then outPoint;
     layer.outPoint = out;    // otherwise AE preserves old duration and shifts outPoint.
+}
+
+/* Panel-supplied groups carry exact in/out (tIn/tOut, hold-until-next +
+   overlap). Legacy groups fall back to the capped 50ms-gap rule. */
+function ef_setGroupTiming(layer, g, nextStart) {
+    if (g.tIn != null && g.tOut != null) {
+        layer.inPoint = g.tIn;   // inPoint first, then outPoint
+        layer.outPoint = (g.tOut > g.tIn) ? g.tOut : g.tIn + 0.1;
+    } else {
+        ef_setTimingCapped(layer, g.start, g.end, nextStart);
+    }
 }
 
 function ef_centerAnchor(layer, comp, cfg, atTime) {
@@ -896,6 +907,122 @@ function ef_createWordPill(comp, textLayer, cfg, wordStart, wordEnd) {
     }
 }
 
+/* ══ Single-layer word-by-word engine (expression selector, Based On: Words) ══ */
+
+/* Can this AE build add an Expression Selector to a text animator?
+   Probed once per run with a throwaway layer; falls back to legacy paths. */
+function ef_probeExpressionSelector(comp) {
+    var L = null, ok = false;
+    try {
+        L = comp.layers.addText("probe");
+        var anim = L.property("ADBE Text Properties").property("ADBE Text Animators")
+            .addProperty("ADBE Text Animator");
+        ok = anim.property("ADBE Text Selectors").canAddProperty("ADBE Text Expressible Selector");
+    } catch (e) { ok = false; }
+    if (L) { try { L.remove(); } catch (e2) {} }
+    return ok;
+}
+
+/* Amount expression for an expression selector (Based On: Words).
+   Returns 100 while the word hasn't started (animator fully applied →
+   opacity 0 / offset down) and eases to 0 as the word enters. Times are
+   relative to layer inPoint. ES3-safe for legacy expression engines. */
+function ef_wordProgressExpr(relTimes, dur, easing) {
+    var ts = [];
+    for (var i = 0; i < relTimes.length; i++) ts.push(Math.round(relTimes[i] * 1000) / 1000);
+    var easeBody;
+    if (easing === "ease_out") easeBody = "e=1-Math.pow(1-p,3);";
+    else if (easing === "ease_in") easeBody = "e=p*p*p;";
+    else if (easing === "ease_in_out") easeBody = "e=(p<0.5)?4*p*p*p:1-Math.pow(-2*p+2,3)/2;";
+    else easeBody = "e=p;";
+    return "var ts=[" + ts.join(",") + "];" +
+        "var i=textIndex-1;if(i>=ts.length)i=ts.length-1;if(i<0)i=0;" +
+        "var p=(time-thisLayer.inPoint-ts[i])/" + (dur || 0.3) + ";" +
+        "if(p<0)p=0;if(p>1)p=1;var e;" + easeBody +
+        "var a=(1-e)*100;[a,a,a];";
+}
+
+function ef_addWordSelector(animator, expr) {
+    var sel = animator.property("ADBE Text Selectors").addProperty("ADBE Text Expressible Selector");
+    // Based On = Words (enum 3: Characters, Chars-excl-spaces, Words, Lines)
+    try { sel.property("ADBE Text Range Type2").setValue(3); } catch (e) {}
+    sel.property("ADBE Text Expressible Amount").expression = expr;
+}
+
+/* fadeup_words on ONE layer: Opacity animator (0) + Position animator
+   (down slideDist), each weighted per word by the same selector expression. */
+function ef_applyWordAnimators(layer, relTimes, cfg) {
+    var expr = ef_wordProgressExpr(relTimes, cfg.fadeDur || 0.3, cfg.wordEasing || "linear");
+    var animators = layer.property("ADBE Text Properties").property("ADBE Text Animators");
+    var fadeAnim = animators.addProperty("ADBE Text Animator");
+    fadeAnim.name = "EF Word Fade";
+    fadeAnim.property("ADBE Text Animator Properties").addProperty("ADBE Text Opacity").setValue(0);
+    ef_addWordSelector(fadeAnim, expr);
+    var slide = (cfg.slideDist != null) ? cfg.slideDist : 40;
+    if (slide > 0) {
+        var riseAnim = animators.addProperty("ADBE Text Animator");
+        riseAnim.name = "EF Word Rise";
+        var posProp = riseAnim.property("ADBE Text Animator Properties").addProperty("ADBE Text Position 3D");
+        try { posProp.setValue([0, slide]); } catch (e3) { posProp.setValue([0, slide, 0]); }
+        ef_addWordSelector(riseAnim, expr);
+    }
+}
+
+function ef_groupHasPill(g) {
+    for (var i = 0; i < g.words.length; i++) if (g.words[i].pill) return true;
+    return false;
+}
+
+/* ONE text layer per caption (panel-supplied group): lines joined by \r,
+   static anchor, exact tIn/tOut, per-word reveal via expression selectors,
+   auto-shrink to comp width. */
+function ef_buildCaptionLayer(comp, g, cfg) {
+    var allCaps = cfg.allCaps !== false;
+    var lineTexts = [];
+    if (g.lines && g.lines.length) {
+        for (var li = 0; li < g.lines.length; li++) {
+            var seg = [];
+            for (var wi = g.lines[li].startIdx; wi <= g.lines[li].endIdx; wi++) seg.push(g.words[wi].text);
+            lineTexts.push(seg.join(" "));
+        }
+    } else {
+        lineTexts.push(String(g.text));
+    }
+    var fullText = lineTexts.join("\r");
+    if (allCaps) fullText = fullText.toUpperCase();
+
+    var layer = comp.layers.addText(fullText);
+    layer.name = "Caption: " + fullText.substr(0, 24);
+    layer.comment = EF_ACTIVE_TAG;
+    ef_styleDoc(layer, cfg);
+    ef_setGroupTiming(layer, g, null);
+
+    // Anchor/position/shrink BEFORE animators so the measure isn't skewed
+    // by mid-fade position offsets.
+    var tIn = (g.tIn != null) ? g.tIn : g.start;
+    var r = layer.sourceRectAtTime(tIn + 0.05, false);
+    layer.property("Anchor Point").setValue([r.left + r.width / 2, r.top + r.height / 2]);
+    layer.property("Position").setValue([
+        comp.width * (cfg.posX || 50) / 100,
+        comp.height * (cfg.posY || 85) / 100
+    ]);
+    var maxW = comp.width * 0.94;
+    if (r.width > maxW) {
+        var sc = maxW / r.width * 100;
+        layer.property("Scale").setValue([sc, sc]);
+    }
+
+    var relTimes = [];
+    for (var ri = 0; ri < g.words.length; ri++) {
+        var rel = g.words[ri].start - tIn;
+        relTimes.push(rel > 0 ? rel : 0);
+    }
+    ef_applyWordAnimators(layer, relTimes, cfg);
+
+    if (cfg.dropShadow) ef_applyDropShadow(layer, cfg);
+    return 1;
+}
+
 /* ── ONE text layer for the whole sentence. The full caption appears at once
    with a fade-in (no word-by-word HOLD keyframes, which caused word-shifting
    as the dynamic anchor recalculated for each new text length). ── */
@@ -926,7 +1053,7 @@ function ef_buildSingleReveal(comp, g, cfg, nextStart) {
         }
     } catch (eE) {}
 
-    ef_setTimingCapped(layer, g.start, g.end, nextStart);
+    ef_setGroupTiming(layer, g, nextStart);
     if (cfg.dropShadow) ef_applyDropShadow(layer, cfg);
     return 1;
 }
@@ -1003,7 +1130,7 @@ function ef_buildGroup(comp, g, cfg, nextStart) {
 
                 ef_styleDoc(textLayer, cfg);
                 // Whole-group lifetime (not per-word) — prevents flicker.
-                ef_setTimingCapped(textLayer, g.start, g.end, nextStart);
+                ef_setGroupTiming(textLayer, g, nextStart);
 
                 if (cfg.dropShadow) {
                     ef_applyDropShadow(textLayer, cfg);
@@ -1089,7 +1216,16 @@ function ef_buildGroup(comp, g, cfg, nextStart) {
                     stroke.property("ADBE Vector Stroke Width").setValue(cfg.pillStrokeWidth);
                 }
                 shape.property("Position").setValue([pcx, centerY]);
-                ef_setTimingCapped(shape, g.start, g.end, nextStart);
+                // Pill pops in with ITS word, not the caption start.
+                var pillOut;
+                if (g.tOut != null) { pillOut = g.tOut; }
+                else {
+                    pillOut = g.end + 0.3;
+                    if (nextStart != null && nextStart - 0.05 < pillOut) pillOut = nextStart - 0.05;
+                }
+                if (pillOut <= pillStart) pillOut = pillStart + 0.1;
+                shape.inPoint = pillStart;   // inPoint first, then outPoint
+                shape.outPoint = pillOut;
                 shape.property("Scale").expression = ef_buildPillScale(cfg.pillScaleDur || 0.3, cfg.pillEasing || "linear");
                 shape.property("Opacity").expression = ef_buildFadeUpOp(cfg.pillScaleDur || 0.3, cfg.pillEasing || "linear");
                 // Move behind ALL word layers (wordLayers[0] is deepest)
@@ -1105,7 +1241,7 @@ function ef_buildGroup(comp, g, cfg, nextStart) {
         layer.comment = EF_ACTIVE_TAG;
 
         ef_styleDoc(layer, cfg);
-        ef_setTimingCapped(layer, g.start, g.end, nextStart);
+        ef_setGroupTiming(layer, g, nextStart);
         ef_centerAnchor(layer, comp, cfg, g.start + 0.05);
         ef_applyPreset(layer, cfg, g);
 
@@ -1126,14 +1262,28 @@ function ef_createCaptions(jsonStr) {
         var cfg = eval("(" + jsonStr + ")");
         var comp = ef_getComp();
         if (!comp) return ef_err("No composition with audio found.");
-        if (!cfg.words || !cfg.words.length) return ef_err("No words supplied.");
+        var usingPanelGroups = !!(cfg.groups && cfg.groups.length);
+        if (!usingPanelGroups && (!cfg.words || !cfg.words.length)) return ef_err("No words supplied.");
 
         // Apply offset
         var off = cfg.offset || 0;
         if (off) {
-            for (var oi = 0; oi < cfg.words.length; oi++) {
-                cfg.words[oi].start += off;
-                cfg.words[oi].end += off;
+            if (usingPanelGroups) {
+                for (var ogi = 0; ogi < cfg.groups.length; ogi++) {
+                    var og = cfg.groups[ogi];
+                    og.start += off; og.end += off;
+                    if (og.tIn != null) og.tIn += off;
+                    if (og.tOut != null) og.tOut += off;
+                    for (var ow = 0; ow < og.words.length; ow++) {
+                        og.words[ow].start += off;
+                        og.words[ow].end += off;
+                    }
+                }
+            } else {
+                for (var oi = 0; oi < cfg.words.length; oi++) {
+                    cfg.words[oi].start += off;
+                    cfg.words[oi].end += off;
+                }
             }
             if (cfg.nextBatchStart != null) cfg.nextBatchStart += off;
         }
@@ -1163,14 +1313,24 @@ function ef_createCaptions(jsonStr) {
         ef_removeOldCaptions(comp, EF_PREVIEW_TAG);
         if (!cfg.previewOnly && cfg.replace !== false) ef_removeOldCaptions(comp, EF_TAG);
 
-        var groups = ef_groupWords(cfg.words, cfg);
+        var groups = usingPanelGroups ? cfg.groups : ef_groupWords(cfg.words, cfg);
+
+        // Word-by-word on ONE layer needs the expression selector; probe once.
+        // Pill captions keep the per-word-layer path (pills wrap specific words).
+        var useSelector = usingPanelGroups && cfg.preset === "fadeup_words" &&
+            !cfg.forceLegacy && ef_probeExpressionSelector(comp);
+
         var created = 0, failed = 0, errors = [];
 
         for (var i = 0; i < groups.length; i++) {
             try {
                 var nextStart = (i + 1 < groups.length) ? groups[i + 1].start
                                 : (cfg.nextBatchStart != null ? cfg.nextBatchStart : null);
-                created += ef_buildGroup(comp, groups[i], cfg, nextStart);
+                if (useSelector && !ef_groupHasPill(groups[i])) {
+                    created += ef_buildCaptionLayer(comp, groups[i], cfg);
+                } else {
+                    created += ef_buildGroup(comp, groups[i], cfg, nextStart);
+                }
             } catch (ge) {
                 failed++;
                 errors.push("group " + i + ": " + ge.toString());
@@ -1181,7 +1341,9 @@ function ef_createCaptions(jsonStr) {
         app.endUndoGroup();
 
         return ef_json({
-            placed: created, total: cfg.words.length, groups: groups.length,
+            placed: created,
+            total: usingPanelGroups ? groups.length : cfg.words.length,
+            groups: groups.length, wordSelector: useSelector,
             errors: errors, preset: cfg.preset, visualStyle: cfg.visualStyle,
             comp_name: comp.name
         });
