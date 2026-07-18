@@ -1400,3 +1400,107 @@ function ef_removePreview() {
         return ef_json({ removed: removed });
     } catch (e) { return ef_err("removePreview: " + e.toString()); }
 }
+
+/* ══ Agent dev-loop tools (used via /api/ae-bridge; harmless otherwise) ══ */
+
+/* Machine-readable inventory of every layer in the comp — the agent's eyes
+   for structural assertions (one layer per caption, animator wiring,
+   selector expressions, in/out points, pill timing). */
+function ef_dumpLayers() {
+    try {
+        var comp = ef_getComp();
+        if (!comp) return ef_err("No comp");
+        var out = [];
+        for (var i = 1; i <= comp.numLayers; i++) {
+            var L = comp.layer(i);
+            var d = { index: i, name: String(L.name), comment: String(L.comment || ""),
+                      inPoint: L.inPoint, outPoint: L.outPoint };
+            try { d.position = L.property("Position").value; } catch (e1) {}
+            try { d.scale = L.property("Scale").value; } catch (e2) {}
+            try { d.anchor = L.property("Anchor Point").value; } catch (e3) {}
+            try { d.text = String(L.property("Source Text").value.text); } catch (e4) {}
+            try {
+                var anims = L.property("ADBE Text Properties").property("ADBE Text Animators");
+                if (anims && anims.numProperties > 0) {
+                    d.animators = [];
+                    for (var a = 1; a <= anims.numProperties; a++) {
+                        var an = anims.property(a);
+                        var ad = { name: String(an.name), selectors: [] };
+                        try {
+                            var sels = an.property("ADBE Text Selectors");
+                            for (var s = 1; s <= sels.numProperties; s++) {
+                                var sel = sels.property(s);
+                                var sd = { matchName: String(sel.matchName) };
+                                try { sd.basedOn = sel.property("ADBE Text Range Type2").value; } catch (e5) {}
+                                try {
+                                    var ex = sel.property("ADBE Text Expressible Amount").expression;
+                                    sd.expr = String(ex).substr(0, 300);
+                                } catch (e6) {}
+                                ad.selectors.push(sd);
+                            }
+                        } catch (e7) {}
+                        d.animators.push(ad);
+                    }
+                }
+            } catch (e8) {}
+            out.push(d);
+        }
+        return ef_json({ comp: comp.name, width: comp.width, height: comp.height,
+                         frameRate: comp.frameRate, duration: comp.duration, layers: out });
+    } catch (e) { return ef_err("dumpLayers: " + e.toString()); }
+}
+
+/* Render the active comp at time t straight to outPath (PNG). Uses the
+   saveFrameToPng path already verified in this install (see
+   ef_getCurrentFrame [5d]); no Render Queue fallback here — the bridge
+   surfaces the error and the agent falls back to ef_getCurrentFrame. */
+function ef_renderFrameAt(t, outPath) {
+    try {
+        var comp = ef_getComp();
+        if (!comp) return ef_err("No comp");
+        var hasDirect = false;
+        try { hasDirect = (typeof comp.saveFrameToPng === "function"); } catch (e0) {}
+        if (!hasDirect) return ef_err("saveFrameToPng not available in this AE build");
+        var tt = Number(t) || 0;
+        if (tt < 0) tt = 0;
+        if (tt > comp.duration) tt = comp.duration;
+        var f = new File(String(outPath));
+        try { if (f.exists) f.remove(); } catch (e1) {}
+        comp.saveFrameToPng(tt, f);
+        var chk = new File(f.fsName);
+        var len = 0;
+        try { len = chk.length; } catch (e2) {}
+        if (!chk.exists || len < 1024) return ef_err("render produced no/tiny file: " + f.fsName);
+        return ef_json({ path: chk.fsName, time: tt, comp: comp.name, bytes: len });
+    } catch (e) { return ef_err("renderFrameAt: " + e.toString()); }
+}
+
+/* Bootstrap a deterministic test comp on a fresh AE: imports the given
+   audio file, creates (or reuses) a 1080x1920 30fps comp with the audio
+   as its only layer, opens it in the viewer. Idempotent by comp name. */
+function ef_setupTestComp(audioPath) {
+    try {
+        var NAME = "EF Smoke 1080x1920";
+        var existing = null;
+        for (var i = 1; i <= app.project.numItems; i++) {
+            var it = app.project.item(i);
+            if (it instanceof CompItem && it.name === NAME) { existing = it; break; }
+        }
+        if (existing) {
+            existing.openInViewer();
+            return ef_json({ comp: existing.name, width: existing.width,
+                             height: existing.height, duration: existing.duration, reused: true });
+        }
+        var af = new File(String(audioPath));
+        if (!af.exists) return ef_err("audio file not found: " + String(audioPath));
+        var io = new ImportOptions(af);
+        var footage = app.project.importFile(io);
+        var dur = 3;
+        try { if (footage.duration > 0) dur = footage.duration + 1; } catch (eD) {}
+        var comp = app.project.items.addComp(NAME, 1080, 1920, 1.0, dur, 30);
+        comp.layers.add(footage);
+        comp.openInViewer();
+        return ef_json({ comp: comp.name, width: comp.width, height: comp.height,
+                         duration: comp.duration, reused: false });
+    } catch (e) { return ef_err("setupTestComp: " + e.toString()); }
+}

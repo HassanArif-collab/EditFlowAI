@@ -21,6 +21,7 @@ import { initExtendScript } from './extendscript.js';
 import { apiGet, apiUpload, connectWS, getBaseUrl } from './api.js';
 import { openCaptions, closeCaptions, setCaptionsClientId, onTranscribeProgress } from './captions-view.js';
 import { initSettings, openSettings, onWhisperDownloadProgress } from './settings.js';
+import { handleAgentEval, devReload, reportError } from './agent-bridge.js';
 
 const $ = (sel) => document.querySelector(sel);
 const CLIENT_ID = 'ae-' + Math.random().toString(36).substring(2, 8);
@@ -30,8 +31,16 @@ let _esError = null;
 document.addEventListener('DOMContentLoaded', async () => {
   console.log('[EditFlow] Initializing...');
 
-  window.addEventListener('error', (e) => _showGlobalError((e && (e.error && e.error.message || e.message)) || 'Unknown error'));
-  window.addEventListener('unhandledrejection', (e) => _showGlobalError((e && (e.reason && e.reason.message || e.reason)) || 'Unhandled promise rejection'));
+  window.addEventListener('error', (e) => {
+    const msg = (e && (e.error && e.error.message || e.message)) || 'Unknown error';
+    _showGlobalError(msg);
+    reportError('panel', msg);
+  });
+  window.addEventListener('unhandledrejection', (e) => {
+    const msg = (e && (e.reason && e.reason.message || e.reason)) || 'Unhandled promise rejection';
+    _showGlobalError(msg);
+    reportError('panel', msg);
+  });
 
   try {
     await initExtendScript();
@@ -58,6 +67,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   // The in-view header's gear dispatches this event (the loader header is hidden).
   document.addEventListener('editflow:open-settings', () => openSettings());
 
+  // 🔁 Dev Reload — re-evals index.jsx inside AE + reloads the panel page.
+  // Replaces the close-extension/restart-AE cycle for code changes.
+  const btnReload = document.createElement('button');
+  btnReload.id = 'btn-dev-reload';
+  btnReload.title = 'Reload panel + ExtendScript (no AE restart needed)';
+  btnReload.textContent = '🔁';
+  btnReload.style.cssText = 'position:fixed;top:6px;right:44px;z-index:9999;background:transparent;border:1px solid #444;border-radius:4px;color:#ccc;padding:2px 7px;cursor:pointer;font-size:12px;';
+  btnReload.onclick = () => devReload();
+  document.body.appendChild(btnReload);
+
   // Connect WebSocket for real-time updates (whisper download progress, etc.)
   try {
     const ws = connectWS(CLIENT_ID);
@@ -75,6 +94,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         } catch (e) {
           console.warn('[ws] progress handler threw:', e);
         }
+      } else if (data.type === 'agent_eval') {
+        handleAgentEval(data);
+      } else if (data.type === 'dev_reload') {
+        console.log('[ws] dev_reload:', (data.files || []).join(', '));
+        devReload();
       }
     });
     ws.on('open', () => {

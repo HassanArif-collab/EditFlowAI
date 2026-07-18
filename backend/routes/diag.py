@@ -54,6 +54,16 @@ async def diag_log(req: LogReq):
     return {"ok": True, "count": count}
 
 
+@router.get("/log/tail")
+async def diag_log_tail(n: int = 200):
+    """Last n log lines — lets an agent read errors without file access."""
+    n = max(1, min(n, 2000))
+    try:
+        return {"lines": tail_lines(log_file(), n)}
+    except Exception as exc:  # noqa: BLE001 — diagnostics must not 500
+        return {"lines": [], "error": str(exc)}
+
+
 class BundleReq(BaseModel):
     build: Optional[str] = None
     premiere: Optional[str] = None
