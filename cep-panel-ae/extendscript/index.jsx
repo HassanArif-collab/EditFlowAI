@@ -994,20 +994,135 @@ function ef_fitToBox(layer, comp, cfg, atTime) {
     return 1;
 }
 
+/* Measure word geometry for a caption with the caption's exact style:
+   one temp text layer, width read per line / per word-prefix / per word.
+   Returns {lineWidths[], prefixW[], selfW[]} in comp px (allCaps applied);
+   prefixW/selfW are indexed by word index into g.words. */
+function ef_measureWordSpans(comp, g, cfg, lines, lineTexts) {
+    var allCaps = cfg.allCaps !== false;
+    var lineWidths = [], prefixW = [], selfW = [];
+    var temp = null;
+    try {
+        temp = comp.layers.addText("m");
+        ef_styleDoc(temp, cfg);
+        var st = temp.property("Source Text");
+        for (var li = 0; li < lines.length; li++) {
+            var lt = allCaps ? String(lineTexts[li]).toUpperCase() : String(lineTexts[li]);
+            st.setValue(lt);
+            lineWidths.push(temp.sourceRectAtTime(0, false).width);
+            var prefix = "";
+            for (var wi = lines[li].startIdx; wi <= lines[li].endIdx; wi++) {
+                var wt = String(g.words[wi].text);
+                if (allCaps) wt = wt.toUpperCase();
+                prefix += (wi > lines[li].startIdx ? " " : "") + wt;
+                st.setValue(prefix);
+                prefixW[wi] = temp.sourceRectAtTime(0, false).width;
+                st.setValue(wt);
+                selfW[wi] = temp.sourceRectAtTime(0, false).width;
+            }
+        }
+    } finally {
+        if (temp) { try { temp.remove(); } catch (eT) {} }
+    }
+    return { lineWidths: lineWidths, prefixW: prefixW, selfW: selfW };
+}
+
+/* Pure geometry (node-tested): word spans in comp coords from measured
+   widths. Lines are centered on centerX; line Y spreads about centerY at
+   1.2em leading (AE auto-leading = panel preview). shrink scales the whole
+   block about (centerX, centerY) — must match ef_fitToBox's layer Scale. */
+function ef_pillSpanMath(lines, meas, opts) {
+    var s = opts.shrink || 1;
+    var lh = (opts.fontSize || 80) * 1.2;
+    var spans = [];
+    for (var li = 0; li < lines.length; li++) {
+        var lineLeft = opts.centerX - meas.lineWidths[li] / 2;
+        var y = opts.centerY + (li - (lines.length - 1) / 2) * lh;
+        for (var wi = lines[li].startIdx; wi <= lines[li].endIdx; wi++) {
+            var right = lineLeft + meas.prefixW[wi];
+            var left = right - meas.selfW[wi];
+            spans[wi] = {
+                left: opts.centerX + (left - opts.centerX) * s,
+                right: opts.centerX + (right - opts.centerX) * s,
+                y: opts.centerY + (y - opts.centerY) * s,
+                line: li
+            };
+        }
+    }
+    return spans;
+}
+
+/* Pill shapes for a single-layer caption: one rounded rect per run of
+   adjacent pill words (within a line), sized from measured spans, timed to
+   ITS first word, behind the text layer. */
+function ef_addPillsToCaption(comp, textLayer, g, cfg, lines, lineTexts, fit) {
+    var meas = ef_measureWordSpans(comp, g, cfg, lines, lineTexts);
+    var spans = ef_pillSpanMath(lines, meas, {
+        centerX: comp.width * (cfg.posX || 50) / 100,
+        centerY: comp.height * (cfg.posY || 85) / 100,
+        fontSize: cfg.fontSize || 80,
+        shrink: fit
+    });
+    var tOut = (g.tOut != null) ? g.tOut : g.end + 0.3;
+    var padX = (cfg.fontSize || 80) * 0.28 * fit;
+    var padY = (cfg.fontSize || 80) * 0.16 * fit;
+    var pillH = (cfg.fontSize || 80) * fit + padY * 2;
+    var placed = 0;
+    for (var li = 0; li < lines.length; li++) {
+        var i = lines[li].startIdx;
+        while (i <= lines[li].endIdx) {
+            if (!g.words[i].pill || !spans[i]) { i++; continue; }
+            var a = i, b = i;
+            while (b + 1 <= lines[li].endIdx && g.words[b + 1].pill) b++;
+            var left = spans[a].left, right = spans[b].right;
+            if (right > left) {
+                try {
+                    var pw = (right - left) + padX * 2;
+                    var pcx = (left + right) / 2;
+                    var shape = comp.layers.addShape();
+                    shape.name = "EF Pill";
+                    shape.comment = EF_ACTIVE_TAG;
+                    var vec = shape.property("ADBE Root Vectors Group")
+                        .addProperty("ADBE Vector Group").property("ADBE Vectors Group");
+                    var rect = vec.addProperty("ADBE Vector Shape - Rect");
+                    rect.property("ADBE Vector Rect Size").setValue([pw, pillH]);
+                    rect.property("ADBE Vector Rect Roundness").setValue(pillH / 2 * (cfg.pillRadius || 0.5));
+                    var fill = vec.addProperty("ADBE Vector Graphic - Fill");
+                    var pc = cfg.pillColor || [0.04, 0.1, 0.18];
+                    fill.property("ADBE Vector Fill Color").setValue([pc[0], pc[1], pc[2]]);
+                    if (cfg.pillOpacity != null) fill.property("ADBE Vector Fill Opacity").setValue(cfg.pillOpacity);
+                    if ((cfg.pillStrokeWidth || 0) > 0) {
+                        var stroke = vec.addProperty("ADBE Vector Graphic - Stroke");
+                        stroke.property("ADBE Vector Stroke Color").setValue(cfg.pillStrokeColor || [1, 1, 1]);
+                        stroke.property("ADBE Vector Stroke Width").setValue(cfg.pillStrokeWidth);
+                    }
+                    shape.property("Position").setValue([pcx, spans[a].y]);
+                    shape.inPoint = g.words[a].start;   // pill pops in with ITS word
+                    shape.outPoint = (tOut > g.words[a].start) ? tOut : g.words[a].start + 0.1;
+                    shape.property("Scale").expression = ef_buildPillScale(cfg.pillScaleDur || 0.3, cfg.pillEasing || "linear");
+                    shape.property("Opacity").expression = ef_buildFadeUpOp(cfg.pillScaleDur || 0.3, cfg.pillEasing || "linear");
+                    shape.moveAfter(textLayer);
+                    placed++;
+                } catch (ePill) {}
+            }
+            i = b + 1;
+        }
+    }
+    return placed;
+}
+
 /* ONE text layer per caption (panel-supplied group): lines joined by \r,
    static anchor, exact tIn/tOut, per-word reveal via expression selectors,
    auto-shrink to comp width. */
 function ef_buildCaptionLayer(comp, g, cfg) {
     var allCaps = cfg.allCaps !== false;
+    var lines = (g.lines && g.lines.length) ? g.lines
+        : [{ startIdx: 0, endIdx: g.words.length - 1 }];
     var lineTexts = [];
-    if (g.lines && g.lines.length) {
-        for (var li = 0; li < g.lines.length; li++) {
-            var seg = [];
-            for (var wi = g.lines[li].startIdx; wi <= g.lines[li].endIdx; wi++) seg.push(g.words[wi].text);
-            lineTexts.push(seg.join(" "));
-        }
-    } else {
-        lineTexts.push(String(g.text));
+    for (var li = 0; li < lines.length; li++) {
+        var seg = [];
+        for (var wi = lines[li].startIdx; wi <= lines[li].endIdx; wi++) seg.push(g.words[wi].text);
+        lineTexts.push(seg.join(" "));
     }
     var fullText = lineTexts.join("\r");
     if (allCaps) fullText = fullText.toUpperCase();
@@ -1027,7 +1142,7 @@ function ef_buildCaptionLayer(comp, g, cfg) {
         comp.width * (cfg.posX || 50) / 100,
         comp.height * (cfg.posY || 85) / 100
     ]);
-    ef_fitToBox(layer, comp, cfg, tIn + 0.05);
+    var fit = ef_fitToBox(layer, comp, cfg, tIn + 0.05);
 
     var relTimes = [];
     for (var ri = 0; ri < g.words.length; ri++) {
@@ -1037,7 +1152,13 @@ function ef_buildCaptionLayer(comp, g, cfg) {
     ef_applyWordAnimators(layer, relTimes, cfg);
 
     if (cfg.dropShadow) ef_applyDropShadow(layer, cfg);
-    return 1;
+
+    var placed = 1;
+    if (ef_groupHasPill(g)) {
+        try { placed += ef_addPillsToCaption(comp, layer, g, cfg, lines, lineTexts, fit); }
+        catch (eP) {}
+    }
+    return placed;
 }
 
 /* ── ONE text layer for the whole sentence. The full caption appears at once
@@ -1340,7 +1461,9 @@ function ef_createCaptions(jsonStr) {
         var groups = usingPanelGroups ? cfg.groups : ef_groupWords(cfg.words, cfg);
 
         // Word-by-word on ONE layer needs the expression selector; probe once.
-        // Pill captions keep the per-word-layer path (pills wrap specific words).
+        // Pill captions ride the same layer (pill shapes from measured word
+        // spans); the per-word-layer path survives only as the probe-failure
+        // fallback (user decision 2026-07-18: single layer even with pills).
         var useSelector = usingPanelGroups && cfg.preset === "fadeup_words" &&
             !cfg.forceLegacy && ef_probeExpressionSelector(comp);
 
@@ -1350,7 +1473,7 @@ function ef_createCaptions(jsonStr) {
             try {
                 var nextStart = (i + 1 < groups.length) ? groups[i + 1].start
                                 : (cfg.nextBatchStart != null ? cfg.nextBatchStart : null);
-                if (useSelector && !ef_groupHasPill(groups[i])) {
+                if (useSelector) {
                     created += ef_buildCaptionLayer(comp, groups[i], cfg);
                 } else {
                     created += ef_buildGroup(comp, groups[i], cfg, nextStart);

@@ -97,3 +97,40 @@ test('ef_setGroupTiming falls back to capped 50ms-gap rule without tIn/tOut', ()
   assert.equal(layer.inPoint, 1);
   assert.ok(Math.abs(layer.outPoint - 2.15) < 1e-9, String(layer.outPoint));
 });
+
+/* ── pill span math (pure geometry for single-layer pills) ── */
+test('ef_pillSpanMath places word spans inside centered lines', () => {
+  // Two lines: "AA BB" (width 100) and "CC" (width 40), centered on x=500.
+  const lines = [{ startIdx: 0, endIdx: 1 }, { startIdx: 2, endIdx: 2 }];
+  const meas = { lineWidths: [100, 40], prefixW: [45, 100, 40], selfW: [45, 50, 40] };
+  const spans = sandbox.ef_pillSpanMath(lines, meas, {
+    centerX: 500, centerY: 800, fontSize: 80, shrink: 1,
+  });
+  // line 1 left edge = 450; word0 right = 450+45; word1 = [500, 550]
+  assert.equal(spans[0].left, 450);
+  assert.equal(spans[0].right, 495);
+  assert.equal(spans[1].left, 500);
+  assert.equal(spans[1].right, 550);
+  // line 2 centered: [480, 520]; below line 1 by 1.2em (96px): y=800±48
+  assert.equal(spans[2].left, 480);
+  assert.equal(spans[2].right, 520);
+  assert.equal(spans[0].y, 800 - 48);
+  assert.equal(spans[2].y, 800 + 48);
+});
+
+test('ef_pillSpanMath shrink scales spans about the block center', () => {
+  const lines = [{ startIdx: 0, endIdx: 0 }];
+  const meas = { lineWidths: [200], prefixW: [200], selfW: [200] };
+  const full = sandbox.ef_pillSpanMath(lines, meas, { centerX: 500, centerY: 800, fontSize: 80, shrink: 1 });
+  const half = sandbox.ef_pillSpanMath(lines, meas, { centerX: 500, centerY: 800, fontSize: 80, shrink: 0.5 });
+  assert.equal(full[0].left, 400);
+  assert.equal(half[0].left, 450);   // halfway toward center
+  assert.equal(half[0].right, 550);
+  assert.equal(half[0].y, 800);      // single line sits on the center
+});
+
+test('single-layer pill builders exist (AE-side, exercised via bridge)', () => {
+  for (const fn of ['ef_measureWordSpans', 'ef_addPillsToCaption', 'ef_pillSpanMath']) {
+    assert.equal(typeof sandbox[fn], 'function', fn);
+  }
+});
