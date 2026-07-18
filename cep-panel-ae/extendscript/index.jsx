@@ -973,6 +973,27 @@ function ef_groupHasPill(g) {
     return false;
 }
 
+/* Caption box: max width as a fraction of comp width (panel boxWidthPct,
+   default 94%). Wrapping already keeps lines inside; this is the last-resort
+   shrink so nothing ever renders outside the composition. */
+function ef_boxMaxWidth(comp, cfg) {
+    var pct = (cfg.boxWidthPct != null) ? cfg.boxWidthPct : 94;
+    return comp.width * pct / 100;
+}
+
+function ef_fitToBox(layer, comp, cfg, atTime) {
+    try {
+        var r = layer.sourceRectAtTime(atTime, false);
+        var maxW = ef_boxMaxWidth(comp, cfg);
+        if (r.width > maxW) {
+            var sc = maxW / r.width * 100;
+            layer.property("Scale").setValue([sc, sc]);
+            return sc / 100;
+        }
+    } catch (e) {}
+    return 1;
+}
+
 /* ONE text layer per caption (panel-supplied group): lines joined by \r,
    static anchor, exact tIn/tOut, per-word reveal via expression selectors,
    auto-shrink to comp width. */
@@ -1006,11 +1027,7 @@ function ef_buildCaptionLayer(comp, g, cfg) {
         comp.width * (cfg.posX || 50) / 100,
         comp.height * (cfg.posY || 85) / 100
     ]);
-    var maxW = comp.width * 0.94;
-    if (r.width > maxW) {
-        var sc = maxW / r.width * 100;
-        layer.property("Scale").setValue([sc, sc]);
-    }
+    ef_fitToBox(layer, comp, cfg, tIn + 0.05);
 
     var relTimes = [];
     for (var ri = 0; ri < g.words.length; ri++) {
@@ -1053,6 +1070,7 @@ function ef_buildSingleReveal(comp, g, cfg, nextStart) {
         }
     } catch (eE) {}
 
+    ef_fitToBox(layer, comp, cfg, measureAt);
     ef_setGroupTiming(layer, g, nextStart);
     if (cfg.dropShadow) ef_applyDropShadow(layer, cfg);
     return 1;
@@ -1158,23 +1176,28 @@ function ef_buildGroup(comp, g, cfg, nextStart) {
         }
         totalW += space * Math.max(0, n - 1);
 
-        var accX = (comp.width * posX / 100) - totalW / 2;
+        // Caption box: shrink the whole word row when it would overflow.
+        var boxW = ef_boxMaxWidth(comp, cfg);
+        var fit = totalW > boxW ? boxW / totalW : 1;
+
+        var accX = (comp.width * posX / 100) - (totalW * fit) / 2;
         var centerY = comp.height * posY / 100;
         var wordCenters = [];  // store per-word X edges for pill sizing
         for (var li = 0; li < n; li++) {
             var L = wordLayers[li];
-            if (!L || !rects[li]) { wordCenters.push(null); accX += widths[li] + space; continue; }
+            if (!L || !rects[li]) { wordCenters.push(null); accX += (widths[li] + space) * fit; continue; }
             var rr = rects[li];
             // Center each word's anchor on its own glyph box, then place
             // at the accumulated X cursor + the group's Y.
             L.property("Anchor Point").setValue([rr.left + rr.width / 2, rr.top + rr.height / 2]);
-            L.property("Position").setValue([accX + widths[li] / 2, centerY]);
-            wordCenters.push({ left: accX, right: accX + widths[li], height: rr.height });
+            L.property("Position").setValue([accX + (widths[li] * fit) / 2, centerY]);
+            if (fit < 1) L.property("Scale").setValue([fit * 100, fit * 100]);
+            wordCenters.push({ left: accX, right: accX + widths[li] * fit, height: rr.height * fit });
             // Per-word entrance keyed to THIS word's spoken start time.
             var ws = g.words[li].start;
             L.property("Opacity").expression = ef_wordFadeUpOpExpr(ws, fadeDur, wordEasing);
             L.property("Position").expression = ef_wordFadeUpPosExpr(ws, fadeDur, slideDist, wordEasing, centerY);
-            accX += widths[li] + space;
+            accX += (widths[li] + space) * fit;
         }
 
         // Create merged pills for adjacent pill words — sized to span ALL
@@ -1192,7 +1215,7 @@ function ef_buildGroup(comp, g, cfg, nextStart) {
                 }
             }
             if (pillLeft >= pillRight) continue;
-            var padX = (cfg.fontSize || 80) * 0.28, padY = (cfg.fontSize || 80) * 0.16;
+            var padX = (cfg.fontSize || 80) * 0.28 * fit, padY = (cfg.fontSize || 80) * 0.16 * fit;
             var pw = (pillRight - pillLeft) + padX * 2;
             var ph = pillH + padY * 2;
             var pcx = (pillLeft + pillRight) / 2;
@@ -1243,6 +1266,7 @@ function ef_buildGroup(comp, g, cfg, nextStart) {
         ef_styleDoc(layer, cfg);
         ef_setGroupTiming(layer, g, nextStart);
         ef_centerAnchor(layer, comp, cfg, g.start + 0.05);
+        ef_fitToBox(layer, comp, cfg, g.start + 0.05);
         ef_applyPreset(layer, cfg, g);
 
         if (cfg.dropShadow) {

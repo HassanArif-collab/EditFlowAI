@@ -72,6 +72,7 @@ const S = {
   pillColor: [0.04, 0.1, 0.18], pillOpacity: 85, pillStrokeColor: [0.36, 0.55, 0.94], pillStrokeWidth: 2, pillRadius: 0.5,
   highlightTextColor: [1, 1, 0], highlightBoxColor: [0.04, 0.1, 0.18], highlightWords: [],
   posX: 50, posY: 80, maxWordsPerSegment: 4, maxCharsPerSegment: 30, maxDurationPerSegment: 3, maxLinesPerSegment: 2, allCaps: false,
+  boxWidthPct: 90,
   preset: 'fadeup_words', animIntensity: 1.0, language: 'auto',
   overlapFrames: 2, minDisplayDur: 0.7,
   _previewTime: 0, _previewPlaying: false, _canvas: null, _ctx: null, _raf: null,
@@ -97,7 +98,7 @@ const SETTINGS_KEYS = [
   'highlightTextColor', 'posX', 'posY', 'maxWordsPerSegment', 'maxCharsPerSegment',
   'maxDurationPerSegment', 'maxLinesPerSegment', 'allCaps', 'preset', 'animIntensity', 'language',
   'wordEasing', 'fadeDur', 'slideDist', 'pillEasing', 'pillScaleDur',
-  'overlapFrames', 'minDisplayDur',
+  'overlapFrames', 'minDisplayDur', 'boxWidthPct',
   'previewHeight',
 ];
 const BUILTIN_PRESETS = {
@@ -299,6 +300,11 @@ function _renderPreview() {
       <button id="cap-preview-play" class="cap-play-btn" ${dis}>${S._previewPlaying ? '⏸' : '▶'}</button>
       <input type="range" id="cap-preview-seek" class="cap-range" min="0" max="${dur}" step="0.01" value="${t}" ${dis} />
       <span class="cap-preview-time" id="cap-preview-time">${t.toFixed(1)}s / ${dur.toFixed(1)}s</span>
+      ${!window.__adobe_cep__ ? `<select id="cap-dev-aspect" class="cap-select" style="width:auto;padding:2px 4px;font-size:10px;" title="No AE detected — pick the comp aspect to preview">
+        <option value="1920x1080" ${cw === 1920 ? 'selected' : ''}>16:9</option>
+        <option value="1080x1920" ${cw === 1080 && ch === 1920 ? 'selected' : ''}>9:16</option>
+        <option value="1080x1080" ${cw === 1080 && ch === 1080 ? 'selected' : ''}>1:1</option>
+      </select>` : ''}
     </div>
     <div class="cap-preview-resize-bar" title="Drag to resize preview"><div></div></div>
   </div>`;
@@ -409,6 +415,11 @@ function _renderTabContent() {
         <input type="range" class="cap-range" id="cap-max-lines" min="1" max="2" value="${S.maxLinesPerSegment}" />
         <span class="cap-range-val" id="cap-max-lines-val">${S.maxLinesPerSegment}</span>
       </div>
+      <div class="cap-row">
+        <label class="cap-label" title="Captions wrap and shrink to stay inside this % of the composition width">Caption Box</label>
+        <input type="range" class="cap-range" id="cap-box-width" min="60" max="100" value="${S.boxWidthPct}" />
+        <span class="cap-range-val" id="cap-box-width-val">${S.boxWidthPct}%</span>
+      </div>
     </div>
   </div>`;
 }
@@ -424,7 +435,8 @@ function _buildWordListHTML() {
   let rows = '';
   for (let gi = 0; gi < groups.length; gi++) {
     const g = groups[gi];
-    rows += `<div class="cap-group-divider" data-gstart="${g.start}" title="Click to preview this caption"><span>Caption ${gi + 1}</span><span>${g.start.toFixed(2)}–${g.end.toFixed(2)}s</span></div>`;
+    const lineTexts = _wrapForBox(g).map((l) => _esc(l.text)).join(' <span style="color:var(--text-2);">⏎</span> ');
+    rows += `<div class="cap-group-divider" data-gstart="${g.start}" title="Click to preview this caption"><span>Caption ${gi + 1} · ${lineTexts}</span><span>${g.start.toFixed(2)}–${g.end.toFixed(2)}s</span></div>`;
     for (const gw of g.words) rows += _renderWordRow(S.words[gw.idx], gw.idx);
   }
   return rows;
@@ -761,6 +773,13 @@ function _wirePreview(v) {
     _updatePreview();
     _updatePreviewTimeLabel();
   };
+  // Browser-rig only: fake comp aspect so 9:16 layout is verifiable without AE.
+  const devAspect = v.querySelector('#cap-dev-aspect');
+  if (devAspect) devAspect.onchange = (e) => {
+    const [w2, h2] = e.target.value.split('x').map(Number);
+    S.compInfo = { width: w2, height: h2, frameRate: 30, name: 'browser-dev', duration: S.duration || 10 };
+    _render();
+  };
   // Resize drag — start from any point inside the preview section
   const sec = v.querySelector('.cap-preview-section');
   const hideFrame = v.querySelector('#cap-frame-hide');
@@ -850,6 +869,11 @@ function _wireTabContent(v) {
     S.maxLinesPerSegment = parseInt(val, 10);
     _refreshContentList();
     return String(S.maxLinesPerSegment);
+  });
+  _wireRange(v, '#cap-box-width', (val) => {
+    S.boxWidthPct = parseInt(val, 10);
+    _refreshContentList();
+    return S.boxWidthPct + '%';
   });
   const mc = v.querySelector('#cap-max-chars');
   if (mc) mc.oninput = (e) => {
@@ -1380,10 +1404,7 @@ function _buildGroupsPayload() {
     words: g.words.map((w) => ({ text: w.text, start: w.start, end: w.end, pill: !!w.pill })),
     start: g.start, end: g.end,
     text: g.text,
-    lines: wrapLines(g, {
-      maxCharsPerSegment: S.maxCharsPerSegment,
-      maxLinesPerSegment: S.maxLinesPerSegment,
-    }).map((l) => ({ startIdx: l.startIdx, endIdx: l.endIdx })),
+    lines: _wrapForBox(g).map((l) => ({ startIdx: l.startIdx, endIdx: l.endIdx })),
     tIn: timing[i].in, tOut: timing[i].out,
   }));
 }
@@ -1490,6 +1511,7 @@ function _buildConfig() {
     wordEasing: S.wordEasing, fadeDur: S.fadeDur, slideDist: S.slideDist,
     pillEasing: S.pillEasing, pillScaleDur: S.pillScaleDur,
     offset: S.audioOffset || 0, replace: true,
+    boxWidthPct: S.boxWidthPct,
   };
 }
 
@@ -1592,10 +1614,7 @@ function _drawCaption(ctx, w, h, g, t) {
   ctx.font = _canvasFont(fontPx);
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
 
-  const lines = wrapLines(g, {
-    maxCharsPerSegment: S.maxCharsPerSegment,
-    maxLinesPerSegment: S.maxLinesPerSegment,
-  });
+  const lines = _wrapForBox(g);
   const lineHeight = S.fontSize * LAYOUT.lineHeightEm * px;
   const space = S.fontSize * LAYOUT.wordGapEm * px;
   const cx = w * (S.posX / 100);
@@ -1625,9 +1644,9 @@ function _drawCaption(ctx, w, h, g, t) {
     layout.push({ ln, texts, widths, pos, y });
   }
 
-  // Auto-shrink parity with the jsx fit guard: scale the caption block down
-  // when a line would overflow the comp width.
-  const fitMax = w * LAYOUT.fitMaxWidthRatio;
+  // Last-resort shrink parity with the jsx fit guard: wrapping already keeps
+  // lines inside the box, so this only fires for a single word wider than it.
+  const fitMax = w * (S.boxWidthPct / 100);
   const fit = maxLineW > fitMax ? fitMax / maxLineW : 1;
   ctx.save();
   if (fit < 1) {
@@ -1723,6 +1742,31 @@ function _canvasFont(fontPx) {
   else if (/light|thin/i.test(style)) weight = 300;
   const italic = /italic|oblique/i.test(style) ? 'italic ' : '';
   return `${italic}${weight} ${fontPx}px "${family}", sans-serif`;
+}
+
+/* Measure text width in COMP pixels with the real preview font. One shared
+   measurer means the payload sent to AE and the canvas preview always make
+   the same line decisions. */
+let _measCanvas = null;
+function _measureCompPx(text) {
+  if (!_measCanvas) _measCanvas = document.createElement('canvas');
+  const c = _measCanvas.getContext('2d');
+  c.font = _canvasFont(S.fontSize);
+  return c.measureText(S.allCaps ? String(text).toUpperCase() : String(text)).width;
+}
+
+/* Wrap a group's words into lines that fit the caption box (boxWidthPct of
+   comp width) using measured widths. This is what keeps the font size
+   CONSTANT: long captions wrap instead of shrinking. */
+function _wrapForBox(g) {
+  const compW = (S.compInfo && S.compInfo.width) || 1920;
+  return wrapLines(g, {
+    maxLinesPerSegment: S.maxLinesPerSegment,
+    maxCharsPerSegment: S.maxCharsPerSegment,
+    maxWidthPx: compW * (S.boxWidthPct / 100),
+    measure: _measureCompPx,
+    spacePx: S.fontSize * LAYOUT.wordGapEm,
+  });
 }
 
 function _pillScale(pillStart, t) {

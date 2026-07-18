@@ -90,22 +90,46 @@ function _toGroup(seg) {
 /* ── Line wrapping ────────────────────────────────────────── */
 
 /**
- * Assign a group's words to lines by character budget (deterministic — the
- * preview and AE always agree). Returns [{startIdx, endIdx, text}] with
+ * Assign a group's words to lines. Returns [{startIdx, endIdx, text}] with
  * indices into group.words. Overflow beyond maxLines lands on the last line.
+ *
+ * Width mode (preferred): pass maxWidthPx + measure(text)→px (+ spacePx) —
+ * greedy fill by MEASURED width, the caption-box contract. The panel decides
+ * lines with real font metrics; AE renders them verbatim, so they agree.
+ * Char mode (fallback): character budget per line (maxCharsPerSegment).
  */
 export function wrapLines(group, opts) {
-  const maxChars = opts.maxCharsPerSegment || 30;
   const maxLines = Math.max(1, opts.maxLinesPerSegment || 1);
+  const ws = group.words;
   const lines = [];
   let start = 0;
+
+  if (opts.measure && opts.maxWidthPx > 0) {
+    const space = opts.spacePx || 0;
+    let width = 0;
+    for (let i = 0; i < ws.length; i++) {
+      const wpx = opts.measure(ws[i].text);
+      const withWord = width === 0 ? wpx : width + space + wpx;
+      const lastLine = lines.length === maxLines - 1;
+      if (width > 0 && withWord > opts.maxWidthPx && !lastLine) {
+        lines.push(_lineOf(ws, start, i - 1));
+        start = i;
+        width = wpx;
+      } else {
+        width = withWord;
+      }
+    }
+    lines.push(_lineOf(ws, start, ws.length - 1));
+    return lines;
+  }
+
+  const maxChars = opts.maxCharsPerSegment || 30;
   let chars = 0;
-  const ws = group.words;
   for (let i = 0; i < ws.length; i++) {
     const wlen = ws[i].text.length;
     const withWord = chars === 0 ? wlen : chars + 1 + wlen;
     const lastLine = lines.length === maxLines - 1;
-    if (i > start - 0 && chars > 0 && withWord > maxChars && !lastLine) {
+    if (chars > 0 && withWord > maxChars && !lastLine) {
       lines.push(_lineOf(ws, start, i - 1));
       start = i;
       chars = wlen;

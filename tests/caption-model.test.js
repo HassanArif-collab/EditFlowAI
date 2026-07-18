@@ -242,3 +242,50 @@ test('captionTiming computed on full list survives batch slicing', () => {
   const sliced = [all.slice(0, 2), all.slice(2)];
   assert.ok(Math.abs(sliced[0][1].out - (2.2 + 2 / 30)) < 1e-9, 'batch boundary keeps next-group hold');
 });
+
+/* ── wrapLines width mode (caption box) ── */
+const BOXW = (specs) => ({ words: specs.map((t, i) => ({ text: t, start: i, end: i + 0.5 })) });
+const MEAS = (text) => text.length * 10;   // fake metrics: 10px per char
+
+test('width-mode wrap breaks by measured width against the box', () => {
+  // widths: 40 each, space 5: "aaaa bbbb" = 85 <= 95; + " cccc" = 130 > 95
+  const lines = M.wrapLines(BOXW(['aaaa', 'bbbb', 'cccc']), {
+    maxLinesPerSegment: 2, maxWidthPx: 95, measure: MEAS, spacePx: 5,
+  });
+  assert.equal(lines.length, 2);
+  assert.equal(lines[0].text, 'aaaa bbbb');
+  assert.equal(lines[1].text, 'cccc');
+});
+
+test('width-mode respects maxLines=1 (never wraps)', () => {
+  const lines = M.wrapLines(BOXW(['aaaa', 'bbbb', 'cccc']), {
+    maxLinesPerSegment: 1, maxWidthPx: 95, measure: MEAS, spacePx: 5,
+  });
+  assert.equal(lines.length, 1);
+  assert.equal(lines[0].text, 'aaaa bbbb cccc');
+});
+
+test('width-mode: a single word wider than the box stays alone, unsplit', () => {
+  const lines = M.wrapLines(BOXW(['aaaaaaaaaaaaaaaa', 'b']), {
+    maxLinesPerSegment: 2, maxWidthPx: 50, measure: MEAS, spacePx: 5,
+  });
+  assert.equal(lines.length, 2);
+  assert.equal(lines[0].text, 'aaaaaaaaaaaaaaaa');
+  assert.equal(lines[1].text, 'b');
+});
+
+test('width-mode overflow beyond maxLines lands on the last line', () => {
+  const lines = M.wrapLines(BOXW(['aaaa', 'bbbb', 'cccc', 'dddd']), {
+    maxLinesPerSegment: 2, maxWidthPx: 45, measure: MEAS, spacePx: 5,
+  });
+  assert.equal(lines.length, 2);
+  assert.equal(lines[1].text, 'bbbb cccc dddd');
+});
+
+test('char mode still works when no measure is provided (back-compat)', () => {
+  const lines = M.wrapLines(BOXW(['aaaa', 'bbbb', 'cccc']), {
+    maxLinesPerSegment: 2, maxCharsPerSegment: 9,
+  });
+  assert.equal(lines.length, 2);
+  assert.equal(lines[0].text, 'aaaa bbbb');
+});
