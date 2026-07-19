@@ -35,14 +35,18 @@ test('ExtendScript loader keeps dispatcher available and handles Windows paths',
 });
 
 test('client passes the CEP extension root before dispatching ExtendScript commands', () => {
+  // The single-chat rewrite relocated this wiring from main.js into
+  // extendscript.js. The intent is unchanged and still worth guarding:
+  // resolve the extension root from CSInterface, then hand it to the jsx
+  // BEFORE any command dispatches (so module reloads use the right root).
   const source = fs.readFileSync(
-    path.join(repoRoot, 'cep-panel', 'client', 'src', 'main.js'),
+    path.join(repoRoot, 'cep-panel', 'client', 'src', 'extendscript.js'),
     'utf8'
   );
 
-  assert.match(source, /extensionPathType = \(state\.csInterface\.SYSTEM_PATH && state\.csInterface\.SYSTEM_PATH\.EXTENSION\) \|\| 'extension'/);
-  assert.match(source, /getSystemPath\(extensionPathType\)/);
-  assert.match(source, /editflowConfigureExtensionRoot/);
+  assert.match(source, /_csInterface\.SYSTEM_PATH && _csInterface\.SYSTEM_PATH\.EXTENSION/);
+  assert.match(source, /getSystemPath\(extensionPathKey\)/);
+  assert.match(source, /callExtendScript\('editflowConfigureExtensionRoot', extensionRoot\)/);
 });
 
 test('ExtendScript can reload modules from a CEP extension root', () => {
@@ -97,24 +101,25 @@ test('ExtendScript exposes guarded timeline range removal', () => {
   assert.match(indexSource, /"removeTimelineRanges"/);
 });
 
-test('CEP panel wires the active sequence phrase workflow end-to-end', () => {
+test('CEP panel wires the native captions workflow end-to-end', () => {
+  // Replaces the legacy "sequence phrase" assertions. The native-captions
+  // rewrite swapped the Premiere panel's primary workflow, so this guards
+  // the real current entry points: header button -> lazily-loaded view
+  // module -> exposed opener. If any link breaks, the panel's main feature
+  // silently fails to open — exactly the regression worth catching.
   const source = fs.readFileSync(
     path.join(repoRoot, 'cep-panel', 'client', 'src', 'main.js'),
     'utf8'
   );
-  // Helper that prepares the snake_case payload for the backend.
-  assert.match(source, /function getSequenceAudioClipsForBackend/);
-  // Public entry points used by buttons + chat command.
-  assert.match(source, /async function analyzeActiveSequenceAudio/);
-  assert.match(source, /async function findPhraseInActiveSequence/);
-  // Buttons must exist and be bound.
-  assert.match(source, /#btn-analyze-sequence-audio/);
-  assert.match(source, /#btn-preview-phrase/);
-  assert.match(source, /#btn-apply-phrase-cut/);
-  // The chat router must intercept "cut/remove/delete '<phrase>'".
-  assert.match(source, /\\b\(\?:cut\|remove\|delete\)\\b/);
-  // State must declare lastPhraseRanges.
-  assert.match(source, /lastPhraseRanges\s*:\s*\[\]/);
+  // The view is lazy-loaded (cache-buster) and its opener captured.
+  assert.match(source, /import\('\.\/native-captions-view\.js' \+ bust\)/);
+  assert.match(source, /openNativeCaptions = ncMod\.openNativeCaptions/);
+  // Exposed on window so the header/command can open it.
+  assert.match(source, /window\.__editflowOpenNativeCaptions = openNativeCaptions/);
+  // Button must exist and be bound to the opener.
+  assert.match(source, /const btnNativeCaptions = \$\('#btn-native-captions'\)/);
+  assert.match(source, /btnNativeCaptions\.addEventListener\('click'/);
+  assert.match(source, /if \(openNativeCaptions\) openNativeCaptions\(\)/);
 });
 
 test('ExtendScript manager modules export singletons without function-scoped var declarations', () => {
