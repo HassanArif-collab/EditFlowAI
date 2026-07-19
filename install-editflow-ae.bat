@@ -19,8 +19,9 @@ if not exist "%PS1%" (
     exit /b 1
 )
 
-:: Run the extracted PowerShell script, passing the .bat file's directory
-powershell -NoProfile -ExecutionPolicy Bypass -File "%PS1%" -BatDir "%~dp0"
+:: Run the extracted PowerShell script, passing the .bat file's directory.
+:: "%~dp0." — trailing dot stops the final backslash escaping the quote.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%PS1%" -BatDir "%~dp0."
 
 set "EXITCODE=%ERRORLEVEL%"
 
@@ -48,6 +49,7 @@ $RepoUrl = "https://github.com/HassanArif-collab/EditFlowAI/archive/refs/heads/f
 $ExtensionId = "com.editflow.ae"
 
 # Install next to the .bat file
+$BatDir = ($BatDir -replace '"', '').TrimEnd('.')   # undo the quoting-trap dot
 if ($BatDir -and (Test-Path $BatDir)) {
     $ScriptDir = $BatDir.TrimEnd('\').TrimEnd('/')
 } else {
