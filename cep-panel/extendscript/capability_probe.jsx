@@ -8,7 +8,11 @@
  *
  * Called from editflowDispatch with command "probeCapabilities".
  */
-var capabilityProbe = (function () {
+capabilityProbe = (function () {
+    // NOTE: no `var` — every sibling module (clipManager, projectScanner,
+    // …) assigns implicit-globals so index.jsx can see them. A top-level
+    // `var` in a $.evalFile'd script stays file-scoped in ExtendScript,
+    // which made this whole probe invisible ("capabilityProbe is undefined").
     // ── Helpers ──
 
     function safeCall(fn) {
@@ -100,6 +104,43 @@ var capabilityProbe = (function () {
         }
     }
 
+    function checkCaptionTrackAPI() {
+        // Does seq.createCaptionTrack exist? (Tier-1 native captions:
+        // import SRT via app.project.importFiles, then
+        // sequence.createCaptionTrack(srtItem, 0). Verified in
+        // tmoroney/auto-subs ppro.ts importSRTFile, which wraps the
+        // call in try/catch because it is missing on some builds.
+        // Read-only typeof check — creates nothing.)
+        try {
+            var seq = app.project.activeSequence;
+            if (!seq) return false;
+            return typeof seq.createCaptionTrack === "function";
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function checkProjectImportFiles() {
+        // Can we import files (e.g. .srt, .xml) into the project bin?
+        // Read-only typeof check — imports nothing.
+        try {
+            if (!app.project) return false;
+            return typeof app.project.importFiles === "function";
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function getPremiereVersion() {
+        // Read-only version string for version-gating (e.g.
+        // createCaptionTrack availability varies by build).
+        try {
+            return String(app.version || "");
+        } catch (e) {
+            return "";
+        }
+    }
+
     // ── Main probe function ──
 
     function probe() {
@@ -109,7 +150,10 @@ var capabilityProbe = (function () {
             marker_seconds: checkMarkerSeconds(),
             frame_size: checkFrameSize(),
             project_has_path: checkProjectHasPath(),
-            active_sequence: checkActiveSequence()
+            active_sequence: checkActiveSequence(),
+            caption_track_api: checkCaptionTrackAPI(),
+            project_import_files: checkProjectImportFiles(),
+            premiere_version: getPremiereVersion()
         };
         return capabilities;
     }

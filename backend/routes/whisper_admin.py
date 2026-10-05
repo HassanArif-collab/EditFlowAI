@@ -132,6 +132,36 @@ def _is_model_installed(model_name: str, fragments: list[str]) -> bool:
     return False
 
 
+def _normalize_model_id(model_id: str) -> str:
+    """Normalize a model reference for catalog comparison.
+
+    The active model may be stored as a full repo id
+    ("Systran/faster-whisper-large-v3") while the catalog uses short names
+    ("large-v3"). Without this, an installed model reports missing and the
+    panel wrongly demands a re-download.
+    """
+    s = (model_id or "").strip().lower().split("/")[-1]
+    if s.startswith("faster-whisper-"):
+        s = s[len("faster-whisper-"):]
+    return s
+
+
+def is_model_installed(model_name: str) -> bool:
+    """Public wrapper around _is_model_installed + catalog lookup.
+
+    Returns True if ``model_name`` is in the catalog AND its weights
+    are present (non-empty snapshot) in the HuggingFace hub cache.
+    Used by routes that need a quick boolean without re-iterating the
+    catalog themselves (e.g. /api/captions/transcribe-mixdown's 409
+    short-circuit before the user uploads a WAV for nothing).
+    """
+    want = _normalize_model_id(model_name)
+    for m in _MODEL_CATALOG:
+        if _normalize_model_id(m["name"]) == want:
+            return _is_model_installed(m["name"], m["hf_repo_fragments"])
+    return False
+
+
 @router.get("/status")
 async def whisper_status():
     """Return the active model + per-model installed state + cache location."""

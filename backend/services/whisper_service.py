@@ -953,6 +953,18 @@ class WhisperService:
                 logger.warning(f"Failed to load cached transcript for {file_fingerprint[:16]}...: {e}")
         return None
 
+    def peek_cached_transcript(self, file_fingerprint: str) -> Optional[TranscriptResult]:
+        """Return a cached transcript for ``file_fingerprint`` without
+        transcribing (memory → on-disk JSON). Any engine accepted — a
+        previously accepted transcript is reused as-is so repeat uploads
+        never re-run models. Returns None on miss.
+        """
+        try:
+            return self._get_cached_transcript(file_fingerprint)
+        except Exception as e:  # noqa: BLE001 — peek must never break the flow
+            logger.debug(f"peek_cached_transcript failed: {e}")
+            return None
+
     def _write_transcript_sidecar(self, result: TranscriptResult) -> None:
         """Write a human-readable transcript sidecar next to the source video.
 

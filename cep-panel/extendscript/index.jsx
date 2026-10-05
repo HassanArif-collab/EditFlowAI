@@ -19,7 +19,8 @@ var editflowModuleNames = [
     "track_manager.jsx",
     "export_manager.jsx",
     "effects_manager.jsx",
-    "capability_probe.jsx"
+    "capability_probe.jsx",
+    "captions_manager.jsx"
 ];
 
 function editflowEscapeJSON(value) {
@@ -113,14 +114,19 @@ function editflowLoadAllModules(baseDir) {
     return editflowLoadErrors.length === 0;
 }
 
-function editflowConfigureExtensionRoot(extensionRoot) {
+function editflowConfigureExtensionRoot(extensionRoot, forceReload) {
     var baseDir = editflowGetExtendScriptDir(extensionRoot);
     if (!baseDir) {
         editflowLoadErrors = ["CEP extension root was empty."];
         return editflowErrorResult(new Error(editflowLoadErrors[0]), "configureExtensionRoot");
     }
 
+    // Fast path: same dir, clean load, core module present → nothing to do.
+    // forceReload (panel 🔁 / dev_reload) bypasses this so .jsx edits on
+    // disk are actually re-evaluated — otherwise the engine keeps serving
+    // the stale in-memory modules forever (one stale module can never heal).
     if (
+        !forceReload &&
         baseDir === editflowConfiguredScriptDir &&
         editflowLoadErrors.length === 0 &&
         typeof projectScanner !== "undefined"
@@ -309,6 +315,46 @@ function editflowDispatch(command, payloadData) {
             result = exportManager.exportCurrentSequence(options);
             break;
 
+        // ── Captions (Tier-1 native: SRT -> caption track) ──
+        case "importCaptionsFromSRT":
+            result = captionsManager.importSRTAsCaptionTrack(options);
+            break;
+
+        // ── Generic module call ──
+        // Stability mechanism: index.jsx itself only (re-)evaluates at
+        // Premiere/extension start — edits here need a Premiere restart.
+        // Module files re-evaluate on every forced configure (🔁), so route
+        // ALL future commands through here: {module, fn, ...args}. New
+        // caption/cut commands then hot-reload with no restart, ever again.
+        case "callModule": {
+            var modName = editflowUtils.getParam(options, 'module');
+            var fnName = editflowUtils.getParam(options, 'fn', 'func');
+            var target = null;
+            try {
+                target = eval(modName);
+            } catch (e0) {
+                target = null;
+            }
+            if (!target || typeof target[fnName] !== "function") {
+                result = editflowUtils.safeStringify({
+                    success: false,
+                    error: "Unknown module fn: " + modName + "." + fnName
+                });
+            } else {
+                try {
+                    var callOut = target[fnName](options);
+                    result = (typeof callOut === "string")
+                        ? callOut
+                        : editflowUtils.safeStringify(callOut);
+                } catch (e1) {
+                    result = editflowUtils.safeStringify({
+                        success: false, error: e1.toString()
+                    });
+                }
+            }
+            break;
+        }
+
         // ── Capability Probe ──
         case "probeCapabilities":
             result = editflowUtils.safeStringify({
@@ -362,7 +408,8 @@ function editflowDispatch(command, payloadData) {
             "removeTimelineClips", "removeTimelineRanges",
             "clearTimelineLabels", "manageTracks",
             "setAudioLevel", "normalizeAudio", "audioFade", "addMarker", "addPhraseRangeMarkers",
-            "applyEffect", "applyTransitionToAll", "setClipLabel", "processEDL"
+            "applyEffect", "applyTransitionToAll", "setClipLabel", "processEDL",
+            "importCaptionsFromSRT"
         ];
         if (editflowArrayContains(modifyingCommands, command)) {
             _undoCounter++;

@@ -11,7 +11,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .config import init_dirs
-from .routes import agent, chat, edit, external_plan, media, models_routes, pipeline, preflight, premiere, providers, review, script_extract, whisper_admin
+from .routes import agent, captions, chat, edit, external_plan, media, models_routes, pipeline, preflight, premiere, providers, review, script_extract, whisper_admin
+
+import os
+
+
+def _dev_watch_enabled() -> bool:
+    """Panel live-reload watcher is opt-in: only EditFlowAI.bat sets it."""
+    return os.environ.get("EDITFLOW_DEV_WATCH") == "1"
 
 # Configure logging
 logging.basicConfig(
@@ -48,14 +55,25 @@ async def lifespan(app: FastAPI):
     discovery_task = asyncio.create_task(_background_discover())
     app.state.discovery_task = discovery_task
 
+    # Dev-only live reload: file watcher pushing dev_reload to the panel.
+    watch_task = None
+    if _dev_watch_enabled():
+        from .services.dev_watch import watch_panel_files
+        watch_task = asyncio.create_task(
+            watch_panel_files(Path(__file__).parent.parent)
+        )
+        app.state.dev_watch_task = watch_task
+        logger.info("dev_watch enabled: cep-panel edits push dev_reload to the panel")
+
     yield
 
-    if not discovery_task.done():
-        discovery_task.cancel()
-        try:
-            await discovery_task
-        except (asyncio.CancelledError, Exception):
-            pass
+    for task in (discovery_task, watch_task):
+        if task and not task.done():
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
 
     try:
         await provider_service.shutdown()
@@ -109,6 +127,7 @@ app.include_router(edit.router, prefix="/api")
 app.include_router(agent.router, prefix="/api")
 app.include_router(external_plan.router, prefix="/api")
 app.include_router(review.router, prefix="/api")
+app.include_router(captions.router, prefix="/api")
 app.include_router(script_extract.router)
 app.include_router(whisper_admin.router, prefix="/api")
 

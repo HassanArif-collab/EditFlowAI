@@ -234,6 +234,7 @@ Everything under `data/` is runtime state. The repo doesn't ship any of it. The 
 - **Async callers, sync helpers.** Heavy CPU work (Whisper inference, ffmpeg) goes through `asyncio.to_thread`. Don't `time.sleep` in an async function.
 - **The progress bar invariants:** `ProgressReporter(task_type="transcribe", client_id="")` for any user-facing transcribe-ish task. Wrong `task_type` silently drops events on the panel side — see commit `5b58a4f`.
 - **Build tag bumps on every panel-affecting change.** `BUILD_TAG` in `main.js` AND `?v=...` in `cep-loader.html`. Without both, CEF serves stale modules.
+- **Live reload during dev:** run with `EDITFLOW_DEV_WATCH=1` (EditFlowAI.bat sets it). `services/dev_watch.py` polls `cep-panel/` every 2s and pushes `dev_reload` over WS; the panel re-loads ExtendScript + `location.reload()`. Off by default.
 
 ---
 

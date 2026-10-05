@@ -66,6 +66,17 @@ clipManager = (function() {
                     case "add_marker":
                         result = addMarkerToSequence(seq, op);
                         break;
+                    case "add_captions":
+                        // Tier-1 captions via EDL: {action:"add_captions", srt_path:"..."}.
+                        // captionsManager returns a JSON string; parse it back
+                        // to an object so per-op results stay uniform (strict
+                        // mode forbids stamping .operation onto a string).
+                        try {
+                            result = JSON.parse(captionsManager.importSRTAsCaptionTrack(op));
+                        } catch (e) {
+                            result = { success: false, error: e.toString() };
+                        }
+                        break;
                     default:
                         result = { success: false, error: "Unknown action: " + action };
                 }
@@ -789,6 +800,17 @@ clipManager = (function() {
                             result = { success: false, error: "No active sequence" };
                         } else {
                             result = addMarkerToSequence(seq, op);
+                        }
+                        break;
+
+                    case "add_captions":
+                        // Tier-1 captions via EDL: {action:"add_captions", srt_path:"..."}.
+                        // captionsManager returns a JSON string; parse it back
+                        // to an object so results stay uniform.
+                        try {
+                            result = JSON.parse(captionsManager.importSRTAsCaptionTrack(op));
+                        } catch (e) {
+                            result = { success: false, error: e.toString() };
                         }
                         break;
 

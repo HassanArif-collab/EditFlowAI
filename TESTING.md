@@ -221,6 +221,12 @@ pytest -m "not real_models" -v
 pytest tests/unit -v
 pytest tests/test_mvp_*.py -v   # legacy unit-style tests
 
+# ExtendScript harness (no Premiere needed — stubs the host, runs the real .jsx)
+node --test tests/jsx/captions.test.js
+
+# Live production-path proof (needs backend up + a cached transcript)
+python scripts/live_overlay_proof.py
+
 # Including tier 3 (slow, needs model download on first run)
 pytest -m "real_models" -v
 

@@ -10,8 +10,11 @@ let _esLoaded = false;
 
 /**
  * Initialize the CSInterface reference and load the ExtendScript bundle.
+ * @param {boolean} force - pass true to force re-evaluation of every
+ *   ExtendScript module from disk even when the engine thinks it is current
+ *   (panel 🔁 button / dev_reload path — picks up .jsx edits).
  */
-async function initExtendScript() {
+async function initExtendScript(force) {
   try {
     if (typeof CSInterface === 'undefined') {
       console.warn('[extendscript] CSInterface not available — running outside CEP?');
@@ -28,9 +31,9 @@ async function initExtendScript() {
     const extensionRoot = _csInterface.getSystemPath(extensionPathKey) ||
                           _csInterface.getSystemPath('extension');
 
-    await callExtendScript('editflowConfigureExtensionRoot', extensionRoot);
+    await callExtendScript('editflowConfigureExtensionRoot', extensionRoot, !!force);
     _esLoaded = true;
-    console.log('[extendscript] ExtendScript loaded');
+    console.log('[extendscript] ExtendScript loaded' + (force ? ' (forced)' : ''));
     return true;
   } catch (e) {
     console.warn('[extendscript] Init failed:', e);
@@ -93,7 +96,7 @@ function _buildScript(fnName, args) {
        'addMediaToTimeline', 'createSequence', 'getSelectedProjectItems',
        'probeCapabilities', 'undoLastAction', 'removeTimelineClips',
        'clearTimelineLabels', 'addMarker', 'removeTimelineRanges',
-       'importFiles', 'getMarkers'
+       'importFiles', 'getMarkers', 'importCaptionsFromSRT', 'callModule'
       ].includes(fnName)) {
     // These are dispatched through the index.jsx router
     const command = fnName;
@@ -127,10 +130,60 @@ function isExtendScriptAvailable() {
   return _esLoaded && _csInterface !== null;
 }
 
+/**
+ * Convenience: import an SRT file as a caption track on the active sequence.
+ */
+async function importCaptionsFromSRT(srtPath) {
+  return callExtendScript('importCaptionsFromSRT', { srt_path: srtPath });
+}
+
+/**
+ * Fully re-evaluate extendscript/index.jsx inside Premiere, then reload
+ * every module from disk. Unlike initExtendScript (which only re-evals the
+ * 12 module files), this also refreshes the editflowDispatch router itself
+ * — required after index.jsx changes, with NO Premiere restart.
+ * @returns {Promise<boolean>} true if the re-eval ran.
+ */
+async function reloadExtensionRoot() {
+  if (typeof CSInterface === 'undefined') {
+    return false;
+  }
+  const cs = _csInterface || new CSInterface(); // eslint-disable-line no-undef
+  _csInterface = cs;
+  const extensionPathKey =
+    (cs.SYSTEM_PATH && cs.SYSTEM_PATH.EXTENSION) ||
+    (typeof SystemPath !== 'undefined' && SystemPath.EXTENSION) || // eslint-disable-line no-undef
+    'extension';
+  // getSystemPath may return a file:// URL (Premiere does) or a plain
+  // path — $.evalFile needs a plain filesystem path, so normalize first.
+  let root = String(cs.getSystemPath(extensionPathKey) || cs.getSystemPath('extension') || '');
+  root = root.replace(/^file:\/\/\//i, '');
+  try { if (root.indexOf('%') !== -1) root = decodeURIComponent(root); } catch (_) {}
+  if (!root) return false;
+  const jsxPath = (root + '/extendscript/index.jsx').replace(/\\/g, '/');
+  try { window.__editflowJsxPath = jsxPath; } catch (_) {}
+  let evalResult = '(no callback)';
+  await new Promise((resolve) => {
+    try {
+      cs.evalScript('$.evalFile("' + jsxPath + '")', (res) => { evalResult = String(res); resolve(); });
+    } catch (_) {
+      resolve();
+    }
+  });
+  try { window.__editflowEvalResult = evalResult; } catch (_) {}
+  // Modules may now be fresher than the engine state — force re-configure.
+  try {
+    await initExtendScript(true);
+  } catch (_) { /* eval result already applied; configure is belt-and-suspenders */ }
+  return true;
+}
+
 export {
   initExtendScript,
+  reloadExtensionRoot,
   callExtendScript,
   getSelectedProjectItems,
   scanProjectMedia,
+  importCaptionsFromSRT,
   isExtendScriptAvailable,
 };

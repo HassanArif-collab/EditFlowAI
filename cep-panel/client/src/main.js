@@ -4,7 +4,7 @@
  * Initializes all modules, wires up DOM events, and starts the app.
  * This file owns no business logic — it delegates to the modules.
  */
-const BUILD_TAG = 'review-9';  // bump when shipping a fix; visible in header
+const BUILD_TAG = 'review-38';  // bump when shipping a fix; visible in header
 
 // FIRST thing on parse: clear the inline boot-check banner. If the user sees
 // the banner disappear, we KNOW main.js parsed successfully and modules are
@@ -24,7 +24,7 @@ const BUILD_TAG = 'review-9';  // bump when shipping a fix; visible in header
 })();
 
 import { getState, setState, setSession, transition, transitionError, subscribe, resetState, loadResumableSession, hydrateFromSaved, clearSavedSession } from './state.js';
-import { initExtendScript, isExtendScriptAvailable } from './extendscript.js';
+import { initExtendScript, isExtendScriptAvailable, callExtendScript, reloadExtensionRoot } from './extendscript.js';
 import { apiGet, apiPost, connectWS, getBaseUrl, setBaseUrl } from './api.js';
 import { appendMessage, clearChat, scrollToBottom } from './chat-ui.js';
 import { attachAutocomplete } from './autocomplete.js';
@@ -36,6 +36,8 @@ import { initSettings, openSettings, onWhisperDownloadProgress } from './setting
 // _loadOrchestrator so edits to review-view.js land on reload without a CEP
 // cache wipe. Kept in a module var + on window for the orchestrator's /review.
 let openReview = null;
+// Same treatment for the Captions tab (captions-view.js).
+let openCaptions = null;
 // Feature flag: agent mode vs. legacy orchestrator
 const AGENT_MODE = localStorage.getItem('editflow_agent_mode') === 'on';
 
@@ -84,6 +86,16 @@ async function _loadOrchestrator() {
   } catch (e) {
     console.error('[EditFlow] Failed to load review-view:', e);
   }
+
+  // Load the Captions tab the same way (AE-style Transcribe→Generate flow
+  // for Tier-1 native caption tracks).
+  try {
+    const ccMod = await import('./captions-view.js' + bust);
+    openCaptions = ccMod.openCaptions;
+    window.__editflowOpenCaptions = openCaptions;
+  } catch (e) {
+    console.error('[EditFlow] Failed to load captions-view:', e);
+  }
 }
 
 const $ = (sel) => document.querySelector(sel);
@@ -104,6 +116,7 @@ const btnSend = $('#btn-send');
 const btnAttach = $('#btn-attach');
 const btnSettings = $('#btn-settings');
 const btnReview = $('#btn-review');
+const btnCaptions = $('#btn-captions');
 const btnDiagnostics = $('#btn-diagnostics');
 const settingsOverlay = $('#settings-overlay');
 const diagnosticsPopover = $('#diagnostics-popover');
@@ -162,9 +175,25 @@ async function init() {
     return;
   }
 
-  // 1. Initialize ExtendScript bridge
-  const esAvailable = await initExtendScript();
+  // 1. Initialize ExtendScript bridge. Full refresh from disk (not just
+  //    module re-configure): re-evaluates index.jsx itself so the dispatch
+  //    router always matches the files on disk — stale-router "Unknown
+  //    command" can never survive a panel reload. Idempotent + guarded
+  //    inside reloadExtensionRoot; falls back to plain init on failure.
+  let esAvailable = false;
+  try {
+    esAvailable = await reloadExtensionRoot();
+  } catch (_) {
+    try { esAvailable = await initExtendScript(); } catch (_) { esAvailable = false; }
+  }
   console.log(`[EditFlow] ExtendScript: ${esAvailable ? 'available' : 'not available'}`);
+
+  // 1b. Report host capabilities (fire-and-forget — never blocks boot).
+  // Runs probeCapabilities inside Premiere and POSTs the result to
+  // /api/preflight/capabilities so the backend knows e.g. whether
+  // sequence.createCaptionTrack exists on this build. Needs a project
+  // with an active sequence open for the full picture.
+  _reportCapabilities();
 
   // 2. Wire up Scan button
   if (btnScan) {
@@ -226,6 +255,57 @@ async function init() {
       try { if (openReview) openReview(); else console.warn('[EditFlow] Review not loaded yet'); }
       catch (e) { console.error('[EditFlow] openReview failed:', e); }
     });
+  }
+
+  // 9c. Captions tab (Tier-1 native captions — AE-style tabbed flow).
+  if (btnCaptions) {
+    btnCaptions.addEventListener('click', () => {
+      try {
+        try { localStorage.setItem('editflow_home_view', 'captions'); } catch (_) {}
+        if (openCaptions) openCaptions(); else console.warn('[EditFlow] Captions not loaded yet');
+      }
+      catch (e) { console.error('[EditFlow] openCaptions failed:', e); }
+    });
+  }
+
+  // 9d. Boot into the last-used home view (default: Captions studio, like
+  //     the AE panel boots into its caption studio — chat stays one Close
+  //     away). Stored pref survives reloads. A throwing view must never
+  //     leave a black panel: fall back to the chat hero.
+  try {
+    const homeView = localStorage.getItem('editflow_home_view') || 'captions';
+    if (homeView === 'captions' && typeof openCaptions === 'function') {
+      openCaptions();
+    }
+  } catch (e) {
+    console.warn('[EditFlow] home view open failed, showing chat:', e);
+    try {
+      const hero = $('#hero');
+      if (hero) hero.classList.remove('hidden');
+    } catch (_) {}
+  }
+
+  // 9b. Dev Reload button — re-loads the ExtendScript bundle + the panel
+  // page without restarting Premiere. Mirrors the AE panel's 🔁 button.
+  // Mostly clicked automatically: the backend file watcher pushes
+  // `dev_reload` over WS (EDITFLOW_DEV_WATCH=1) ~2s after any cep-panel/
+  // edit, and _initWebSocket reloads for us.
+  if (btnSettings && btnSettings.parentNode) {
+    const btnReload = document.createElement('button');
+    btnReload.id = 'btn-dev-reload';
+    btnReload.className = 'icon-btn';
+    btnReload.title = 'Reload panel + ExtendScript (no Premiere restart needed)';
+    btnReload.textContent = '🔁';
+    btnReload.addEventListener('click', () => devReload());
+    btnReload.style.display = 'none';
+    btnSettings.parentNode.insertBefore(btnReload, btnSettings);
+    // Show only when the dev watcher is plausibly active (localhost backend).
+    // Harmless if shown without it — it just reloads the panel.
+    try {
+      if (/^(http:\/\/localhost|http:\/\/127\.0\.0\.1)/.test(getBaseUrl())) {
+        btnReload.style.display = '';
+      }
+    } catch (_) { btnReload.style.display = ''; }
   }
 
   // 10. Connect WebSocket for real-time updates
@@ -335,7 +415,109 @@ function _initSettingsOverlay() {
   btnSettings.addEventListener('click', () => openSettings());
 }
 
+// ── Capability report ────────────────────────────────────────
+/**
+ * Run the ExtendScript capability probe and report it to the backend.
+ * Fire-and-forget: failures are logged, never surfaced — the panel works
+ * fine without it; the backend just won't know host capabilities.
+ */
+async function _reportCapabilities() {
+  // Always report SOMETHING so the backend (and the next dev reading
+  // GET /api/preflight/capabilities) can tell "probe failed" apart from
+  // "probe never ran". Failures stay silent in the panel UI on purpose.
+  const report = async (caps) => {
+    try {
+      caps.panel_version = BUILD_TAG;
+      await apiPost('/api/preflight/capabilities', caps, { timeoutMs: 8000 });
+      console.log('[EditFlow] Capabilities reported:', JSON.stringify(caps));
+    } catch (e) {
+      console.warn('[EditFlow] Capability report POST failed (non-fatal):', (e && e.message) || e);
+    }
+  };
+  try {
+    // Self-healing first step: re-run extension-root configuration so the
+    // ExtendScript modules are (re-)evaluated from the CURRENT files on
+    // disk before probing. Without this, the probe runs against whatever
+    // the engine loaded at Premiere/extension start, which can predate
+    // newer modules (seen live as "capabilityProbe is undefined").
+    try {
+      await initExtendScript();
+    } catch (e) {
+      console.warn('[EditFlow] ExtendScript re-configure failed (probing anyway):', (e && e.message) || e);
+    }
+    if (!isExtendScriptAvailable()) {
+      await report({ probe_error: 'ExtendScript not available at boot' });
+      return;
+    }
+    const res = await callExtendScript('probeCapabilities');
+    const caps = (res && res.capabilities) || res;
+    if (!caps || typeof caps !== 'object') {
+      await report({ probe_error: 'probe returned non-object: ' + String(res).slice(0, 200) });
+      return;
+    }
+    // Router freshness ping: proves the in-engine dispatch router matches
+    // the files on disk (a stale router answers "Unknown command" here
+    // while the probe above still passes — that split is exactly what hid
+    // the bug). Reported so the backend log shows it without a user roundtrip.
+    try {
+      const ping = await callExtendScript('callModule', { module: 'capabilityProbe', fn: 'probe' });
+      caps.router_fresh = !!(ping && ping.qe_available !== undefined);
+      if (!caps.router_fresh) caps.router_error = 'callModule answered without probe keys';
+    } catch (e) {
+      caps.router_fresh = false;
+      caps.router_error = String((e && e.message) || e).slice(0, 120);
+    }
+    try {
+      caps.evalfile_result = String(window.__editflowEvalResult || '(none)').slice(0, 120);
+      caps.jsx_path = String(window.__editflowJsxPath || '(none)').slice(0, 160);
+    } catch (_) {}
+    await report(caps);
+  } catch (e) {
+    const errMsg = String((e && e.message) || e);
+    // Self-heal once per session: a stale in-engine router (e.g. "Unknown
+    // command" or "... is undefined" right after an index.jsx change)
+    // re-evaluates index.jsx from disk, then reloads into the fresh state.
+    // The sessionStorage flag guarantees this can never loop.
+    let healed = false;
+    try { healed = sessionStorage.getItem('editflow_jsx_healed') === '1'; } catch (_) {}
+    if (!healed && /unknown command|is undefined/i.test(errMsg)) {
+      try { sessionStorage.setItem('editflow_jsx_healed', '1'); } catch (_) {}
+      console.log('[EditFlow] Stale ExtendScript router — healing, then reloading.');
+      try { await reloadExtensionRoot(); } catch (_) {}
+      location.reload();
+      return;
+    }
+    await report({ probe_error: errMsg.slice(0, 300) });
+  }
+}
+
 // ── WebSocket ────────────────────────────────────────────────
+let _reloading = false;
+/**
+ * Reload the ExtendScript bundle inside Premiere, then reload the panel.
+ * ExtendScript functions are globals, so re-running initExtendScript
+ * (editflowConfigureExtensionRoot re-evals every module) hot-swaps them
+ * without restarting Premiere. location.reload() then pulls fresh panel
+ * code (no-store headers + BUILD_TAG cache-buster).
+ */
+async function devReload() {
+  if (_reloading) return;
+  _reloading = true;
+  try {
+    // Full refresh: re-evaluates index.jsx (router) + every module from
+    // disk, so .jsx edits land with no Premiere restart. Falls back to a
+    // forced configure if the direct re-eval is unavailable.
+    try {
+      await reloadExtensionRoot();
+    } catch (_) {
+      await initExtendScript(true);
+    }
+  } catch (e) {
+    console.warn('[dev] ExtendScript re-load failed (reloading panel anyway):', e);
+  }
+  location.reload();
+}
+
 function _initWebSocket() {
   try {
     const ws = connectWS(CLIENT_ID);
@@ -362,6 +544,13 @@ function _initWebSocket() {
       }
       if (data && data.type === 'chat_response') {
         console.log('[ws] Chat response:', data);
+      }
+      // Live reload — backend dev watcher (EDITFLOW_DEV_WATCH=1) pushes this
+      // ~2s after any cep-panel/ file change. Re-load ExtendScript (function
+      // redefinition hot-swaps without restarting Premiere), then reload.
+      if (data && data.type === 'dev_reload') {
+        console.log('[ws] dev_reload:', ((data.files || []).join(', ') || 'panel files'));
+        devReload();
       }
     });
 

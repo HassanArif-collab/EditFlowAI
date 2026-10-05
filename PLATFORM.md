@@ -10,7 +10,7 @@ The fundamental rule: **everything that touches the filesystem, processes, or Hu
 
 | Path / artifact | Why |
 |---|---|
-| `install_cep.sh`, `install_cep_junction.ps1`, `deploy_cep_admin.ps1` | Install the CEP panel into Adobe's extension directory. PowerShell calls + Windows registry. |
+| `EditFlowAI.bat` | One-click install + backend start. PowerShell calls + Windows registry. |
 | `data/tools/ffmpeg-*/bin/ffmpeg.exe` | The bundled ffmpeg the user downloaded. Linux installs `ffmpeg` system-wide. |
 | `cep-panel/host/index.html` ExtendScript path resolution | Maps Premiere project URIs via Windows path conventions. |
 | `backend/config.py::_resolve_ffmpeg_path()` checks under `LOCALAPPDATA`, `C:/Program Files/ffmpeg/bin`, `C:/ProgramData/chocolatey/bin` | Windows-specific install location probes. |
@@ -163,5 +163,4 @@ If "no" to all six, the change is likely cross-platform clean. If "yes" to any, 
 | CEF no-store headers | `backend/main.py` `_NoCacheStatic` class |
 | Module cache-buster | `cep-panel/client/src/main.js::_loadOrchestrator` |
 | OS-aware path suffix matching | `backend/services/agent/tools.py::_recover_clip_path` |
-| Windows-only install scripts | `install_cep_junction.ps1`, `deploy_cep_admin.ps1` |
-| Linux-only install script | `install_cep.sh` (largely a stub; CEP doesn't run on Linux) |
+| One-click install + backend start | `EditFlowAI.bat` |

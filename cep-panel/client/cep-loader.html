@@ -29,6 +29,7 @@
     <span id="boot-tag" class="boot-tag" title="Frontend build tag — must match latest commit">build:unloaded</span>
     <span class="header-spacer"></span>
     <button id="btn-review" class="icon-btn" title="Review &amp; Cut (transcript editor)">&#128221;</button>
+    <button id="btn-captions" class="icon-btn" title="Captions (native caption track)">&#128172;</button>
     <button id="btn-diagnostics" class="icon-btn" title="Diagnostics">&#9432;</button>
     <button id="btn-settings" class="icon-btn" title="Settings">&#9881;</button>
   </header>
@@ -228,8 +229,9 @@
   <div id="diagnostics-popover" class="popover hidden"></div>
 
   <script src="lib/CSInterface.js?v=20260606c"></script>
-  <!-- ?v= cache-buster: force CEP to refetch each release so module hot-swap
-       is reliable. Bump the value whenever any module changes. -->
-  <script type="module" src="src/main.js?v=20260606c"></script>
+  <!-- ?v= cache-buster: must match BUILD_TAG in src/main.js. Force CEP to
+       refetch each release so module hot-swap is reliable. Bump the value
+       whenever any module changes. -->
+  <script type="module" src="src/main.js?v=review-38"></script>
 </body>
 </html>

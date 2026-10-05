@@ -331,6 +331,15 @@ async function onUserMessage(text) {
     await _handlePastePlanCommand(body);
     return;
   }
+  if (/^\/captions?\b/i.test(text)) {
+    // Tier-1 caption import: /captions <srt-path> imports the SRT as a
+    // native caption track on the active sequence. The path is usually
+    // the srt_path returned by POST /api/captions/srt.
+    const srtPath = text.replace(/^\/\S+\s*/, '').trim().replace(/^["']|["']$/g, '');
+    appendMessage('user-text', { text });
+    await _handleCaptionsCommand(srtPath);
+    return;
+  }
 
   const sourceRefs = _extractSourceReferences(text);
   const canPickSource =
@@ -874,6 +883,45 @@ async function _handlePastePlanCommand(rawJson) {
       });
     },
   });
+}
+
+/**
+ * Tier-1 caption import: /captions <srt-path>.
+ */
+async function _handleCaptionsCommand(srtPath) {
+  if (!srtPath) {
+    appendMessage('agent-text', {
+      text: 'Pass the SRT path after /captions. Example:\n'
+          + '  /captions G:\\path\\to\\captions.srt\n'
+          + '(POST /api/captions/srt returns an srt_path you can paste here.)',
+    });
+    return;
+  }
+  if (!isExtendScriptAvailable()) {
+    appendMessage('error', { text: 'ExtendScript is not available — open the panel inside Premiere Pro.' });
+    return;
+  }
+  const msgId = appendMessage('progress', {
+    label: 'Importing captions...',
+    pct: 40,
+    detail: 'Importing SRT + creating caption track.',
+  });
+  try {
+    const res = await callExtendScript('importCaptionsFromSRT', { srt_path: srtPath });
+    updateProgress(msgId, { pct: 100, detail: 'Done.' });
+    if (res && res.method === 'createCaptionTrack') {
+      appendMessage('agent-text', { text: `Captions on the timeline (“${res.itemName || 'SRT'}”). Edit them in Premiere's Text panel.` });
+    } else {
+      appendMessage('agent-text', {
+        text: `SRT is in the project bin (“${(res && res.itemName) || 'SRT'}”) but no caption track was created`
+            + ((res && res.warning) ? `: ${res.warning}` : '.')
+            + ' Drag it onto the timeline manually.',
+      });
+    }
+  } catch (err) {
+    updateProgress(msgId, { pct: 100, detail: 'Failed.' });
+    appendMessage('error', { text: `Caption import failed: ${err.message || err}.` });
+  }
 }
 
 async function _ingestScript(text) {
