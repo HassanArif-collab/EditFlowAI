@@ -106,6 +106,7 @@ Adding a tool means: write the async function, register it in the `TOOLS` dict a
 | `/api/preflight` | `preflight.py` | Startup health checks (ffmpeg, whisper backend, ollama) |
 | `/api/edit` | `edit.py` | Edit-plan persistence + apply |
 | `/script-extract` | `script_extract.py` | DOCX/PDF script parsing |
+| `/api/captions` | `captions.py` | Captions Studio: transcribe the sequence, installed fonts, frame encoder (`encode/start → frames → finish`), SRT |
 
 The agent route is the active surface. The legacy `pipeline.py` flow exists but is reachable only if the user disables agent mode in Settings (`localStorage.editflow_agent_mode`).
 
@@ -283,6 +284,39 @@ kept spans → external_plan.build_plan_from_pasted_json → plan_store (data/pl
 The Review editor, the legacy matcher (`/api/edit/analyze`), and the `/paste-plan`
 command all converge on this. **Don't write new timeline code — emit cuts and
 reuse this path.**
+
+## Captions Studio (CC header button)
+
+One renderer draws both the panel preview and the exported video, so what you
+see is what lands on the timeline.
+
+```
+words (Whisper on the sequence mix, or pasted JSON/SRT/text)
+  → captions/model.js   buildScene: group words into captions, wrap lines,
+                        time them at the sequence frame rate, animate words
+  → captions/render.js  drawFrame(ctx, scene, settings, t): canvas 2D
+  → preview canvas      (same call, scaled)
+  → captions/export.js  draws every frame, streams raw RGBA to
+                        POST /api/captions/encode/{job}/frames
+  → services/subtitles/encoder.py   ffmpeg → ProRes 4444 (alpha) or Animation .mov,
+                        exact sequence rate (e.g. 30000/1001)
+  → captions_manager.jsx placeOverlay: overwrite onto the lowest free track
+                        above V1 (never insert/ripple), replacing the old overlay
+```
+
+- `captions/model.js` is pure (no DOM): grouping, timing and animation live
+  there and are unit tested in `tests/captions-model.test.js`. Change caption
+  behaviour there, not in the view.
+- Fonts: five OFL caption fonts are bundled (`fonts/caption/`,
+  `styles/caption-fonts.css`); installed fonts come from
+  `GET /api/captions/fonts` (`services/subtitles/system_fonts.py`). Canvas can
+  only draw a font after `document.fonts.load`, so always go through
+  `captions/fonts.js#ensureFont`.
+- Transcribe-from-sequence: `sequenceAudioClips` (JSX) lists the unmuted audio
+  clips; `services/subtitles/sequence_audio.py` cuts and mixes them into one
+  16 kHz WAV, so word times come back in sequence time.
+- The old drawtext path (`animated_overlay.py`, `/captions/overlay`) is kept for
+  compatibility but the panel no longer uses it.
 
 ## Gotchas added since the original doc
 - **`cep-panel/client/index.html` is DEAD.** The manifest's MainPath is

@@ -23,7 +23,7 @@ import subprocess
 import uuid
 from typing import Any, Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 
 from ..services.subtitles.cue_builder import (
@@ -188,85 +188,10 @@ async def transcribe_mixdown(
         except Exception as exc:  # noqa: BLE001
             logger.debug("caption bg frame skipped: %s", exc)
 
-        # 3. Model-availability short-circuit. 409 (not 422/500) so the
-        #    frontend can distinguish "install a model first" from a real
-        #    error.
-        if not is_model_installed(active_model):
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "error": "no_model",
-                    "available": [],
-                    "download_hint": "open_settings_whisper",
-                },
-            )
-
-        # 4. Transcribe. range_in/range_out=0 → whole file (the CEP side
-        #    already pre-trimmed to In/Out, so we don't re-trim here).
-        reporter = ProgressReporter(task_type="transcribe", client_id=client_id)
-        lang = language if language and language != 'auto' else None
-
-        # 4a. Cache peek BEFORE any model load: repeat uploads of the same
-        #     range return instantly instead of re-running WhisperX (which
-        #     on CPU can take minutes or OOM before the whisper fallback
-        #     would have hit the same cache anyway).
-        result = (whisper_service.peek_cached_transcript(fingerprint)
-                  if not force else None)
-        engine_used = None
-        if result is not None:
-            engine_used = (result.engine or "cached") + "+cache"
-            logger.info("captions.transcribe_mixdown: cache peek hit, skipping models")
-        # 4b. WhisperX forced alignment on a MISS only (~50ms word
-        #     boundaries). Any failure falls back to the whisper path below
-        #     and the response `engine` says which ran.
-        if result is None and engine in ("auto", "whisperx"):
-            try:
-                from ..services.transcribe.whisperx_engine import WhisperXEngine
-                wx = WhisperXEngine(model_size=_whisperx_model_size(active_model))
-                if wx.is_available():
-                    result = await wx.transcribe(
-                        str(wav_path), language=lang, word_timestamps=True,
-                    )
-                    engine_used = "whisperx"
-            except Exception as wx_exc:  # noqa: BLE001
-                logger.warning("whisperx failed, falling back to whisper: %s", wx_exc)
-                result = None
-
-        if result is None:
-            result = await whisper_service.transcribe_fingerprinted(
-                source_path=str(wav_path),
-                file_fingerprint=fingerprint,
-                language=lang,
-                word_timestamps=True,
-                vad_filter=True,
-                progress=reporter,
-                force=force,
-                range_in=0.0,
-                range_out=0.0,
-            )
-            engine_used = result.engine
-
-        # 5. Flatten segments → word list. sanitize_words guards against
-        #    overlaps, zero durations and missing timestamps.
-        words_out: list[dict] = []
-        for seg in result.segments:
-            for w in seg.words:
-                words_out.append({
-                    "word": w.word,
-                    "start": w.start,
-                    "end": w.end,
-                    "confidence": w.probability,
-                })
-        words_out = sanitize_words(words_out)
-
-        return {
-            "words": words_out,
-            "fingerprint": fingerprint,
-            "duration": result.duration,
-            "model": result.model or active_model,
-            "engine": engine_used or result.engine,
-            "bg_url": bg_url,
-        }
+        # 3. Transcribe (shared with /transcribe-sequence).
+        out = await _transcribe_wav(wav_path, fingerprint, language, engine, force, client_id)
+        out["bg_url"] = bg_url
+        return out
 
     except HTTPException:
         # Re-raise 409 (and any other deliberate HTTPException) unchanged
@@ -275,6 +200,215 @@ async def transcribe_mixdown(
     except Exception as exc:  # noqa: BLE001
         logger.exception("captions.transcribe_mixdown failed")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+async def _transcribe_wav(wav_path, fingerprint: str, language: Optional[str], engine: str,
+                          force: bool, client_id: Optional[str]) -> dict:
+    """Shared transcription core for uploads and sequence mixdowns: cache
+    peek → WhisperX (forced alignment) → Whisper fallback → sanitized words."""
+    active_model = whisper_service.get_active_model_name()
+    # Model-availability short-circuit. 409 (not 422/500) so the frontend
+    # can distinguish "install a model first" from a real error.
+    if not is_model_installed(active_model):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "no_model",
+                "available": [],
+                "download_hint": "open_settings_whisper",
+            },
+        )
+
+    # range_in/range_out=0 → whole file (the caller already trimmed).
+    reporter = ProgressReporter(task_type="transcribe", client_id=client_id)
+    lang = language if language and language != 'auto' else None
+
+    # Cache peek BEFORE any model load: repeat runs of the same range return
+    # instantly instead of re-running WhisperX (which on CPU can take
+    # minutes or OOM before the whisper fallback would hit the same cache).
+    result = (whisper_service.peek_cached_transcript(fingerprint)
+              if not force else None)
+    engine_used = None
+    if result is not None:
+        engine_used = (result.engine or "cached") + "+cache"
+        logger.info("captions: transcript cache hit, skipping models")
+    # WhisperX forced alignment on a MISS only (~50ms word boundaries). Any
+    # failure falls back to the whisper path below and the response
+    # `engine` says which ran.
+    if result is None and engine in ("auto", "whisperx"):
+        try:
+            from ..services.transcribe.whisperx_engine import WhisperXEngine
+            wx = WhisperXEngine(model_size=_whisperx_model_size(active_model))
+            if wx.is_available():
+                result = await wx.transcribe(
+                    str(wav_path), language=lang, word_timestamps=True,
+                )
+                engine_used = "whisperx"
+        except Exception as wx_exc:  # noqa: BLE001
+            logger.warning("whisperx failed, falling back to whisper: %s", wx_exc)
+            result = None
+
+    if result is None:
+        result = await whisper_service.transcribe_fingerprinted(
+            source_path=str(wav_path),
+            file_fingerprint=fingerprint,
+            language=lang,
+            word_timestamps=True,
+            vad_filter=True,
+            progress=reporter,
+            force=force,
+            range_in=0.0,
+            range_out=0.0,
+        )
+        engine_used = result.engine
+
+    # Flatten segments → word list. sanitize_words guards against overlaps,
+    # zero durations and missing timestamps.
+    words_out: list[dict] = []
+    for seg in result.segments:
+        for w in seg.words:
+            words_out.append({
+                "word": w.word,
+                "start": w.start,
+                "end": w.end,
+                "confidence": w.probability,
+            })
+    words_out = sanitize_words(words_out)
+
+    return {
+        "words": words_out,
+        "fingerprint": fingerprint,
+        "duration": result.duration,
+        "model": result.model or active_model,
+        "engine": engine_used or result.engine,
+    }
+
+
+class SequenceTranscribeReq(BaseModel):
+    clips: list[dict]                 # [{path, start, end, in, out}] from captionsManager.sequenceAudioClips
+    sequence_name: Optional[str] = None
+    duration: Optional[float] = None
+    language: Optional[str] = None
+    engine: str = "auto"
+    force: bool = False
+    client_id: Optional[str] = None
+
+
+@router.post("/transcribe-sequence")
+async def transcribe_sequence(req: SequenceTranscribeReq):
+    """Transcribe the active sequence's own audio (unmuted tracks, as cut).
+
+    Word times come back in SEQUENCE time, so captions line up with the edit
+    with no re-timing — the reliable replacement for remapping source-time
+    words after a cut.
+    """
+    from ..config import get_settings
+    from ..services.subtitles.sequence_audio import clean_clips, fingerprint as clips_fp, mix_sequence_audio
+    from ..services.subtitles.animated_overlay import _ffmpeg_path
+
+    clips, skipped = clean_clips(req.clips)
+    if not clips:
+        detail = "No audio to transcribe on unmuted tracks."
+        if skipped:
+            detail += f" Skipped {len(skipped)} clip(s): {skipped[0]['reason']} ({skipped[0]['path']})."
+        raise HTTPException(status_code=400, detail=detail)
+    try:
+        active_model = whisper_service.get_active_model_name()
+        lang_key = (req.language or "auto").strip().lower()
+        fp = clips_fp(clips, f"{active_model}|{lang_key}|{req.engine}")
+        wav_path = get_settings().DATA_DIR / "media_cache" / "mixdowns" / f"seq-{fp}.wav"
+        info = {"duration": req.duration, "clips": len(clips), "overlaps": 0}
+        if not wav_path.exists() or req.force:
+            info = await asyncio.to_thread(mix_sequence_audio, _ffmpeg_path(), clips, wav_path, req.duration)
+        out = await _transcribe_wav(wav_path, f"seq-{fp}", req.language, req.engine, req.force, req.client_id)
+        out["mixdown"] = info
+        out["skipped"] = skipped
+        return out
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("captions.transcribe_sequence failed")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+# ── Fonts + frame encoder (the WYSIWYG render path) ─────────────────────
+
+@router.get("/fonts")
+async def fonts(refresh: bool = False):
+    """Fonts installed on this machine, for the caption font picker."""
+    from ..services.subtitles.system_fonts import list_system_fonts
+    return {"fonts": await asyncio.to_thread(list_system_fonts, refresh)}
+
+
+class EncodeStartReq(BaseModel):
+    width: int
+    height: int
+    band_y: int = 0
+    band_h: Optional[int] = None
+    fps_num: int = 30
+    fps_den: int = 1
+    name: Optional[str] = None
+    codec: str = "prores"
+
+
+@router.post("/encode/start")
+async def encode_start(req: EncodeStartReq):
+    """Open a render job; the panel then streams frames to /encode/{id}/frames."""
+    import time as _time
+
+    from ..config import get_settings
+    from ..services.subtitles import encoder
+    from ..services.subtitles.animated_overlay import _ffmpeg_path
+
+    stem = "".join(ch if ch.isalnum() or ch in " -_" else "_" for ch in (req.name or "Captions")).strip()[:60]
+    out = (get_settings().DATA_DIR / "output" / "captions" /
+           f"EditFlow Captions - {stem or 'Captions'} - {_time.strftime('%Y%m%d-%H%M%S')}.mov")
+    try:
+        job = await asyncio.to_thread(
+            encoder.start, _ffmpeg_path(), out, req.width, req.height, req.band_y,
+            req.band_h if req.band_h is not None else req.height, req.fps_num, req.fps_den, req.codec)
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"job_id": job.id, "path": str(job.path), "frame_bytes": job.frame_bytes}
+
+
+def _job(job_id: str):
+    from ..services.subtitles import encoder
+    try:
+        return encoder.get(job_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Render job not found (cancelled or finished).")
+
+
+@router.post("/encode/{job_id}/frames")
+async def encode_frames(job_id: str, request: Request):
+    """A batch of frame records (see services/subtitles/encoder.py)."""
+    from ..services.subtitles import encoder
+    job = _job(job_id)
+    body = await request.body()
+    try:
+        frames = await asyncio.to_thread(encoder.feed, job, body)
+    except (ValueError, RuntimeError) as exc:
+        encoder.cancel(job_id)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"frames": frames}
+
+
+@router.post("/encode/{job_id}/finish")
+async def encode_finish(job_id: str):
+    from ..services.subtitles import encoder
+    job = _job(job_id)
+    try:
+        return await asyncio.to_thread(encoder.finish, job)
+    except Exception as exc:  # noqa: BLE001
+        encoder.cancel(job_id)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/encode/{job_id}/cancel")
+async def encode_cancel(job_id: str):
+    from ..services.subtitles import encoder
+    return {"cancelled": await asyncio.to_thread(encoder.cancel, job_id)}
 
 
 class CorrectReq(BaseModel):

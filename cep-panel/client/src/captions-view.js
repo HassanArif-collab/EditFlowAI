@@ -1,1017 +1,1396 @@
 /**
- * captions-view.js — Tier-1 native caption UI for Premiere Pro.
+ * captions-view.js — EditFlow Captions Studio for Premiere Pro.
  *
- * AE-style tabbed flow, Premiere Tier-1 mechanics:
- *   1. Transcribe: upload audio/video → POST /api/captions/transcribe-mixdown
- *      → word-level timestamps (WhisperX forced alignment when available).
- *   2. Content: word chips, click to exclude (excluded words are skipped in
- *      final_cut mode via remap_kept_words_to_output).
- *   3. Style: preset picker (GET /api/captions/presets) + grouping controls.
- *   4. Generate: build cues → cue list → Export SRT + import as a native
- *      caption track (project.importFiles + sequence.createCaptionTrack).
+ *   Transcript → Style → Motion → Export
  *
- * Additive & self-contained like review-view.js: opening hides the chat
- * shell, closing restores it. No canvas animation preview — the caption
- * track itself renders in Premiere's Text panel (Tier-1 is native).
+ * The live preview is drawn by the SAME renderer as the exported video
+ * (captions/render.js), at the sequence's real size and frame rate, so the
+ * preview is the output. Export streams frames to the backend encoder and
+ * places the file with captionsManager.placeOverlay (overwrite onto a free
+ * track, replacing earlier EditFlow captions — never a ripple insert).
+ *
+ * Every control is declared with data-bind="section.key" and handled by ONE
+ * input handler, so a control cannot silently do nothing.
  */
 import { apiGet, apiPost, apiUpload, getBaseUrl } from './api.js';
-import { isExtendScriptAvailable, importCaptionsFromSRT, callExtendScript } from './extendscript.js';
+import { isExtendScriptAvailable, callExtendScript } from './extendscript.js';
+import * as M from './captions/model.js';
+import { drawFrame, STYLE_DEFAULTS } from './captions/render.js';
+import { BUNDLED, ensureFont, makeMeasurer, listSystemFonts, injectFontStyles, weightName } from './captions/fonts.js';
+import { PRESETS, findPreset } from './captions/presets.js';
+import { renderOverlay } from './captions/export.js';
+import { SAFE_ZONES, drawSafeZones } from './captions/safe-zones.js';
 
-const $ = (sel) => document.querySelector(sel);
+const SETTINGS_KEY = 'editflow.captions.settings.v2';
+const WORDS_KEY = 'editflow.captions.words.';
+const REF = 1080;   // style sizes are authored at 1080p and scale with the sequence
+
+const DEFAULTS = {
+  preset: 'clean',
+  previewAspect: '9:16',
+  style: Object.assign({}, STYLE_DEFAULTS),
+  motion: Object.assign({}, M.MOTION_DEFAULTS),
+  layout: { posX: 50, posY: 72, boxWidth: 86, lineHeight: 1.12, align: 'center' },
+  grouping: Object.assign({}, M.GROUP_DEFAULTS),
+  timing: Object.assign({}, M.TIMING_DEFAULTS),
+  output: { codec: 'prores' },
+  transcribe: { language: 'en', engine: 'auto' },
+};
+
+const PREVIEW_SEQ = { name: 'Preview', id: 'preview', width: 1080, height: 1920,
+                      fps: { num: 30, den: 1 }, duration: 0, live: false };
 
 const S = {
-  words: [], cues: [], presets: [],
-  preset: 'none', allCaps: false, sourceMode: 'standalone',
-  tapMode: 'keep', // 'keep' | 'pill' — what clicking a word toggles
-  showBox: true, // caption-box overlay on the preview canvas
-  opts: { max_words_per_cue: 4, max_chars_per_line: 30, max_lines: 2, max_cue_duration: 3.0, max_gap: 0.8 },
-  fontSize: 80, posY: 80, posX: 50, boxW: 90,
-  fontFamily: 'Arial', fontBold: true, fontCustom: '',
-  textColor: '#ffffff', strokeColor: '#000000', strokeWidth: 0,  shadowOn: true, shadowColor: '#000000', shadowOpacity: 50, shadowDistance: 3, shadowBlur: 5,
-  pillColor: '#0a1a2e', pillOpacity: 85, pillOutline: true,
-  pillStrokeColor: '#5c8cf0', pillStrokeWidth: 2, pillRadius: 50,
-  animPreset: 'fadeup_words', animIntensity: 1.0, wordEasing: 'expo_out',
-  fadeDur: 0.28, slideDist: 60,
-  seqW: 1080, seqH: 1920, seqFps: 30,
-  srtPath: '', busy: false, status: '', fileName: 'captions',
-  previewFrames: [], previewMp4: '',
-  bgMode: 'dark', bgUrl: '',
+  settings: null,
+  words: [],
+  seq: PREVIEW_SEQ,
+  scene: null,
+  sceneGen: 0,
+  fontKey: '',
+  fontOk: true,
+  sel: -1,
+  tab: 'transcript',
+  t: 0,
+  playing: false,
+  bg: 'checker',
+  safe: 'off',
+  previewOpen: true,
+  bgImage: null,
+  busy: null,          // { kind, label, progress (0..1 | null), cancel() }
+  status: null,        // { text, kind }
+  history: [],
+  future: [],
+  lastRender: null,
+  srtPath: '',
+  systemFonts: [],
+  showSource: false,
+  pasteOpen: false,
+  findOpen: false,
+  editing: -1,
+  drag: null,
+  hoverBox: false,
   prevView: null,
 };
 
-// Preview background image cache (video frame from transcription).
-const PVBG = { img: null, src: '' };
+let root = null;
+let rafId = 0;
+let lastTick = 0;
+let saveTimer = 0;
 
-// Live preview viewport (AE canvas parity): auto-playing loop over the
-// built cues. Defined once at module scope — every preview function
-// below depends on it.
-const PV = { t: 0, playing: true, raf: 0, last: 0, W: 360, H: 640 };
-const ANIM_PRESETS = [
-  ['fadeup_words', 'Fade Up Words'], ['popin', 'Pop-in (Hormozi)'],
-  ['fadeup', 'Fade Up'], ['bounce', 'Bounce'],
-  ['squash', 'Squash & Stretch'], ['typewriter', 'Typewriter'],
-  ['fade', 'Simple Fade'],
-];
-const EASING_OPTS = [
-  ['expo_out', 'Expo Out (snappy)'], ['back_out', 'Back Out (overshoot)'],
-  ['ease_out', 'Ease Out'], ['ease_in_out', 'Ease In-Out'],
-  ['ease_in', 'Ease In'], ['linear', 'Linear'],
-];
-const EASE_FN = {
-  linear: (p) => p,
-  ease_in: (p) => p * p * p,
-  ease_out: (p) => 1 - Math.pow(1 - p, 3),
-  ease_in_out: (p) => (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2),
-  expo_out: (p) => (p >= 1 ? 1 : 1 - Math.pow(2, -10 * p)),
-  back_out: (p) => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(p - 1, 3) + c1 * Math.pow(p - 1, 2); },
+/* ── tiny helpers ─────────────────────────────────────────────── */
+
+const $ = (sel, r) => (r || root || document).querySelector(sel);
+const $$ = (sel, r) => Array.prototype.slice.call((r || root || document).querySelectorAll(sel));
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function getPath(obj, path) { return path.split('.').reduce((o, k) => (o == null ? o : o[k]), obj); }
+function setPath(obj, path, v) {
+  const ks = path.split('.');
+  let o = obj;
+  for (let i = 0; i < ks.length - 1; i++) o = o[ks[i]] = o[ks[i]] || {};
+  o[ks[ks.length - 1]] = v;
+}
+function fmtTime(s) {
+  s = Math.max(0, s || 0);
+  const m = Math.floor(s / 60);
+  return m + ':' + (s - m * 60).toFixed(1).padStart(4, '0');
+}
+function fmtNum(v) { return Math.round(Number(v) * 100) / 100; }
+function deepMerge(base, over) {
+  const out = Object.assign({}, base);
+  for (const k of Object.keys(over || {})) {
+    const b = base ? base[k] : undefined, o = over[k];
+    out[k] = (b && typeof b === 'object' && !Array.isArray(b) && o && typeof o === 'object') ? deepMerge(b, o) : o;
+  }
+  return out;
+}
+function inCEP() { return isExtendScriptAvailable(); }
+
+const ICONS = {
+  play: '<path d="M8 5v14l11-7z"/>',
+  pause: '<path d="M7 5h4v14H7zM13 5h4v14h-4z"/>',
+  undo: '<path d="M12.5 8C9.9 8 7.5 9 5.7 10.6L2 7v9h9l-3.6-3.6A7 7 0 0 1 19.3 15l2.4-.8A9.5 9.5 0 0 0 12.5 8z"/>',
+  redo: '<path d="M18.4 10.6A9.4 9.4 0 0 0 11.5 8a9.5 9.5 0 0 0-9.2 6.2l2.4.8A7 7 0 0 1 16.6 12.4L13 16h9V7z"/>',
+  eye: '<path d="M12 5C6.5 5 2.7 9.3 1.5 12c1.2 2.7 5 7 10.5 7s9.3-4.3 10.5-7C21.3 9.3 17.5 5 12 5zm0 11a4 4 0 1 1 0-8 4 4 0 0 1 0 8z"/>',
+  bg: '<path d="M3 3h8v8H3zM13 13h8v8h-8z"/><path d="M13 3h8v8h-8zM3 13h8v8H3z" opacity=".35"/>',
+  close: '<path d="M6.4 5 5 6.4 10.6 12 5 17.6 6.4 19 12 13.4 17.6 19 19 17.6 13.4 12 19 6.4 17.6 5 12 10.6z"/>',
+  mic: '<path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-2.1A7 7 0 0 0 19 12z"/>',
+  refresh: '<path d="M17.7 6.3A8 8 0 1 0 20 12h-2a6 6 0 1 1-1.8-4.2L13 11h7V4z"/>',
+  search: '<path d="M15.5 14h-.8l-.3-.3A6.5 6.5 0 1 0 14 15.5l.3.3v.8l5 5 1.5-1.5zm-6 0a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9z"/>',
 };
-// Animate preset → canvas motion (backend ANIM_MOTION parity).
-function _pvAnim() {
-  switch (S.animPreset) {
-    case 'popin': case 'squash': return { motion: 'back', captionLevel: false };
-    case 'fadeup': return { motion: 'rise', captionLevel: true };
-    case 'bounce': return { motion: 'bounce', captionLevel: false };
-    case 'typewriter': return { motion: 'cut', captionLevel: false };
-    case 'fade': return { motion: 'fade', captionLevel: true };
-    default: return { motion: 'rise', captionLevel: false };
-  }
-}
+const icon = (n) => `<svg class="cc-ico" viewBox="0 0 24 24" aria-hidden="true">${ICONS[n]}</svg>`;
 
-const LANGUAGES = [
-  ['auto', 'Auto Detect'], ['en', 'English'], ['ur', 'Urdu'], ['hi', 'Hindi'],
-  ['ar', 'Arabic'], ['es', 'Spanish'], ['fr', 'French'], ['de', 'German'],
-];
+/* ── settings + words persistence ─────────────────────────────── */
 
-// ── Public ───────────────────────────────────────────────────
-function openCaptions() {
-  _ensureStyles();
-  const view = _ensureContainer();
-  const hero = $('#hero'), chat = $('#chat-scroll'), footer = $('#app-footer');
-  S.prevView = { hero: hero?.classList.contains('hidden') ?? true,
-                 chat: chat?.classList.contains('hidden') ?? true,
-                 footer: footer?.classList.contains('hidden') ?? true };
-  hero?.classList.add('hidden'); chat?.classList.add('hidden'); footer?.classList.add('hidden');
-  view.classList.remove('hidden');
-  _render();
-  // Sequence-aware preview (AE parity: canvas follows the open sequence).
-  // Fire-and-forget: canvas + overlay dims update when it lands.
-  _fetchSequenceSize();
+function loadSettings() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null'); } catch (_) { saved = null; }
+  return deepMerge(DEFAULTS, saved || {});
 }
-async function _fetchSequenceSize() {
+function saveSettingsSoon() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(S.settings)); } catch (_) { /* quota */ }
+  }, 250);
+}
+function wordsKey() { return WORDS_KEY + (S.seq && S.seq.id ? S.seq.id : 'default'); }
+function saveWords() {
   try {
-    const st = await callExtendScript('getSequenceState');
-    const W = Math.round(st.width || 0), H = Math.round(st.height || 0);
-    if (W > 100 && H > 100 && (W !== S.seqW || H !== S.seqH)) {
-      S.seqW = W; S.seqH = H;
-      if (st.fps > 0) S.seqFps = Math.round(st.fps);
-      if (W >= H) { PV.W = 640; PV.H = Math.max(180, Math.round(640 * H / W)); }
-      else { PV.H = 640; PV.W = Math.max(180, Math.round(640 * W / H)); }
-      const open = !document.getElementById('captions-view')?.classList.contains('hidden');
-      if (open) _render();
-    }
-  } catch (_) { /* sequence closed — keep defaults */ }
+    if (S.words.length) localStorage.setItem(wordsKey(), JSON.stringify(S.words));
+    else localStorage.removeItem(wordsKey());
+  } catch (_) { /* quota — words still live in memory */ }
 }
-function closeCaptions() {
-  $('#captions-view')?.classList.add('hidden');
-  _pvStop();
-  try { localStorage.setItem('editflow_home_view', 'chat'); } catch (_) {}
-  const hero = $('#hero'), chat = $('#chat-scroll'), footer = $('#app-footer');
-  if (S.prevView) {
-    hero?.classList.toggle('hidden', S.prevView.hero);
-    chat?.classList.toggle('hidden', S.prevView.chat);
-    footer?.classList.toggle('hidden', S.prevView.footer);
+function loadWords() {
+  try { S.words = JSON.parse(localStorage.getItem(wordsKey()) || '[]') || []; } catch (_) { S.words = []; }
+  S.sel = -1; S.history = []; S.future = []; S.editing = -1;
+}
+
+/* ── effective settings (style scaled to the sequence) ────────── */
+
+function scaleK() { return Math.min(S.seq.width, S.seq.height) / REF; }
+function effSettings() {
+  const k = scaleK();
+  const st = Object.assign({}, S.settings.style);
+  st.fontSize = (st.fontSize || 80) * k;
+  st.strokeWidth = (st.strokeWidth || 0) * k;
+  st.shadowBlur = (st.shadowBlur || 0) * k;
+  st.shadowDistance = (st.shadowDistance || 0) * k;
+  return { style: st, motion: S.settings.motion, layout: S.settings.layout,
+           grouping: S.settings.grouping, timing: S.settings.timing };
+}
+
+/* ── scene ────────────────────────────────────────────────────── */
+
+async function rebuildScene() {
+  const gen = ++S.sceneGen;
+  const eff = effSettings();
+  const key = eff.style.fontFamily + '|' + eff.style.fontWeight;
+  if (key !== S.fontKey) {
+    S.fontOk = await ensureFont(eff.style.fontFamily, eff.style.fontWeight);
+    if (gen !== S.sceneGen) return;
+    S.fontKey = S.fontOk ? key : '';      // re-check a missing font next time
+    const warn = $('#cc-font-warn');
+    if (warn) warn.classList.toggle('hidden', S.fontOk);
+  }
+  const ms = makeMeasurer(eff.style);
+  S.scene = M.buildScene(S.words, eff, {
+    width: S.seq.width, height: S.seq.height, fps: S.seq.fps,
+    measure: ms.measure, fontMetrics: ms.fontMetrics,
+  });
+  if (S.t > S.scene.duration) S.t = 0;
+  requestDraw();
+  updateTransport();
+  if (S.tab === 'transcript') renderTranscriptList();
+  updateFooter();
+}
+let sceneTimer = 0;
+function scheduleScene() {
+  clearTimeout(sceneTimer);
+  sceneTimer = setTimeout(() => { rebuildScene(); }, 16);
+}
+
+/* ── open / close ─────────────────────────────────────────────── */
+
+function openCaptions() {
+  injectFontStyles();
+  ensureStyles();
+  const view = ensureContainer();
+  const hero = document.getElementById('hero');
+  const chat = document.getElementById('chat-scroll');
+  const footer = document.getElementById('app-footer');
+  S.prevView = {
+    hero: hero ? hero.classList.contains('hidden') : true,
+    chat: chat ? chat.classList.contains('hidden') : true,
+    footer: footer ? footer.classList.contains('hidden') : true,
+  };
+  [hero, chat, footer].forEach((el) => el && el.classList.add('hidden'));
+  view.classList.remove('hidden');
+  if (!S.settings) {
+    S.settings = loadSettings();
+    renderShell();
+    bindEvents();
+    loadWords();
+    listSystemFonts(apiGet).then((f) => { S.systemFonts = f; if (S.tab === 'style') renderBody(); });
+    window.addEventListener('editflow:ws', onWsMessage);
+    renderBody();
+    refreshSequence(true);
+  } else {
+    renderBody();
+    refreshSequence(false);
   }
 }
 
-// ── Styles + container ───────────────────────────────────────
-function _ensureStyles() {
+function closeCaptions() {
+  const view = document.getElementById('captions-view');
+  if (view) view.classList.add('hidden');
+  setPlaying(false);
+  try { localStorage.setItem('editflow_home_view', 'chat'); } catch (_) {}
+  const map = { hero: 'hero', chat: 'chat-scroll', footer: 'app-footer' };
+  if (S.prevView) {
+    for (const k of Object.keys(map)) {
+      const el = document.getElementById(map[k]);
+      if (el) el.classList.toggle('hidden', S.prevView[k]);
+    }
+  }
+}
+
+function ensureStyles() {
   if (document.getElementById('cc-style-link')) return;
   const link = document.createElement('link');
-  link.id = 'cc-style-link'; link.rel = 'stylesheet';
+  link.id = 'cc-style-link';
+  link.rel = 'stylesheet';
   link.href = 'styles/captions.css?v=' + Date.now();
   document.head.appendChild(link);
 }
-function _ensureContainer() {
-  let v = $('#captions-view');
-  if (!v) { v = document.createElement('div'); v.id = 'captions-view'; v.className = 'cc-view hidden'; ($('#app-main') || document.body).appendChild(v); }
+
+function ensureContainer() {
+  let v = document.getElementById('captions-view');
+  if (!v) {
+    v = document.createElement('div');
+    v.id = 'captions-view';
+    v.className = 'cc-view hidden';
+    (document.getElementById('app-main') || document.body).appendChild(v);
+  }
+  root = v;
   return v;
 }
 
-// ── Render ───────────────────────────────────────────────────
-const TABS = ['Transcribe', 'Content', 'Style', 'Animate', 'Generate'];
-let _tab = 0;
+/* ── sequence ─────────────────────────────────────────────────── */
 
-function _render() {
-  const v = _ensureContainer();
-  try {
-    _renderInner(v);
-  } catch (e) {
-    // Never a blank panel: show the error in place so boot always lands
-    // somewhere visible (chat fallback happens in main.js).
-    console.error('[EditFlow] captions render failed:', e);
-    v.innerHTML = `<div class="cc-bar"><div class="cc-title">Captions</div><button class="cc-btn cc-ghost" data-act="close">Close</button></div>`
-      + `<div class="cc-body"><p class="cc-hint">Captions view failed to render: ${_esc((e && e.message) || e)}. Close and use chat, or reload the panel.</p></div>`;
-    const c = v.querySelector('[data-act="close"]');
-    if (c) c.onclick = closeCaptions;
-  }
-  _pvStart();
+async function callCM(fn, args) {
+  return callExtendScript('callModule', Object.assign({ module: 'captionsManager', fn }, args || {}));
 }
-function _renderInner(v) {
-  v.innerHTML = `
-    <div class="cc-bar"><div class="cc-title">Captions <span class="cc-live" id="cc-live" title="Preview loop alive">●</span></div><button class="cc-btn cc-ghost" data-act="close">Close</button></div>
-    <div class="cc-preview">
-      <canvas id="cc-canvas" width="${PV.W}" height="${PV.H}"></canvas>
-      <div class="cc-resizebar" id="cc-resizebar" title="Drag to resize preview"><div></div></div>
-      <div class="cc-transport">
-        <button class="cc-btn cc-ghost" id="cc-play" title="Play/pause preview">⏸</button>
-        <input class="cc-seekrange" id="cc-seekrange" type="range" min="0" max="100" step="0.01" value="0" />
-        <button class="cc-btn cc-ghost" id="cc-bg" title="Preview background: dark → checker → video frame">🏁</button>
-        <button class="cc-btn cc-ghost" id="cc-box" title="Toggle caption box">☐</button>
-        <span class="cc-time" id="cc-time">0.0s / 0.0s</span>
-      </div>
-    </div>
-    <div class="cc-tabs">${TABS.map((t, i) => `<button class="cc-tab${i === _tab ? ' cc-active' : ''}" data-tab="${i}">${t}</button>`).join('')}</div>
-    <div class="cc-body" id="cc-body"></div>
-    <div class="cc-status" id="cc-status">${_esc(S.status)}</div>`;
-  v.querySelector('[data-act="close"]').onclick = closeCaptions;
-  const playBtn = v.querySelector('#cc-play');
-  if (playBtn) playBtn.onclick = () => {
-    if (!PV.playing && PV.t >= _pvDuration() && _pvDuration() > 0) PV.t = 0;
-    PV.playing = !PV.playing;
-    playBtn.textContent = PV.playing ? '⏸' : '▶';
-  };
-  const seekBar = v.querySelector('#cc-seekrange');
-  if (seekBar) seekBar.oninput = (e) => {
-    // Don't fight the thumb while dragging (AE parity): the tick loop
-    // skips writing the value while this has focus.
-    const dur = _pvDuration();
-    PV.t = (parseFloat(e.target.value) / 100) * dur;
-  };
-  const boxBtn = v.querySelector('#cc-box');  if (boxBtn) {
-    boxBtn.textContent = S.showBox ? '☑' : '☐';
-    boxBtn.onclick = () => { S.showBox = !S.showBox; boxBtn.textContent = S.showBox ? '☑' : '☐'; };
-  }
-  const pCanvas = v.querySelector('#cc-canvas');
-  if (pCanvas) pCanvas.onmousedown = (e) => {
-    // Caption-box direct manipulation (AE parity): drag edges to resize
-    // the box (ew-resize), drag inside to move (posX/posY).
-    const W = PV.W, H = PV.H;
-    const rect = pCanvas.getBoundingClientRect();
-    const sx = PV.W / Math.max(1, rect.width), sy = PV.H / Math.max(1, rect.height);
-    const mx = (e.clientX - rect.left) * sx, my = (e.clientY - rect.top) * sy;
-    const margin = Math.max(0, W * (1 - S.boxW / 100) / 2);
-    const size = Math.max(8, Math.round(S.fontSize * (W / 1080)));
-    const y0 = H * (S.posY / 100);
-    const top = y0 - size * 0.3, bot = y0 + size * 1.4;
-    let mode = null;
-    if (my >= top - 12 && my <= bot + 12) {
-      if (Math.abs(mx - margin) < 14) mode = 'left';
-      else if (Math.abs(mx - (W - margin)) < 14) mode = 'right';
-      else if (mx > margin && mx < W - margin) mode = 'move';
-    }
-    pCanvas.style.cursor = mode === 'move' ? 'move' : (mode ? 'ew-resize' : '');
-    if (!mode) return;
-    e.preventDefault();
-    const startX = mx, startY = my;
-    const startPosX = S.posX, startPosY = S.posY, startBox = S.boxW;
-    const move = (ev) => {
-      const dx = ((ev.clientX - rect.left) * sx - startX) / W * 100;
-      const dy = ((ev.clientY - rect.top) * sy - startY) / H * 100;
-      if (mode === 'move') {
-        S.posX = Math.max(0, Math.min(100, Math.round(startPosX + dx)));
-        S.posY = Math.max(0, Math.min(100, Math.round(startPosY + dy)));
-      } else {
-        const dw = (mode === 'left' ? -dx : dx) * 2;
-        S.boxW = Math.max(30, Math.min(100, Math.round(startBox + dw)));
-      }
-    };
-    const up = () => {
-      document.removeEventListener('mousemove', move);
-      document.removeEventListener('mouseup', up);
-      pCanvas.style.cursor = '';
-    };
-    document.addEventListener('mousemove', move);
-    document.addEventListener('mouseup', up);
-  };
-  const rzBar = v.querySelector('#cc-resizebar');
-  if (rzBar) rzBar.onmousedown = (e) => {
-    e.preventDefault();
-    const canvas = v.querySelector('#cc-canvas');
-    const startY = e.clientY;
-    const startH = (canvas && canvas.clientHeight) || 220;
-    const move = (ev) => {
-      const h = Math.max(140, Math.min(520, startH + (ev.clientY - startY)));
-      const c = v.querySelector('#cc-canvas');
-      if (c) c.style.height = h + 'px';
-    };
-    const up = () => {
-      document.removeEventListener('mousemove', move);
-      document.removeEventListener('mouseup', up);
-      try {
-        const c = v.querySelector('#cc-canvas');
-        if (c) localStorage.setItem('editflow_cc_preview_h', String(c.clientHeight || 220));
-      } catch (_) {}
-    };
-    document.addEventListener('mousemove', move);
-    document.addEventListener('mouseup', up);
-  };
-  try {
-    const cv = v.querySelector('#cc-canvas');
-    const savedH = localStorage.getItem('editflow_cc_preview_h');
-    if (cv && savedH) cv.style.height = Math.max(140, Math.min(520, parseInt(savedH, 10) || 220)) + 'px';
-  } catch (_) {}
-  v.querySelectorAll('[data-tab]').forEach(b => { b.onclick = () => { _tab = +b.dataset.tab; _render(); }; });
-  const body = v.querySelector('#cc-body');
-  if (_tab === 0) _renderTranscribe(body);
-  else if (_tab === 1) _renderContent(body);
-  else if (_tab === 2) _renderStyle(body);
-  else if (_tab === 3) _renderAnimate(body);
-  else _renderGenerate(body);
-  _pvStart();
-}
-function _setStatus(s) { S.status = s; const el = $('#cc-status'); if (el) el.textContent = s; }
 
-// ── Live preview engine (AE canvas parity, client-side) ────────
-// Same layout + motion math as backend/services/subtitles/animated_overlay,
-// scaled to a 360×640 canvas (1/3 of the 1080 reference). Reads S live, so
-// every Style change shows instantly with no render roundtrip.
-function _pvStop() {
-  if (PV.raf) { try { cancelAnimationFrame(PV.raf); } catch (_) {} PV.raf = 0; }
-}
-function _pvStart() {
-  if (PV.raf) return;
-  PV.last = 0;
-  let logged = false;
-  const tick = (now) => {
-    PV.raf = 0;
+async function refreshSequence(first) {
+  const prevId = S.seq.id;
+  if (inCEP()) {
     try {
-      const canvas = document.getElementById('cc-canvas');
-      if (!canvas || canvas.offsetParent === null) return; // view hidden/closed
-      if (PV.last && PV.playing) PV.t += (now - PV.last) / 1000;
-      PV.last = now;
-      const dur = _pvDuration();
-      if (dur > 0 && PV.t >= dur) {
-        // Stop at the end like AE (restart via play).
-        PV.t = dur; PV.playing = false;
-        const pb = document.getElementById('cc-play');
-        if (pb) pb.textContent = '▶';
-      }
-      _pvDraw(canvas, PV.t);
-      const live = document.getElementById('cc-live');
-      if (live) live.style.opacity = (Math.floor(now / 500) % 2) ? '1' : '0.25';
-      const range = document.getElementById('cc-seekrange');
-      if (range && document.activeElement !== range) {
-        range.value = dur > 0 ? String((PV.t / dur) * 100) : '0';
-      }
-      const label = document.getElementById('cc-time');
-      if (label) label.textContent = PV.t.toFixed(1) + 's / ' + dur.toFixed(1) + 's';
+      const info = await callCM('sequenceInfo');
+      S.seq = {
+        name: info.name, id: info.id || info.name, width: Math.round(info.width) || 1080,
+        height: Math.round(info.height) || 1920,
+        fps: info.timebase ? M.fpsFromTicks(info.timebase) : M.fpsFromNumber(info.fps),
+        duration: info.duration || 0, playhead: info.playhead || 0, live: true,
+      };
     } catch (e) {
-      // One bad frame must never kill the page (this class of silent death
-      // showed as a black panel). Log once, keep looping.
-      if (!logged) { logged = true; console.error('[EditFlow] preview frame failed:', e); }
-    }
-    PV.raf = requestAnimationFrame(tick);
-  };
-  PV.raf = requestAnimationFrame(tick);
-}
-function _pvDuration() {
-  const cues = S.cues.length ? S.cues : _pvAutoCues();
-  let end = 0;
-  for (const c of cues) for (const w of (c.words || [])) end = Math.max(end, w.end || 0);
-  return end;
-}
-function _pvAutoCues() {
-  // Quick client-side grouping (backend cue_builder parity, simplified):
-  // split on silence > 0.8s, cap 7 words, break after sentence punctuation.
-  const words = S.words.filter(w => (w.text || '').trim());
-  const out = [];
-  let cur = [];
-  const push = () => {
-    if (!cur.length) return;
-    out.push({ text: cur.map(w => w.text).join(' '),
-               start: cur[0].start, end: cur[cur.length - 1].end, words: cur });
-    cur = [];
-  };
-  for (const w of words) {
-    if (cur.length) {
-      const gap = w.start - cur[cur.length - 1].end;
-      if (gap > 0.8 || cur.length >= 7) push();
-    }
-    cur.push(w);
-    if (/[.?!؟۔…]["')\]]?\s*$/.test(w.text || '')) push();
-  }
-  push();
-  return out;
-}
-function _pvFont(size) {
-  const fam = (S.fontCustom || S.fontFamily || 'Arial').replace(/"/g, '');
-  return `${S.fontBold === false ? 400 : 700} ${size}px "${fam}", Arial, sans-serif`;
-}
-function _hexA(hex, op) {
-  const h = String(hex || '#ffffff').replace('#', '');
-  const f = h.length === 3 ? h.split('').map(c => c + c).join('') : (h + 'ffffff').slice(0, 6);
-  const n = parseInt(f, 16);
-  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${op})`;
-}
-function _pvDraw(canvas, t) {
-  const ctx = canvas.getContext('2d');
-  const W = PV.W, H = PV.H, k = W / 1080;
-  const size = Math.max(8, Math.round(S.fontSize * k));
-  const y0 = Math.round(H * (S.posY / 100));
-  const margin = Math.max(0, W * (1 - S.boxW / 100) / 2);
-  const maxW = Math.max(1, W - 2 * margin);
-  ctx.clearRect(0, 0, W, H);
-  if (S.bgMode === 'video' && S.bgUrl) {
-    if (!PVBG.img || PVBG.src !== S.bgUrl) {
-      PVBG.img = new Image();
-      PVBG.src = S.bgUrl;
-      PVBG.img.src = S.bgUrl;
-    }
-    const im = PVBG.img;
-    if (im.complete && im.naturalWidth > 0) {
-      // Cover-crop the frame into the canvas.
-      const s = Math.max(W / im.naturalWidth, H / im.naturalHeight);
-      const dw = im.naturalWidth * s, dh = im.naturalHeight * s;
-      ctx.drawImage(im, (W - dw) / 2, (H - dh) / 2, dw, dh);
-    } else {
-      ctx.fillStyle = '#101010';
-      ctx.fillRect(0, 0, W, H);
-    }
-  } else if (S.bgMode === 'checker') {
-    ctx.fillStyle = '#181818';
-    ctx.fillRect(0, 0, W, H);
-    ctx.fillStyle = '#232323';
-    const cell = 24;
-    for (let yy = 0; yy < H; yy += cell) {
-      for (let xx = ((yy / cell) % 2) * cell; xx < W; xx += cell * 2) {
-        ctx.fillRect(xx, yy, cell, cell);
-      }
+      S.seq = Object.assign({}, PREVIEW_SEQ, { error: String((e && e.message) || e) });
     }
   } else {
+    const parts = String(S.settings.previewAspect || '9:16').split(':').map(Number);
+    const w = parts[0] >= parts[1] ? 1920 : 1080;
+    S.seq = Object.assign({}, PREVIEW_SEQ, { width: w, height: Math.round((w * parts[1]) / parts[0]) });
+  }
+  if (first || S.seq.id !== prevId) {
+    loadWords();
+    renderBody();
+  }
+  renderSeqChip();
+  layoutPreview();
+  rebuildScene();
+}
+
+function renderSeqChip() {
+  const el = $('#cc-seq');
+  if (!el) return;
+  const f = S.seq.fps;
+  const fps = Math.round((f.num / f.den) * 1000) / 1000;
+  el.innerHTML = S.seq.live
+    ? `<b>${esc(S.seq.name)}</b> · ${S.seq.width}×${S.seq.height} · ${fps} fps`
+    : (S.seq.error ? '<span class="cc-warn-text">No sequence open</span>'
+      : '<span class="cc-dim">Preview mode</span>');
+  el.title = S.seq.error || (S.seq.live ? '' : 'Not connected to Premiere — rendering works, placing on the timeline does not.');
+}
+
+/* ── shell ────────────────────────────────────────────────────── */
+
+const TABS = [['transcript', 'Transcript'], ['style', 'Style'], ['motion', 'Motion'], ['export', 'Export']];
+
+function renderShell() {
+  root.innerHTML = `
+    <div class="cc-top">
+      <div class="cc-title">Captions</div>
+      <div class="cc-seq" id="cc-seq"></div>
+      <button class="cc-icon-btn" data-act="refresh-seq" title="Re-read the active sequence">${icon('refresh')}</button>
+      <button class="cc-icon-btn" data-act="close" title="Close captions">${icon('close')}</button>
+    </div>
+    <div class="cc-stage" id="cc-stage">
+      <div class="cc-canvas-wrap" id="cc-canvas-wrap"><canvas id="cc-canvas"></canvas></div>
+    </div>
+    <div class="cc-transport">
+      <button class="cc-icon-btn cc-play" data-act="play" title="Play / pause (Space)">${icon('play')}</button>
+      <span class="cc-time" id="cc-time">0:00.0</span>
+      <input type="range" class="cc-scrub" id="cc-scrub" min="0" max="1" step="0.001" value="0" aria-label="Preview time">
+      <span class="cc-time cc-dur" id="cc-dur">0:00.0</span>
+      <button class="cc-icon-btn" data-act="bg" title="Preview background">${icon('bg')}</button>
+      <select class="cc-mini-select" id="cc-safe" title="Show where TikTok / Reels / Shorts buttons cover the video">
+        <option value="off">Safe zone</option>
+        ${Object.keys(SAFE_ZONES).map((k) => `<option value="${k}">${SAFE_ZONES[k].label}</option>`).join('')}
+      </select>
+      <button class="cc-icon-btn" data-act="toggle-preview" title="Hide / show the preview">${icon('eye')}</button>
+    </div>
+    <div class="cc-tabs" role="tablist">${TABS.map(([id, label]) =>
+      `<button class="cc-tab" role="tab" data-tab="${id}">${label}</button>`).join('')}</div>
+    <div class="cc-body" id="cc-body"></div>
+    <div class="cc-status hidden" id="cc-status"></div>
+    <div class="cc-footer" id="cc-footer"></div>
+    <input type="file" id="cc-file" accept="audio/*,video/*" class="hidden">`;
+  if (window.ResizeObserver) {
+    // React to WIDTH changes only, a frame later: resizing the canvas changes
+    // the stage's height, and reacting to that loops (Chromium then throws
+    // "ResizeObserver loop completed with undelivered notifications").
+    let lastW = 0;
+    new ResizeObserver((entries) => {
+      const w = Math.round(entries[0].contentRect.width);
+      if (w === lastW) return;
+      lastW = w;
+      requestAnimationFrame(layoutPreview);
+    }).observe($('#cc-stage'));
+  }
+  window.addEventListener('resize', () => requestAnimationFrame(layoutPreview));
+}
+
+/* ── preview ──────────────────────────────────────────────────── */
+
+function layoutPreview() {
+  const stage = $('#cc-stage');
+  const cv = $('#cc-canvas');
+  if (!stage || !cv) return;
+  stage.classList.toggle('hidden', !S.previewOpen);
+  if (!S.previewOpen) return;
+  // A third of the panel: room for the controls in a 400×600 dock, bigger
+  // when the panel is docked tall.
+  const avW = Math.max(120, stage.clientWidth - 16);
+  const avH = Math.max(120, Math.min(560, (root.clientHeight || 600) * 0.34));
+  const ar = S.seq.width / S.seq.height;
+  let w = avW, h = w / ar;
+  if (h > avH) { h = avH; w = h * ar; }
+  const dpr = window.devicePixelRatio || 1;
+  cv.style.width = Math.round(w) + 'px';
+  cv.style.height = Math.round(h) + 'px';
+  cv.width = Math.round(w * dpr);
+  cv.height = Math.round(h * dpr);
+  requestDraw();
+}
+
+let drawQueued = false;
+function requestDraw() {
+  if (drawQueued) return;
+  drawQueued = true;
+  requestAnimationFrame(() => { drawQueued = false; drawPreview(); });
+}
+
+let checker = null;
+function drawPreview() {
+  const cv = $('#cc-canvas');
+  if (!cv || !S.previewOpen || !cv.width) return;
+  const ctx = cv.getContext('2d');
+  const W = cv.width, H = cv.height;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  if (S.bg === 'frame' && S.bgImage && S.bgImage.complete && S.bgImage.naturalWidth) {
+    const im = S.bgImage, s = Math.max(W / im.naturalWidth, H / im.naturalHeight);
+    ctx.drawImage(im, (W - im.naturalWidth * s) / 2, (H - im.naturalHeight * s) / 2, im.naturalWidth * s, im.naturalHeight * s);
+  } else if (S.bg === 'dark') {
     ctx.fillStyle = '#101010';
     ctx.fillRect(0, 0, W, H);
+  } else {
+    if (!checker) {
+      const c = document.createElement('canvas');
+      c.width = c.height = 32;
+      const x = c.getContext('2d');
+      x.fillStyle = '#2b2b2b'; x.fillRect(0, 0, 32, 32);
+      x.fillStyle = '#363636'; x.fillRect(0, 0, 16, 16); x.fillRect(16, 16, 16, 16);
+      checker = ctx.createPattern(c, 'repeat');
+    }
+    ctx.fillStyle = checker;
+    ctx.fillRect(0, 0, W, H);
   }
-  ctx.textBaseline = 'top';
-  ctx.textAlign = 'left'; // reset every frame: the empty-state hint below
-  // uses center, and a sticky center shifts every word right by half
-  // its width (grows with font size — seen live).
-  const font = _pvFont(size);
-  const spW = ctx.measureText(' ').width;
-  const anim = _pvAnim();
-  const ease = EASE_FN[S.wordEasing] || EASE_FN.expo_out;
-  const risePx = S.slideDist * k, fadeT = 0.2, riseT = S.fadeDur;
-  const inten = Math.max(0.1, Math.min(3, S.animIntensity || 1));
-  const wordAlpha = (w0) => Math.min(1, Math.max(0, (t - w0) / fadeT));
-  const drawRun = (words, hold) => {
-    // Greedy chunk-split + layout (backend mirror, single line each).
-    // Chunks get OWN time windows (backend hold parity): showing every
-    // chunk for the whole cue stacked them on top of each other.
-    const texts = words.map(w => (S.allCaps ? String(w.text || '').toUpperCase() : String(w.text || '')));
-    ctx.font = font;
-    const widths = texts.map(x => ctx.measureText(x).width);
-    let total = widths.reduce((a, b) => a + b, 0) + spW * Math.max(0, texts.length - 1);
-    const chunks = [];
-    let cur = [], curW = 0;
-    texts.forEach((tx, i) => {
-      const add = cur.length ? spW + widths[i] : widths[i];
-      if (cur.length && curW + add > maxW) { chunks.push(cur); cur = []; curW = 0; }
-      cur.push(i); curW += cur.length === 1 ? widths[i] : spW + widths[i];
-    });
-    if (cur.length) chunks.push(cur);
-    const cStarts = chunks.map(idxs => Math.min(...idxs.map(i => words[i].start)));
-    const cEnds = chunks.map(idxs => Math.max(...idxs.map(i => words[i].end)));
-    chunks.forEach((idxs, cki) => {
-      const cHold = (cki + 1 < chunks.length && cStarts[cki + 1] > cEnds[cki])
-        ? cStarts[cki + 1] : (cki + 1 >= chunks.length ? hold : cEnds[cki]);
-      if (t < cStarts[cki] - 0.05 || t > cHold + 0.05) return;
-      const cw = idxs.reduce((a, i) => a + widths[i], 0) + spW * (idxs.length - 1);
-      let cx = W * (S.posX / 100);
-      let x = Math.min(Math.max(cx - cw / 2, margin), Math.max(margin, W - margin - cw));
-      // Word left edges, then pill runs (consecutive pill words, one box).
-      const left = {};
-      idxs.forEach((i) => { left[i] = x; x += widths[i] + spW; });
-      let run = [];
-      const runs = [];
-      idxs.forEach((i) => {
-        if (words[i].pill) run.push(i);
-        else { if (run.length) runs.push(run); run = []; }
-      });
-      if (run.length) runs.push(run);
-      runs.forEach((r) => {
-        // Glyph-tight box, backend parity: center on real ascenders/
-        // descenders relative to the cap top (same reference backend uses).
-        ctx.font = font;
-        const capA = (ctx.measureText('H').actualBoundingBoxAscent || size * 0.72);
-        let rAsc = 0, rDesc = 0;
-        r.forEach((i) => {
-          ctx.font = font;
-          const m = ctx.measureText(texts[i]);
-          rAsc = Math.max(rAsc, m.actualBoundingBoxAscent || 0);
-          rDesc = Math.max(rDesc, m.actualBoundingBoxDescent || 0);
-        });
-        const pad = size * 0.10;
-        const bx0 = left[r[0]] - size * 0.28;
-        const bx1 = left[r[r.length - 1]] + widths[r[r.length - 1]] + size * 0.28;
-        const by = y0 + (capA - rAsc) - pad, bh = (rAsc + rDesc) + pad * 2;
-        const aMax = Math.max(...r.map(i => wordAlpha(words[i].start)));
-        if (aMax > 0.01 && t <= hold) {
-          // Pill scale-in (AE pillScale): grows 0→1 over 0.5s from the run
-          // start, then holds with the caption.
-          const pillT0 = Math.min(...r.map(i => words[i].start));
-          const ps = ease(Math.min(1, Math.max(0, (t - pillT0) / 0.5)));
-          const pcx = (bx0 + bx1) / 2, pcy = by + bh / 2;
-          ctx.save();
-          ctx.translate(pcx, pcy);
-          ctx.scale(Math.max(0.01, ps), Math.max(0.01, ps));
-          ctx.translate(-pcx, -pcy);
-          ctx.globalAlpha = Math.min(1, aMax) * (S.pillOpacity / 100);
-          ctx.fillStyle = S.pillColor;
-          ctx.beginPath();
-          const prad = Math.max(0, (bh / 2) * (S.pillRadius / 50));
-          if (ctx.roundRect) ctx.roundRect(bx0, by, bx1 - bx0, bh, prad);
-          else ctx.rect(bx0, by, bx1 - bx0, bh);
-          ctx.fill();
-          if (S.pillOutline && S.pillStrokeWidth > 0) {
-            ctx.globalAlpha = Math.min(1, aMax);
-            ctx.strokeStyle = S.pillStrokeColor;
-            ctx.lineWidth = Math.max(1, size * 0.03 * (S.pillStrokeWidth / 2));
-            ctx.stroke();
-          }
-          ctx.restore();
-        }
-      });
-      idxs.forEach((i) => {
-        const w0 = words[i].start, tx = texts[i];
-        if (!tx || t < w0 || t > hold) return;
-        // Anchor: caption-level presets animate the whole chunk from its
-        // first word (backend caption_level parity).
-        const anchor = anim.captionLevel ? Math.min(...idxs.map(j => words[j].start)) : w0;
-        const dt = t - anchor;
-        let dy = 0, a = dt >= 0 ? wordAlpha(anchor) : 0;
-        const p = Math.min(1, Math.max(0, dt / riseT));
-        if (anim.motion === 'rise' || anim.motion === 'back' || anim.motion === 'fadeup') {
-          dy = risePx * (1 - ease(p)); a = Math.min(1, a * 3);
-        } else if (anim.motion === 'fade') {
-          dy = 0;
-        } else if (anim.motion === 'bounce') {
-          dy = dt < 1.2 ? -(60 * k) * inten * Math.abs(Math.sin(14 * dt)) * Math.pow(2.71828, -3.5 * dt) : 0;
-        }
-        ctx.save();
-        ctx.globalAlpha = Math.min(1, Math.max(0, a));
-        ctx.font = font;
-        ctx.fillStyle = S.textColor;
-        if (S.strokeWidth > 0) {
-          ctx.strokeStyle = S.strokeColor;
-          ctx.lineWidth = Math.max(1, S.strokeWidth * 2 * (W / 1080));
-          ctx.lineJoin = 'round';
-          ctx.strokeText(tx, left[i], y0 + dy);
-        }
-        if (S.shadowOn) {
-          ctx.shadowColor = _hexA(S.shadowColor, S.shadowOpacity / 100);
-          ctx.shadowBlur = Math.max(0, S.shadowBlur * (W / 1080));
-          ctx.shadowOffsetY = Math.max(0, S.shadowDistance * (W / 1080)) * 0.7;
-        } else {
-          ctx.shadowBlur = 0;
-          ctx.shadowOffsetY = 0;
-        }
-        ctx.fillText(tx, left[i], y0 + dy);
-        ctx.restore();
-      });
-    });
-  };
-  // Holds mirror the backend (next cue start, else +0.5 tail).
-  // Live style preview (AE parity): with words but no built cues yet,
-  // auto-group on the fly so Style changes show without building first.
-  const cues = S.cues.length ? S.cues : _pvAutoCues();
-  const starts = cues.map(c => Math.min(...c.words.map(w => w.start)));
-  const ends = cues.map(c => Math.max(...c.words.map(w => w.end)));
-  cues.forEach((c, i) => {
-    const hold = (i + 1 < cues.length && starts[i + 1] > ends[i]) ? starts[i + 1] : ends[i] + (i + 1 >= cues.length ? 0.5 : 0);
-    if (t >= Math.min(...c.words.map(w => w.start)) - 0.05 && t <= hold + 0.05) drawRun(c.words, hold);
-  });
-  if (S.showBox) {
-    const bx = margin, bw = W - 2 * margin;
-    const sizeB = Math.max(8, Math.round(S.fontSize * (W / 1080)));
-    const byB = Math.round(H * (S.posY / 100)) - sizeB * 0.3;
-    const bhB = sizeB * 1.7;
+  if (S.scene) drawFrame(ctx, S.scene, effSettings(), S.t, { scale: W / S.seq.width, clear: false });
+  if (S.safe !== 'off' && S.seq.height > S.seq.width) drawSafeZones(ctx, W, H, S.safe);
+  if (S.drag || S.hoverBox) {
+    const lay = S.settings.layout, k = W / S.seq.width;
+    const bw = S.seq.width * lay.boxWidth / 100 * k;
+    const fs = S.settings.style.fontSize * scaleK() * k;
+    const bh = fs * (lay.lineHeight || 1.12) * Math.max(1, S.settings.grouping.maxLines || 1);
+    const cx = S.seq.width * lay.posX / 100 * k, cy = S.seq.height * lay.posY / 100 * k;
     ctx.save();
-    ctx.strokeStyle = 'rgba(127,179,255,0.8)';
-    ctx.lineWidth = 1;
     ctx.setLineDash([5, 4]);
-    ctx.strokeRect(bx, byB, bw, bhB);
-    ctx.setLineDash([]);
+    ctx.strokeStyle = 'rgba(80,160,255,.9)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(cx - bw / 2 + 0.5, cy - bh / 2 + 0.5, bw, bh);
     ctx.restore();
   }
-  if (!S.cues.length && !S.words.length) {
-    ctx.font = '13px sans-serif';
-    ctx.fillStyle = '#888';
+  if (!S.words.length) {
+    const dpr = window.devicePixelRatio || 1;
+    ctx.fillStyle = 'rgba(255,255,255,.55)';
+    ctx.font = `${Math.round(12 * dpr)}px "Segoe UI", sans-serif`;
     ctx.textAlign = 'center';
-    ctx.fillText('Transcribe or paste words to preview', W / 2, H / 2);
+    ctx.fillText('Your captions preview here', W / 2, H / 2);
     ctx.textAlign = 'left';
-    return;
   }
 }
 
-// ── Tab 1: Transcribe ────────────────────────────────────────
-function _renderTranscribe(body) {
-  body.innerHTML = `
-    <p class="cc-hint">Upload audio or video — Whisper transcribes it with word-level timestamps. Large files take a while; the first run downloads the model from Settings.</p>
-    <label class="cc-label">Media file</label>
-    <input id="cc-file" class="cc-input" type="file" accept="audio/*,video/*" />
-    <div class="cc-row">
-      <div><label class="cc-label">Language</label><select id="cc-lang" class="cc-input">${LANGUAGES.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select></div>
-      <div><label class="cc-label">Engine</label><select id="cc-engine" class="cc-input"><option value="auto">Auto (WhisperX → Whisper)</option><option value="whisperx">WhisperX only</option><option value="whisper">Whisper only</option></select></div>
+function tick(now) {
+  rafId = 0;
+  if (!S.playing) return;
+  const dt = lastTick ? (now - lastTick) / 1000 : 0;
+  lastTick = now;
+  const dur = S.scene ? S.scene.duration : 0;
+  S.t += dt;
+  if (S.t > dur) S.t = 0;          // loop: handy while styling
+  drawPreview();
+  updateTransport();
+  highlightPlayingWord();
+  rafId = requestAnimationFrame(tick);
+}
+function setPlaying(on) {
+  S.playing = !!on && !!(S.scene && S.scene.duration);
+  const b = $('[data-act="play"]');
+  if (b) b.innerHTML = icon(S.playing ? 'pause' : 'play');
+  if (S.playing && !rafId) { lastTick = 0; rafId = requestAnimationFrame(tick); }
+}
+function seek(t) {
+  S.t = clamp(t, 0, S.scene ? S.scene.duration : 0);
+  requestDraw();
+  updateTransport();
+  highlightPlayingWord();
+}
+function updateTransport() {
+  const dur = S.scene ? S.scene.duration : 0;
+  const tEl = $('#cc-time'), dEl = $('#cc-dur'), sc = $('#cc-scrub');
+  if (tEl) tEl.textContent = fmtTime(S.t);
+  if (dEl) dEl.textContent = fmtTime(dur);
+  if (sc && document.activeElement !== sc) { sc.max = String(dur || 1); sc.value = String(S.t); }
+}
+let lastPlayingWord = -1;
+function highlightPlayingWord() {
+  if (S.tab !== 'transcript') return;
+  let idx = -1;
+  for (let i = 0; i < S.words.length; i++) { if (S.words[i].start <= S.t) idx = i; else break; }
+  if (idx === lastPlayingWord) return;
+  const prev = $(`.cc-w[data-i="${lastPlayingWord}"]`);
+  if (prev) prev.classList.remove('cc-now');
+  const cur = $(`.cc-w[data-i="${idx}"]`);
+  if (cur) cur.classList.add('cc-now');
+  lastPlayingWord = idx;
+}
+
+/* ── status + footer ──────────────────────────────────────────── */
+
+let statusTimer = 0;
+function setStatus(text, kind) {
+  S.status = text ? { text, kind: kind || 'info' } : null;
+  const el = $('#cc-status');
+  if (!el) return;
+  clearTimeout(statusTimer);
+  if (!S.status) { el.className = 'cc-status hidden'; el.innerHTML = ''; return; }
+  el.className = 'cc-status cc-' + S.status.kind;
+  el.innerHTML = `<span>${esc(text)}</span><button class="cc-icon-btn" data-act="dismiss" title="Dismiss">${icon('close')}</button>`;
+  if (S.status.kind !== 'error') statusTimer = setTimeout(() => setStatus(null), 9000);
+}
+
+function updateFooter() {
+  const el = $('#cc-footer');
+  if (!el) return;
+  el.classList.toggle('cc-busy', !!S.busy);
+  if (S.busy) {
+    const p = S.busy.progress;
+    el.innerHTML = `<div class="cc-progress"><div class="cc-progress-bar${p == null ? ' cc-indet' : ''}" style="width:${p == null ? 100 : Math.round(p * 100)}%"></div>
+      <span>${esc(S.busy.label)}</span></div>
+      ${S.busy.cancel ? '<button class="cc-btn" data-act="cancel">Cancel</button>' : ''}`;
+    return;
+  }
+  const n = S.scene ? S.scene.captions.length : 0;
+  el.innerHTML = `<button class="cc-btn cc-primary cc-wide" data-act="export" ${n ? '' : 'disabled'}
+      title="${n ? `${n} caption${n === 1 ? '' : 's'} · ${fmtTime(S.scene.duration)}` : 'Transcribe or paste words first'}">
+      ${inCEP() ? 'Add captions to timeline' : 'Render caption video'}</button>`;
+}
+
+function setBusy(b) { S.busy = b; updateFooter(); }
+
+/* ── tabs ─────────────────────────────────────────────────────── */
+
+function renderBody() {
+  if (!root || !$('#cc-body')) return;
+  $$('.cc-tab').forEach((b) => b.classList.toggle('cc-active', b.dataset.tab === S.tab));
+  const body = $('#cc-body');
+  const scroll = body.scrollTop;
+  if (S.tab === 'transcript') body.innerHTML = tabTranscript();
+  else if (S.tab === 'style') body.innerHTML = tabStyle();
+  else if (S.tab === 'motion') body.innerHTML = tabMotion();
+  else body.innerHTML = tabExport();
+  body.scrollTop = scroll;
+  if (S.tab === 'transcript') renderTranscriptList();
+  if (S.tab === 'style') drawPresetTiles();
+  if (S.tab === 'motion') drawMotionTiles();
+  updateFooter();
+}
+
+/* ── controls (declarative: data-bind + one handler) ──────────── */
+
+function ctlNum(path, label, min, max, step, unit, scale) {
+  const raw = getPath(S.settings, path);
+  const v = fmtNum((raw == null ? 0 : raw) * (scale || 1));
+  const a = `data-bind="${path}" data-kind="num" data-min="${min}" data-max="${max}"${scale ? ` data-scale="${scale}"` : ''}`;
+  return `<div class="cc-ctl cc-ctl-num"><label class="cc-lbl">${label}</label>
+    <input class="cc-range" type="range" min="${min}" max="${max}" step="${step}" value="${v}" ${a}>
+    <span class="cc-numbox"><input type="number" min="${min}" max="${max}" step="${step}" value="${v}" ${a}>${unit ? `<i>${unit}</i>` : ''}</span></div>`;
+}
+function ctlToggle(path, label, hint) {
+  const on = !!getPath(S.settings, path);
+  return `<label class="cc-toggle"><input type="checkbox" data-bind="${path}" data-kind="bool"${on ? ' checked' : ''}>
+    <span class="cc-switch"></span><span class="cc-toggle-text">${label}${hint ? `<small>${hint}</small>` : ''}</span></label>`;
+}
+function ctlSelect(path, label, options) {
+  const v = String(getPath(S.settings, path));
+  return `<div class="cc-ctl"><label class="cc-lbl">${label}</label><select class="cc-select" data-bind="${path}" data-kind="text">
+    ${options.map(([val, text]) => `<option value="${esc(val)}"${String(val) === v ? ' selected' : ''}>${esc(text)}</option>`).join('')}
+  </select></div>`;
+}
+function ctlSeg(path, label, options) {
+  const v = String(getPath(S.settings, path));
+  return `<div class="cc-ctl"><label class="cc-lbl">${label}</label><div class="cc-seg" data-bind="${path}" data-kind="seg">
+    ${options.map(([val, text, title]) => `<button type="button" data-value="${esc(val)}" class="${String(val) === v ? 'cc-on' : ''}"${title ? ` title="${esc(title)}"` : ''}>${text}</button>`).join('')}
+  </div></div>`;
+}
+function ctlColor(path, label) {
+  const v = getPath(S.settings, path) || '#ffffff';
+  return `<label class="cc-color"><input type="color" value="${esc(v)}" data-bind="${path}" data-kind="text"><span>${label}</span></label>`;
+}
+function section(title, inner, extra) {
+  return `<section class="cc-sec"><h4>${title}${extra || ''}</h4>${inner}</section>`;
+}
+
+/* ── Transcript tab ───────────────────────────────────────────── */
+
+const LANGS = [['en', 'English'], ['auto', 'Auto-detect'], ['ur', 'Urdu'], ['hi', 'Hindi'], ['ar', 'Arabic'],
+  ['es', 'Spanish'], ['fr', 'French'], ['de', 'German']];
+
+function sourceCard() {
+  const live = inCEP();
+  return `<div class="cc-source">
+    <button class="cc-btn cc-primary cc-wide" data-act="transcribe-seq" ${live && !S.busy ? '' : 'disabled'}>${icon('mic')} Transcribe this sequence</button>
+    <p class="cc-hint">${live ? 'Uses the timeline audio as cut, so captions line up with your edit. Muted tracks are skipped — mute music first.'
+      : 'Open the panel inside Premiere to transcribe the sequence. You can still upload a file or paste a transcript.'}</p>
+    <div class="cc-row2">
+      ${ctlSelect('transcribe.language', 'Language', LANGS)}
+      ${ctlSelect('transcribe.engine', 'Word timing', [['auto', 'Best available'], ['whisperx', 'WhisperX (precise)'], ['whisper', 'Whisper (fast)']])}
     </div>
-    <div class="cc-actions"><button class="cc-btn cc-primary" data-act="go" ${S.busy ? 'disabled' : ''}>${S.busy ? 'Transcribing…' : 'Transcribe'}</button></div>
-    <div class="cc-or">— or paste a transcript (no re-transcribe) —</div>
-    <textarea id="cc-paste" class="cc-input cc-textarea" placeholder="Paste SRT cues, JSON [{word,start,end}], or plain text…" spellcheck="false"></textarea>
-    <div class="cc-actions"><button class="cc-btn" data-act="paste">Use this transcript</button></div>`;
-  body.querySelector('[data-act="go"]').onclick = _transcribe;
-  body.querySelector('[data-act="paste"]').onclick = _parsePasted;
+    <div class="cc-row2">
+      <button class="cc-btn" data-act="upload" ${S.busy ? 'disabled' : ''}>Upload audio / video…</button>
+      <button class="cc-btn" data-act="paste-toggle">${S.pasteOpen ? 'Hide paste box' : 'Paste transcript…'}</button>
+    </div>
+    ${S.pasteOpen ? `<textarea class="cc-text" id="cc-paste" placeholder="Paste SRT, JSON [{word,start,end}], or plain text"></textarea>
+      <button class="cc-btn cc-wide" data-act="paste-use">Use this transcript</button>` : ''}
+  </div>`;
 }
-function _srtToSecs(s) {
-  const m = s.match(/(\d+):(\d+):([\d.,]+)/);
-  if (!m) return null;
-  return (+m[1]) * 3600 + (+m[2]) * 60 + parseFloat(String(m[3]).replace(',', '.'));
+
+function tabTranscript() {
+  if (!S.words.length) return section('Get the words', sourceCard());
+  const vis = S.scene ? S.scene.captions.length : 0;
+  const hideF = S.settings.grouping.hideFillers !== false;
+  const hidden = S.words.filter((w) => !M.isVisible(w, hideF)).length;
+  return `
+    <div class="cc-txbar">
+      <button class="cc-icon-btn" data-act="undo" title="Undo (Ctrl+Z)" ${S.history.length ? '' : 'disabled'}>${icon('undo')}</button>
+      <button class="cc-icon-btn" data-act="redo" title="Redo (Ctrl+Shift+Z)" ${S.future.length ? '' : 'disabled'}>${icon('redo')}</button>
+      <button class="cc-icon-btn${S.findOpen ? ' cc-on' : ''}" data-act="find-toggle" title="Find & replace">${icon('search')}</button>
+      <span class="cc-dim cc-grow" id="cc-txcount">${S.words.length} words · ${vis} captions${hidden ? ` · ${hidden} hidden` : ''}</span>
+      <button class="cc-btn cc-small" data-act="source-toggle">${S.showSource ? 'Done' : 'Re-transcribe…'}</button>
+    </div>
+    ${S.showSource ? `<div class="cc-sec">${sourceCard()}</div>` : ''}
+    ${S.findOpen ? `<div class="cc-find">
+      <input class="cc-input" id="cc-find" placeholder="Find word" spellcheck="false">
+      <input class="cc-input" id="cc-replace" placeholder="Replace with" spellcheck="false">
+      <button class="cc-btn cc-small" data-act="replace-all">Replace all</button></div>` : ''}
+    <div class="cc-selbar hidden" id="cc-selbar"></div>
+    <div class="cc-tx" id="cc-tx" tabindex="0"></div>
+    <p class="cc-hint">Click a word to jump to it · double-click to fix it · <kbd>H</kbd> hide · <kbd>E</kbd> emphasise · <kbd>B</kbd> new caption here · <kbd>←</kbd><kbd>→</kbd> move</p>`;
 }
-function _parsePasted() {
-  // AE parity: SRT cues (words spread evenly per cue), JSON words, or
-  // plain text (even split over 60s). Zero backend calls.
-  const raw = ($('#cc-paste')?.value || '').trim();
-  if (!raw) { _setStatus('Paste something first.'); return; }
-  let words = [];
+
+function renderTranscriptList() {
+  const box = $('#cc-tx');
+  if (!box) return;
+  const hideF = S.settings.grouping.hideFillers !== false;
+  const capOf = {};
+  if (S.scene) S.scene.captions.forEach((c, ci) => c.lines.forEach((l) => l.words.forEach((w) => { capOf[w.id] = ci; })));
+  let html = '', cur = -2, open = false;
+  S.words.forEach((w, i) => {
+    const ci = capOf[w.id != null ? w.id : i];
+    if (ci !== undefined && ci !== cur) {
+      if (open) html += '</div></div>';
+      const c = S.scene.captions[ci];
+      html += `<div class="cc-cap"><button class="cc-cap-time" data-seek="${c.tIn}" title="Jump here">${fmtTime(c.tIn)}</button><div class="cc-cap-words">`;
+      open = true; cur = ci;
+    } else if (!open) {
+      html += '<div class="cc-cap"><span class="cc-cap-time"></span><div class="cc-cap-words">';
+      open = true;
+    }
+    const visible = M.isVisible(w, hideF);
+    const cls = ['cc-w'];
+    if (!visible) cls.push(w.hidden === true ? 'cc-hidden' : 'cc-auto-hidden');
+    if (w.emphasis) cls.push('cc-emph');
+    if (i === S.sel) cls.push('cc-sel');
+    if (w.breakBefore) cls.push('cc-brk');
+    if (i === S.editing) {
+      html += `<input class="cc-w-edit" id="cc-w-edit" value="${esc(w.text)}" data-i="${i}" spellcheck="false" size="${Math.max(3, w.text.length + 2)}">`;
+    } else {
+      html += `<span class="${cls.join(' ')}" data-i="${i}" title="${fmtTime(w.start)}${!visible && w.hidden !== true ? ' · filler, hidden automatically' : ''}">${esc(w.text)}</span>`;
+    }
+    if (open && i + 1 < S.words.length) html += ' ';
+  });
+  if (open) html += '</div></div>';
+  box.innerHTML = html || '<p class="cc-hint">No words.</p>';
+  const count = $('#cc-txcount');
+  if (count && S.scene) {
+    const hidden = S.words.filter((w) => !M.isVisible(w, hideF)).length;
+    count.textContent = `${S.words.length} words · ${S.scene.captions.length} captions${hidden ? ` · ${hidden} hidden` : ''}`;
+  }
+  renderSelBar();
+  const ed = $('#cc-w-edit');
+  if (ed) { ed.focus(); ed.select(); }
+  lastPlayingWord = -1;
+  highlightPlayingWord();
+}
+
+function renderSelBar() {
+  const bar = $('#cc-selbar');
+  if (!bar) return;
+  const w = S.words[S.sel];
+  if (!w) { bar.innerHTML = ''; bar.classList.add('hidden'); return; }
+  const vis = M.isVisible(w, S.settings.grouping.hideFillers !== false);
+  bar.classList.remove('hidden');
+  bar.innerHTML = `<span class="cc-selword">“${esc(w.text)}” <span class="cc-dim">${fmtTime(w.start)}</span></span>
+    <button class="cc-btn cc-small" data-act="w-hide" title="Hide / show this word (H)">${vis ? 'Hide' : 'Show'}</button>
+    <button class="cc-btn cc-small${w.emphasis ? ' cc-on' : ''}" data-act="w-emph" title="Emphasise (E)">Emphasis</button>
+    <button class="cc-btn cc-small${w.breakBefore ? ' cc-on' : ''}" data-act="w-break" title="Start a new caption at this word (B)">New caption</button>
+    <button class="cc-btn cc-small" data-act="w-edit" title="Fix the spelling (Enter)">Edit</button>
+    <span class="cc-nudge"><button class="cc-btn cc-small" data-act="w-earlier" title="Start one frame earlier">−1f</button><button class="cc-btn cc-small" data-act="w-later" title="Start one frame later">+1f</button></span>`;
+}
+
+/* ── word edits (with undo) ───────────────────────────────────── */
+
+function snapshot() {
+  S.history.push(JSON.stringify(S.words));
+  if (S.history.length > 80) S.history.shift();
+  S.future = [];
+}
+function wordsChanged() {
+  saveWords();
+  rebuildScene();
+  const u = $('[data-act="undo"]'), r = $('[data-act="redo"]');
+  if (u) u.disabled = !S.history.length;
+  if (r) r.disabled = !S.future.length;
+}
+function undo() {
+  if (!S.history.length) return;
+  S.future.push(JSON.stringify(S.words));
+  S.words = JSON.parse(S.history.pop());
+  wordsChanged();
+}
+function redo() {
+  if (!S.future.length) return;
+  S.history.push(JSON.stringify(S.words));
+  S.words = JSON.parse(S.future.pop());
+  wordsChanged();
+}
+function wordAction(act) {
+  const w = S.words[S.sel];
+  if (!w) return;
+  snapshot();
+  if (act === 'hide') w.hidden = M.isVisible(w, S.settings.grouping.hideFillers !== false) ? true : false;
+  else if (act === 'emph') w.emphasis = !w.emphasis;
+  else if (act === 'break') w.breakBefore = !w.breakBefore;
+  else if (act === 'earlier' || act === 'later') {
+    const f = (S.seq.fps.den / S.seq.fps.num) * (act === 'earlier' ? -1 : 1);
+    const prev = S.words[S.sel - 1];
+    w.start = Math.max(prev ? prev.start + 0.02 : 0, Math.min(w.end - 0.02, w.start + f));
+    if (prev && prev.end > w.start) prev.end = w.start;
+    seek(w.start + 0.001);
+  }
+  wordsChanged();
+}
+function commitEdit(text) {
+  const i = S.editing;
+  S.editing = -1;
+  const w = S.words[i];
+  if (!w) { renderTranscriptList(); return; }
+  const parts = String(text || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length || parts.join(' ') === w.text) { renderTranscriptList(); return; }
+  snapshot();
+  if (parts.length === 1) {
+    w.text = parts[0];
+  } else {
+    // "gonna" → "going to": share the word's time by letter count
+    const total = parts.reduce((a, p) => a + p.length, 0);
+    let t = w.start;
+    const span = w.end - w.start;
+    const repl = parts.map((p, k) => {
+      const d = span * (p.length / total);
+      const nw = Object.assign({}, w, { text: p, start: t, end: t + d, id: k === 0 ? w.id : `${w.id}.${k}`,
+                                        breakBefore: k === 0 ? w.breakBefore : undefined });
+      t += d;
+      return nw;
+    });
+    S.words.splice(i, 1, ...repl);
+  }
+  wordsChanged();
+}
+function replaceAll() {
+  const f = ($('#cc-find') || {}).value || '';
+  const r = (($('#cc-replace') || {}).value || '').trim();
+  if (!f.trim()) { setStatus('Type the word to find first.'); return; }
+  const norm = (s) => s.toLowerCase().replace(/[^\p{L}\p{N}']/gu, '');
+  const want = norm(f);
+  let n = 0;
+  snapshot();
+  for (const w of S.words) {
+    if (norm(w.text) === want) {
+      const trail = (w.text.match(/[^\p{L}\p{N}']+$/u) || [''])[0];
+      if (r) w.text = r + trail;
+      n++;
+    }
+  }
+  if (!n || !r) { S.history.pop(); setStatus(n ? 'Type the replacement first.' : `No “${f}” in the transcript.`); return; }
+  setStatus(`Replaced ${n} × “${f}”.`, 'ok');
+  wordsChanged();
+}
+
+/* ── transcription ────────────────────────────────────────────── */
+
+function setWords(words, note) {
+  if (S.words.length) snapshot();
+  S.words = M.sanitizeWords(words).map((w, i) => {
+    const o = { id: i, text: w.text, start: w.start, end: w.end };
+    if (w.hidden !== undefined) o.hidden = w.hidden;
+    if (w.emphasis) o.emphasis = true;
+    if (w.breakBefore) o.breakBefore = true;
+    return o;
+  });
+  S.sel = -1;
+  S.editing = -1;
+  S.showSource = false;
+  S.pasteOpen = false;
+  saveWords();
+  S.t = 0;
+  renderBody();
+  rebuildScene();
+  if (note) setStatus(note, 'ok');
+}
+
+function onWsMessage(ev) {
+  const d = ev && ev.detail;
+  const p = d && (d.payload || d);
+  if (!S.busy || S.busy.kind !== 'transcribe' || !p || p.task_type !== 'transcribe') return;
+  S.busy.progress = typeof p.progress === 'number' ? clamp(p.progress, 0, 1) : null;
+  S.busy.label = p.message ? `Transcribing — ${p.message}` : 'Transcribing…';
+  updateFooter();
+}
+
+function transcribeError(e) {
+  const msg = String((e && e.message) || e);
+  if (/409|no_model/i.test(msg)) {
+    setStatus('No Whisper model installed yet — open Settings (gear icon) to download one, then try again.', 'error');
+  } else {
+    setStatus('Transcription failed: ' + msg.slice(0, 220), 'error');
+  }
+}
+
+async function transcribeSequence() {
+  if (!inCEP() || S.busy) return;
+  setBusy({ kind: 'transcribe', label: 'Reading the sequence audio…', progress: null });
+  try {
+    const clips = await callCM('sequenceAudioClips');
+    if (!clips.clips || !clips.clips.length) {
+      throw new Error('No audio clips on unmuted tracks' + (clips.nested ? ` (${clips.nested} nested-sequence clip(s) are skipped)` : '') + '.');
+    }
+    setBusy({ kind: 'transcribe', label: `Transcribing ${clips.clips.length} clip${clips.clips.length === 1 ? '' : 's'}… (can take minutes on CPU)`, progress: null });
+    const tr = S.settings.transcribe;
+    const res = await apiPost('/api/captions/transcribe-sequence', {
+      clips: clips.clips, sequence_name: clips.name, duration: clips.duration,
+      language: tr.language, engine: tr.engine,
+    }, { timeoutMs: 60 * 60 * 1000 });
+    const words = (res.words || []).map((w) => ({ text: w.word || w.text, start: w.start, end: w.end }));
+    const skipped = (res.skipped || []).length;
+    setWords(words, `${words.length} words from “${clips.name}” (${res.engine || 'whisper'})${skipped ? ` — ${skipped} offline clip(s) skipped` : ''}.`);
+  } catch (e) {
+    transcribeError(e);
+  } finally {
+    setBusy(null);
+  }
+}
+
+async function transcribeFile(file) {
+  if (S.busy) return;
+  setBusy({ kind: 'transcribe', label: `Uploading ${file.name}…`, progress: null });
+  try {
+    const tr = S.settings.transcribe;
+    const res = await apiUpload('/api/captions/transcribe-mixdown', file,
+      { language: tr.language, engine: tr.engine }, { timeoutMs: 60 * 60 * 1000 });
+    const words = (res.words || []).map((w) => ({ text: w.word || w.text, start: w.start, end: w.end }));
+    if (res.bg_url) {
+      const im = new Image();
+      im.onload = () => { S.bg = 'frame'; requestDraw(); };
+      im.src = getBaseUrl() + res.bg_url;
+      S.bgImage = im;
+    }
+    setWords(words, `${words.length} words from ${file.name} (${res.engine || 'whisper'}). Times count from the start of the sequence.`);
+  } catch (e) {
+    transcribeError(e);
+  } finally {
+    setBusy(null);
+  }
+}
+
+function srtSecs(s) {
+  const m = String(s).match(/(\d+):(\d+):(\d+)[,.](\d+)/);
+  return m ? (+m[1]) * 3600 + (+m[2]) * 60 + (+m[3]) + parseFloat('0.' + m[4]) : null;
+}
+function parsePasted(raw) {
+  raw = String(raw || '').trim();
+  if (!raw) return [];
   try {
     const j = JSON.parse(raw);
-    const arr = Array.isArray(j) ? j : j.words || j.segments || [];
-    if (Array.isArray(arr) && arr.length && (arr[0].start !== undefined || arr[0].word || arr[0].text)) {
-      words = arr.map(w => ({ text: String(w.word || w.text || ''), start: +w.start || 0, end: +w.end || 0, keep: true }));
+    const arr = Array.isArray(j) ? j : (j.words || (j.segments || []).reduce((a, s) => a.concat(s.words || []), []));
+    if (Array.isArray(arr) && arr.length) {
+      return arr.map((w) => ({ text: String(w.word || w.text || ''), start: +w.start || 0, end: +w.end || 0,
+        hidden: w.hidden, emphasis: w.emphasis || w.pill }));
     }
-  } catch (_) {}
-  if (!words.length && /-->\s*\d/.test(raw)) {
-    // SRT-ish: split blocks, distribute each cue's text evenly across it.
-    const blocks = raw.split(/\n\s*\n/);
-    for (const b of blocks) {
-      const lines = b.split('\n').map(s => s.trim()).filter(Boolean);
-      const ti = lines.findIndex(l => /-->/.test(l));
+  } catch (_) { /* not JSON */ }
+  if (/-->/.test(raw)) {
+    const out = [];
+    for (const block of raw.split(/\r?\n\s*\r?\n/)) {
+      const lines = block.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+      const ti = lines.findIndex((l) => l.indexOf('-->') !== -1);
       if (ti < 0) continue;
-      const [a, c] = lines[ti].split('-->').map(s => s.trim());
-      const s0 = _srtToSecs(a), s1 = _srtToSecs(c);
-      if (s0 === null || s1 === null || s1 <= s0) continue;
+      const ab = lines[ti].split('-->');
+      const s0 = srtSecs(ab[0]), s1 = srtSecs(ab[1]);
+      if (s0 == null || s1 == null || s1 <= s0) continue;
       const toks = lines.slice(ti + 1).join(' ').split(/\s+/).filter(Boolean);
-      if (!toks.length) continue;
-      const per = (s1 - s0) / toks.length;
-      toks.forEach((t, i) => words.push({ text: t, start: Math.round((s0 + i * per) * 100) / 100, end: Math.round((s0 + (i + 1) * per) * 100) / 100, keep: true }));
+      const total = toks.reduce((x, t) => x + t.length + 1, 0);
+      let t = s0;
+      for (const tok of toks) {
+        const d = (s1 - s0) * ((tok.length + 1) / total);
+        out.push({ text: tok, start: t, end: t + d });
+        t += d;
+      }
     }
+    return out;
   }
-  if (!words.length) {
-    // Plain text: even split over 60s.
-    const toks = raw.split(/\s+/).filter(Boolean);
-    const per = 60 / Math.max(1, toks.length);
-    words = toks.map((t, i) => ({ text: t, start: Math.round(i * per * 100) / 100, end: Math.round((i + 1) * per * 100) / 100, keep: true }));
-  }
-  words = words.filter(w => w.text.trim());
-  if (!words.length) { _setStatus('Could not parse that — try SRT, JSON, or plain words.'); return; }
-  S.words = words;
-  _setStatus(`${words.length} words from pasted transcript.`);
-  _tab = 1; _render();
-}
-async function _transcribe() {
-  const file = $('#cc-file')?.files?.[0];
-  if (!file) { _setStatus('Pick a media file first.'); return; }
-  S.busy = true; _render(); _setStatus('Uploading + transcribing…');
-  try {
-    const resp = await apiUpload('/api/captions/transcribe-mixdown', file, {
-      language: $('#cc-lang')?.value || 'auto',
-      engine: $('#cc-engine')?.value || 'auto',
-    }, { timeoutMs: 600000 });
-    S.words = (resp.words || []).map(w => ({ text: w.word || w.text || '', start: w.start, end: w.end, keep: true }));
-    S.words = S.words.filter(w => w.text.trim());
-    if (resp.bg_url) S.bgUrl = getBaseUrl() + resp.bg_url;
-    _setStatus(`${S.words.length} words (${resp.engine || 'whisper'}).`);
-    _tab = 1; _render();
-  } catch (e) {
-    const msg = String((e && e.message) || e);
-    _setStatus(msg.includes('409') || /no_model/i.test(msg)
-      ? 'No Whisper model installed — open Settings, download a model, retry.'
-      : 'Transcription failed: ' + msg.slice(0, 200));
-  } finally {
-    S.busy = false;
-    if (_tab === 0) _render();
-  }
+  // plain text: ~2.6 words per second, a natural speaking pace
+  return raw.split(/\s+/).filter(Boolean).map((t, i) => ({ text: t, start: i / 2.6, end: (i + 0.9) / 2.6 }));
 }
 
-// ── Tab 2: Content ───────────────────────────────────────────
-function _renderContent(body) {
-  if (!S.words.length) {
-    body.innerHTML = `<p class="cc-hint">No words yet — transcribe or paste a transcript first (tab 1).</p>`;
-    return;
-  }
-  const kept = S.words.filter(w => w.keep !== false).length;
-  const pilled = S.words.filter(w => w.pill).length;
-  body.innerHTML = `
-    <p class="cc-hint">${kept}/${S.words.length} words kept${pilled ? `, ${pilled} with pill` : ''}. Edit text + start times inline; pill marks background words.</p>
-    <div class="cc-actions">
-      <button class="cc-btn cc-ghost" data-act="pillall">Pill all</button>
-      <button class="cc-btn cc-ghost" data-act="pillnone">Clear pills</button>
-    </div>
-    <div class="cc-wrows">${S.words.map((w, i) => `
-      <div class="cc-wrow" data-i="${i}">
-        <button class="cc-btn cc-ghost cc-keep${w.keep !== false ? ' cc-on' : ''}" data-k="keep" title="Keep/exclude">✓</button>
-        <input class="cc-input cc-wtime" data-k="time" type="number" value="${Number(w.start || 0).toFixed(2)}" step="0.05" min="0" title="Word start (seconds)" />
-        <input class="cc-input cc-wtext" data-k="text" type="text" value="${_esc(w.text)}" spellcheck="false" />
-        <button class="cc-btn cc-ghost${w.pill ? ' cc-on' : ''}" data-k="pill" title="Pill background">💊</button>
-      </div>`).join('')}</div>
-    <label class="cc-label">Segment settings (grouping)</label>
-    ${_rangeRow('cc-maxwords', 'Max words / cue', 1, 8, 1, S.opts.max_words_per_cue, '')}
-    ${_rangeRow('cc-maxchars', 'Max chars / line', 10, 80, 1, S.opts.max_chars_per_line, '')}
-    ${_rangeRow('cc-maxdur', 'Max cue duration', 1, 10, 0.5, S.opts.max_cue_duration, 's')}
-    ${_rangeRow('cc-maxlines', 'Max lines', 1, 2, 1, S.opts.max_lines, '')}
-    ${_rangeRow('cc-maxgap', 'Split gap', 0.1, 2, 0.1, S.opts.max_gap, 's')}`;
-  body.querySelector('[data-act="pillall"]').onclick = () => { S.words.forEach(w => { w.pill = true; }); _render(); };
-  body.querySelector('[data-act="pillnone"]').onclick = () => { S.words.forEach(w => { w.pill = false; }); _render(); };
-  _bindRange('cc-maxwords', v => { if (!isNaN(v)) S.opts.max_words_per_cue = Math.max(1, Math.min(12, Math.round(v))); });
-  _bindRange('cc-maxchars', v => { if (!isNaN(v)) S.opts.max_chars_per_line = Math.max(10, Math.min(120, Math.round(v))); });
-  _bindRange('cc-maxdur', v => { if (!isNaN(v)) S.opts.max_cue_duration = Math.max(0.5, Math.min(15, v)); });
-  _bindRange('cc-maxlines', v => { if (!isNaN(v)) S.opts.max_lines = Math.max(1, Math.min(3, Math.round(v))); });
-  _bindRange('cc-maxgap', v => { if (!isNaN(v)) S.opts.max_gap = Math.max(0.05, Math.min(3, v)); });
-  body.querySelectorAll('.cc-wrow').forEach(row => {
-    const w = S.words[+row.dataset.i];
-    if (!w) return;
-    row.querySelector('[data-k="keep"]').onclick = (e) => {
-      w.keep = !(w.keep !== false);
-      e.target.classList.toggle('cc-on', w.keep !== false);
-    };
-    row.querySelector('[data-k="pill"]').onclick = (e) => {
-      w.pill = !w.pill;
-      e.target.classList.toggle('cc-on', !!w.pill);
-    };
-    const timeEl = row.querySelector('[data-k="time"]');
-    timeEl.onchange = () => {
-      const v = parseFloat(timeEl.value);
-      if (isNaN(v) || v < 0) { timeEl.value = Number(w.start || 0).toFixed(2); return; }
-      const dur = Math.max(0.02, (w.end || 0) - (w.start || 0));
-      w.start = Math.round(v * 100) / 100;
-      w.end = Math.round((w.start + dur) * 100) / 100;
-    };
-    const textEl = row.querySelector('[data-k="text"]');
-    textEl.onchange = () => { w.text = textEl.value; };
+/* ── Style tab ────────────────────────────────────────────────── */
+
+function fontOptions() {
+  const fam = S.settings.style.fontFamily;
+  const bundled = BUNDLED.map((f) => `<option value="${esc(f.family)}"${f.family === fam ? ' selected' : ''}>${esc(f.family)} — ${esc(f.note)}</option>`).join('');
+  const sys = S.systemFonts.filter((f) => !BUNDLED.some((b) => b.family.toLowerCase() === f.family.toLowerCase()));
+  const sysHtml = sys.map((f) => `<option value="${esc(f.family)}"${f.family === fam ? ' selected' : ''}>${esc(f.family)}</option>`).join('');
+  const known = BUNDLED.some((b) => b.family === fam) || sys.some((f) => f.family === fam);
+  return `<optgroup label="Caption fonts (always available)">${bundled}</optgroup>
+    ${sysHtml ? `<optgroup label="Installed on this PC (${sys.length})">${sysHtml}</optgroup>` : ''}
+    ${known ? '' : `<option value="${esc(fam)}" selected>${esc(fam)}</option>`}`;
+}
+function weightsFor(family) {
+  const b = BUNDLED.find((f) => f.family === family);
+  if (b) return b.weights;
+  const s = S.systemFonts.find((f) => f.family === family);
+  return s && s.weights.length ? s.weights : [400, 700];
+}
+
+function tabStyle() {
+  const st = S.settings.style;
+  const ws = weightsFor(st.fontFamily);
+  const tiles = PRESETS.map((p) => `<button class="cc-tile${S.settings.preset === p.id ? ' cc-on' : ''}" data-preset="${p.id}" title="Apply the ${esc(p.name)} look">
+      <canvas class="cc-tile-cv" data-tile="${p.id}"></canvas><span>${esc(p.name)}</span></button>`).join('');
+  return `
+    ${section('Look', `<div class="cc-tiles">${tiles}</div>`, S.settings.preset === 'custom' ? ' <small class="cc-dim">· customised</small>' : '')}
+    ${section('Font', `
+      <div class="cc-ctl"><label class="cc-lbl">Family</label><select class="cc-select" data-bind="style.fontFamily" data-kind="text">${fontOptions()}</select></div>
+      <p class="cc-warn${S.fontOk ? ' hidden' : ''}" id="cc-font-warn">This font isn't available to the panel — pick another, or install it in Windows and reopen the panel.</p>
+      ${ctlSeg('style.fontWeight', 'Weight', ws.map((w) => [w, weightName(w)]))}
+      ${ctlNum('style.fontSize', 'Size', 24, 220, 1, 'px')}
+      ${ctlSeg('style.textCase', 'Case', [['as_is', 'As spoken'], ['upper', 'UPPER'], ['lower', 'lower']])}
+      ${ctlSeg('style.punctuation', 'Punctuation', [['keep', 'Keep'], ['soft', 'Clean', 'Hide commas and full stops, keep ? and !'], ['none', 'None']])}`)}
+    ${section('Colour', `<div class="cc-swatches">
+      ${ctlColor('style.color', 'Text')}
+      ${M.highlightMode(S.settings.motion) === 'color' ? ctlColor('style.activeColor', 'Active word') : ''}
+      ${ctlColor('style.emphasisColor', 'Emphasis')}</div>
+      ${ctlSeg('style.emphasis', 'Emphasised words get', [['color', 'Colour'], ['pill', 'Pill'], ['both', 'Both']])}
+      ${st.emphasis !== 'color' ? `<div class="cc-swatches">${ctlColor('style.pillColor', 'Pill')}</div>${ctlNum('style.pillOpacity', 'Pill opacity', 0, 100, 1, '%', 100)}` : ''}`)}
+    ${section('Outline', `${ctlNum('style.strokeWidth', 'Thickness', 0, 20, 0.5, 'px')}
+      <div class="cc-swatches">${ctlColor('style.strokeColor', 'Outline colour')}</div>`)}
+    ${section('Shadow', `${ctlToggle('style.shadow', 'Drop shadow')}
+      ${st.shadow ? `<div class="cc-swatches">${ctlColor('style.shadowColor', 'Shadow colour')}</div>
+        ${ctlNum('style.shadowOpacity', 'Opacity', 0, 100, 1, '%', 100)}
+        ${ctlNum('style.shadowBlur', 'Softness', 0, 60, 1, 'px')}
+        ${ctlNum('style.shadowDistance', 'Distance', 0, 40, 1, 'px')}` : ''}`)}
+    ${section('Background', `${ctlSeg('style.background', 'Behind the text', [['none', 'None'], ['box', 'Box', 'A rounded box per line'], ['block', 'Block', 'One box for the whole caption'], ['pills', 'Pills', 'A pill behind every word']])}
+      ${st.background !== 'none' ? `<div class="cc-swatches">${ctlColor('style.bgColor', 'Box colour')}</div>
+        ${ctlNum('style.bgOpacity', 'Opacity', 0, 100, 1, '%', 100)}
+        ${ctlNum('style.bgRadius', 'Roundness', 0, 100, 1, '%', 100)}
+        ${ctlNum('style.bgPad', 'Padding', 0, 60, 1, '%', 100)}` : ''}`)}
+    ${section('Position', `
+      ${ctlNum('layout.posY', 'Height on screen', 5, 95, 0.5, '%')}
+      ${ctlNum('layout.posX', 'Left / right', 5, 95, 0.5, '%')}
+      ${ctlNum('layout.boxWidth', 'Caption width', 30, 100, 1, '%')}
+      ${ctlSeg('grouping.maxLines', 'Lines', [[1, '1 line'], [2, '2 lines'], [3, '3 lines']])}
+      ${S.settings.grouping.maxLines > 1 ? ctlNum('layout.lineHeight', 'Line spacing', 0.8, 1.8, 0.01, '×') : ''}
+      ${ctlSeg('layout.align', 'Align', [['left', 'Left'], ['center', 'Centre'], ['right', 'Right']])}
+      <p class="cc-hint">Tip: drag the caption in the preview to move it, or drag its sides to change the width.</p>`)}`;
+}
+
+const SAMPLE = [['Make', 0.0, 0.3], ['every', 0.3, 0.6], ['word', 0.6, 0.9], ['count', 0.9, 1.4]];
+const tileScenes = new WeakMap();   // canvas → { scene, settings } (built once per draw request)
+function drawTileScene(cv, style, motion, t) {
+  const W = 540, H = 300;
+  const st = Object.assign({}, STYLE_DEFAULTS, style, { fontSize: 66 });
+  st.strokeWidth = (style.strokeWidth || 0) * 0.8;
+  st.shadowBlur = (style.shadowBlur || 0) * 0.8;
+  st.shadowDistance = (style.shadowDistance || 0) * 0.8;
+  const words = SAMPLE.map(([text, start, end], i) => ({ id: i, text, start, end, emphasis: i === 2 }));
+  const settings = { style: st, motion, layout: { posX: 50, posY: 50, boxWidth: 94, lineHeight: 1.1 },
+                     grouping: { maxWords: 4, maxLines: 2 }, timing: { tailHold: 0.6 } };
+  const ms = makeMeasurer(st);
+  const scene = M.buildScene(words, settings, { width: W, height: H, fps: { num: 30, den: 1 }, measure: ms.measure, fontMetrics: ms.fontMetrics });
+  const dpr = window.devicePixelRatio || 1;
+  const cw = cv.clientWidth || 120;
+  cv.width = Math.round(cw * dpr);
+  cv.height = Math.round(cw * dpr * H / W);
+  tileScenes.set(cv, { scene, settings, W });
+  paintTile(cv, t);
+}
+function paintTile(cv, t) {
+  const d = tileScenes.get(cv);
+  if (!d) return;
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = '#3b4048';
+  ctx.fillRect(0, 0, cv.width, cv.height);
+  drawFrame(ctx, d.scene, d.settings, t, { scale: cv.width / d.W, clear: false });
+}
+function drawPresetTiles() {
+  $$('[data-tile]').forEach((cv) => {
+    const p = findPreset(cv.dataset.tile);
+    // every word on screen, the last one being spoken
+    if (p) ensureFont(p.style.fontFamily, p.style.fontWeight).then(() => drawTileScene(cv, p.style, p.motion, 1.15));
   });
 }
 
-// ── Tab 4: Animate (AE parity: preset + easing + timing) ────
-function _renderAnimate(body) {
-  const sel = (id, opts, val) => `<select id="${id}" class="cc-input">${opts.map(([v, l]) => `<option value="${v}"${v === val ? ' selected' : ''}>${l}</option>`).join('')}</select>`;  body.innerHTML = `
-    <p class="cc-hint">Motion plays live in the preview above — same model as the final video.</p>
-    <label class="cc-label">Animation preset</label>
-    ${sel('cc-animpreset', ANIM_PRESETS, S.animPreset)}
-    ${_rangeRow('cc-intensity', 'Intensity (bounce)', 0.1, 3, 0.05, S.animIntensity, '×')}
-    ${_rangeRow('cc-fadedur', 'Word duration', 0.1, 1, 0.05, S.fadeDur, 's')}
-    ${_rangeRow('cc-slidedist', 'Slide distance', 0, 400, 1, S.slideDist, 'px')}
-    <label class="cc-label">Word easing</label>
-    ${sel('cc-easing', EASING_OPTS, S.wordEasing)}`;
-  body.querySelector('#cc-animpreset').onchange = (e) => { S.animPreset = e.target.value; };
-  _bindRange('cc-intensity', v => { if (!isNaN(v)) S.animIntensity = Math.max(0.1, Math.min(3, v)); });
-  _bindRange('cc-fadedur', v => { if (!isNaN(v)) S.fadeDur = Math.max(0.1, Math.min(1, v)); });
-  _bindRange('cc-slidedist', v => { if (!isNaN(v)) S.slideDist = Math.max(0, Math.min(400, Math.round(v))); });
-  body.querySelector('#cc-easing').onchange = (e) => { S.wordEasing = e.target.value; };
+// Motion tiles play their animation on a loop while the Motion tab is open.
+let tileRaf = 0;
+function animateMotionTiles() {
+  if (tileRaf) return;
+  const t0 = performance.now();
+  const loop = (now) => {
+    tileRaf = 0;
+    if (S.tab !== 'motion' || !root || root.classList.contains('hidden')) return;
+    const t = ((now - t0) / 1000) % 2.4;         // 1.9 s of captions + a short rest
+    $$('[data-mtile]').forEach((cv) => paintTile(cv, Math.min(t, 1.9)));
+    tileRaf = requestAnimationFrame(loop);
+  };
+  tileRaf = requestAnimationFrame(loop);
 }
-const FONT_FAMILIES = ['Arial', 'Arial Black', 'Helvetica', 'Verdana', 'Tahoma', 'Trebuchet MS', 'Georgia', 'Times New Roman', 'Impact', 'Calibri'];
 
-// Widget: scrub value (AE/Premiere value-scrub UX) — hover shows the
-// ↔ cursor, drag right/left to change. Mutates S only (no re-render),
-// so the preview updates live and slider focus is never an issue.
-function _rangeRow(id, label, min, max, step, val, unit) {
-  return `<label class="cc-label">${label} <span class="cc-val cc-scrub" id="${id}" data-min="${min}" data-max="${max}" data-step="${step}" data-unit="${unit || ''}" data-val="${val}" title="Drag ↔ to change">${val}${unit || ''}</span></label>`;
+/* ── Motion tab ───────────────────────────────────────────────── */
+
+const MOTIONS = [
+  ['fade_up', 'Fade up', 'Each word rises in as it is spoken'],
+  ['pop', 'Pop', 'Each word pops in with a soft spring'],
+  ['bounce', 'Bounce', 'Each word drops in and bounces'],
+  ['typewriter', 'Type', 'Letters type on as the word is spoken'],
+  ['karaoke', 'Karaoke', 'The caption shows whole; the spoken word lights up'],
+  ['slide_up', 'Slide up', 'The whole caption slides up together'],
+  ['fade', 'Fade', 'The whole caption fades in together'],
+  ['none', 'None', 'No animation'],
+];
+
+function tabMotion() {
+  const m = S.settings.motion;
+  const tiles = MOTIONS.map(([id, name, hint]) => `<button class="cc-tile${m.preset === id ? ' cc-on' : ''}" data-motion="${id}" title="${esc(hint)}">
+      <canvas class="cc-tile-cv" data-mtile="${id}"></canvas><span>${name}</span></button>`).join('');
+  const hasSpeed = m.preset !== 'none' && m.preset !== 'karaoke' && m.preset !== 'typewriter';
+  return `
+    ${section('Animation', `<div class="cc-tiles">${tiles}</div>
+      ${hasSpeed ? ctlNum('motion.duration', 'Speed', 0.08, 1, 0.01, 's') : ''}
+      ${['fade_up', 'slide_up'].indexOf(m.preset) !== -1 ? ctlNum('motion.distance', 'Travel', 0, 1.5, 0.01, 'em') : ''}
+      ${['pop', 'bounce'].indexOf(m.preset) !== -1 ? ctlNum('motion.intensity', 'Strength', 0.2, 2, 0.05, '×') : ''}
+      ${['fade_up', 'slide_up', 'fade'].indexOf(m.preset) !== -1 ? ctlSelect('motion.easing', 'Easing', [['expo_out', 'Snappy (expo out)'], ['back_out', 'Overshoot (back out)'], ['ease_out', 'Smooth (ease out)'], ['ease_in_out', 'Ease in-out'], ['linear', 'Linear']]) : ''}`)}
+    ${section('Active word', `${ctlSeg('motion.highlight', 'Highlight the word being spoken', [['none', 'Off'], ['color', 'Colour'], ['box', 'Box'], ['scale', 'Grow']])}
+      ${m.highlight === 'box' ? `<div class="cc-swatches">${ctlColor('style.hlBoxColor', 'Box colour')}</div>` : ''}
+      ${M.highlightMode(m) === 'color' ? `<div class="cc-swatches">${ctlColor('style.activeColor', 'Active colour')}</div>` : ''}
+      ${M.WORD_LEVEL[m.preset] ? '' : ctlToggle('motion.spokenDim', 'Dim words not spoken yet', 'Karaoke-style fill')}`)}
+    ${section('Caption breaks', `
+      ${ctlNum('grouping.maxWords', 'Words per caption', 1, 10, 1, '')}
+      ${ctlNum('grouping.splitGap', 'New caption after a pause of', 0.15, 2, 0.05, 's')}
+      ${ctlNum('grouping.maxDuration', 'Longest caption', 1, 8, 0.1, 's')}
+      ${ctlToggle('grouping.hideFillers', 'Hide filler words', '“uh”, “um”, “erm” — un-hide any one in Transcript')}`)}
+    ${section('Timing', `
+      ${ctlNum('timing.offset', 'Shift all captions', -1, 1, 0.01, 's')}
+      ${ctlNum('timing.minDuration', 'Minimum time on screen', 0.2, 2, 0.05, 's')}
+      ${ctlNum('timing.maxHold', 'Hold after speech stops', 0, 3, 0.05, 's')}
+      ${ctlSeg('timing.exit', 'Hand-off between captions', [['fade', 'Crossfade'], ['cut', 'Cut']])}
+      ${S.settings.timing.exit === 'fade' ? ctlNum('timing.exitDuration', 'Crossfade length', 0.04, 0.4, 0.01, 's') : ''}`)}`;
 }
-function _bindRange(id, set) {
-  const el = document.getElementById(id);
-  if (!el) return;
-  el.onmousedown = (e) => {
+function drawMotionTiles() {
+  const st = Object.assign({}, S.settings.style);
+  ensureFont(st.fontFamily, st.fontWeight).then(() => {
+    $$('[data-mtile]').forEach((cv) => {
+      const motion = Object.assign({}, S.settings.motion, { preset: cv.dataset.mtile });
+      drawTileScene(cv, st, motion, 0.68);
+    });
+    animateMotionTiles();
+  });
+}
+
+/* ── Export tab ───────────────────────────────────────────────── */
+
+function tabExport() {
+  const r = S.lastRender;
+  const f = S.seq.fps;
+  const ready = S.scene && S.scene.captions.length;
+  return `
+    ${section('Sequence', S.seq.live
+      ? `<p><b>${esc(S.seq.name)}</b><br><span class="cc-dim">${S.seq.width}×${S.seq.height} · ${Math.round((f.num / f.den) * 1000) / 1000} fps (exactly ${f.num}/${f.den}) · ${fmtTime(S.seq.duration)}</span></p>`
+      : `<p class="cc-dim">Preview mode — not connected to Premiere. Rendering still works; you place the file yourself.</p>
+         ${ctlSeg('previewAspect', 'Frame', [['9:16', '9:16'], ['1:1', '1:1'], ['4:5', '4:5'], ['16:9', '16:9']])}`)}
+    ${section('Animated captions', `${ctlSeg('output.codec', 'Video format', [['prores', 'ProRes 4444', 'Best compatibility, smaller files'], ['animation', 'Animation', 'Renders about 3× faster; bigger files']])}
+      <p class="cc-hint">Rendered at the sequence's exact frame rate with transparency, then put on the first free video track above V1. Running it again replaces the old captions — nothing else on your timeline moves.</p>
+      <button class="cc-btn cc-primary cc-wide" data-act="export" ${ready && !S.busy ? '' : 'disabled'}>${inCEP() ? 'Add captions to timeline' : 'Render caption video'}</button>
+      ${r ? `<div class="cc-result"><b>${r.placed ? `On ${esc(r.placed.trackName)}` : 'Rendered'}</b> · ${r.frames} frames · ${fmtTime(r.seconds)} · took ${Math.max(1, Math.round(r.renderSeconds))} s
+        ${r.placed && r.placed.removed ? `<br>Replaced ${r.placed.removed} earlier caption clip${r.placed.removed === 1 ? '' : 's'}.` : ''}
+        <br><span class="cc-dim cc-path">${esc(r.path)}</span></div>` : ''}`)}
+    ${section('Subtitle file', `<p class="cc-hint">Plain SRT for YouTube uploads or Premiere's own caption track (no animation or styling).</p>
+      <div class="cc-row2"><button class="cc-btn" data-act="srt" ${ready ? '' : 'disabled'}>Export SRT</button>
+      <button class="cc-btn" data-act="srt-track" ${ready && inCEP() ? '' : 'disabled'}>Add as caption track</button></div>
+      ${S.srtPath ? `<p class="cc-dim cc-path">${esc(S.srtPath)}</p>` : ''}`)}`;
+}
+
+/* ── export ───────────────────────────────────────────────────── */
+
+async function exportCaptions() {
+  if (S.busy || !S.scene || !S.scene.captions.length) return;
+  setPlaying(false);
+  if (inCEP()) await refreshSequence(false);
+  const ctrl = new AbortController();
+  const scene = S.scene;
+  const eff = effSettings();
+  setBusy({ kind: 'render', label: 'Preparing…', progress: 0, cancel: () => ctrl.abort() });
+  try {
+    await ensureFont(eff.style.fontFamily, eff.style.fontWeight);
+    const res = await renderOverlay(scene, eff, {
+      baseUrl: getBaseUrl(), name: S.seq.name, codec: S.settings.output.codec, signal: ctrl.signal,
+      onProgress: (done, total, eta) => {
+        if (!S.busy) return;
+        S.busy.progress = done / total;
+        S.busy.label = `Rendering ${Math.round((done / total) * 100)}%` + (eta > 1 ? ` · about ${Math.ceil(eta)} s left` : '');
+        updateFooter();
+      },
+    });
+    S.lastRender = res;
+    if (inCEP()) {
+      setBusy({ kind: 'render', label: 'Placing on the timeline…', progress: null });
+      const placed = await callCM('placeOverlay', { path: res.path, start: 0, duration: res.seconds });
+      res.placed = placed;
+      setStatus(`Captions are on ${placed.trackName} (${fmtTime(res.seconds)}).` +
+        (placed.removed ? ` Replaced ${placed.removed} earlier caption clip${placed.removed === 1 ? '' : 's'}.` : ''), 'ok');
+    } else {
+      setStatus(`Rendered ${res.frames} frames → ${res.path}`, 'ok');
+    }
+  } catch (e) {
+    if (e && e.name === 'AbortError') setStatus('Render cancelled.');
+    else setStatus('Could not add captions: ' + String((e && e.message) || e).slice(0, 260), 'error');
+  } finally {
+    setBusy(null);
+    if (S.tab === 'export') renderBody();
+  }
+}
+
+async function exportSrt(placeTrack) {
+  if (!S.scene) return;
+  const cues = S.scene.captions.map((c) => ({ start: c.tIn, end: c.tOut,
+    text: c.lines.map((l) => l.words.map((w) => w.text).join(' ')).join('\n') }));
+  try {
+    const res = await apiPost('/api/captions/srt', { cues, name: S.seq.name || 'captions' }, { timeoutMs: 30000 });
+    S.srtPath = res.srt_path || '';
+    if (placeTrack && res.srt_path) {
+      const r = await callExtendScript('importCaptionsFromSRT', { srt_path: res.srt_path });
+      setStatus(r && r.method === 'createCaptionTrack'
+        ? 'Caption track added — style it in Premiere’s Properties panel.'
+        : 'SRT imported to the project bin — drag it onto the timeline.', 'ok');
+    } else {
+      setStatus('SRT saved: ' + S.srtPath, 'ok');
+    }
+  } catch (e) {
+    setStatus('SRT export failed: ' + String((e && e.message) || e).slice(0, 200), 'error');
+  }
+  if (S.tab === 'export') renderBody();
+}
+
+/* ── presets ──────────────────────────────────────────────────── */
+
+function applyPreset(id) {
+  const p = findPreset(id);
+  if (!p) return;
+  S.settings.style = Object.assign({}, S.settings.style, p.style);
+  S.settings.motion = Object.assign({}, M.MOTION_DEFAULTS, p.motion);
+  S.settings.preset = id;
+  saveSettingsSoon();
+  renderBody();
+  rebuildScene();
+}
+
+/* ── events ───────────────────────────────────────────────────── */
+
+const RELAYOUT = /^(style\.(fontFamily|fontWeight|fontSize|textCase|punctuation)|layout\.|grouping\.|timing\.)/;
+// Settings that show or hide other controls: re-render the tab when they change.
+const STRUCTURAL = { 'style.background': 1, 'style.shadow': 1, 'style.emphasis': 1, 'style.fontFamily': 1,
+  'motion.preset': 1, 'motion.highlight': 1, 'timing.exit': 1, 'grouping.maxLines': 1, previewAspect: 1 };
+
+// Picking a colour for something that's switched off switches it on —
+// otherwise the swatch looks broken (nothing changes).
+const ENABLE_ON_COLOR = {
+  'style.strokeColor': () => { if (!(S.settings.style.strokeWidth > 0)) return ['style.strokeWidth', 4]; return null; },
+};
+
+function onSetting(path) {
+  if (ENABLE_ON_COLOR[path]) {
+    const fix = ENABLE_ON_COLOR[path]();
+    if (fix) {
+      setPath(S.settings, fix[0], fix[1]);
+      $$(`[data-bind="${fix[0]}"]`).forEach((o) => { o.value = fmtNum(fix[1]); });
+    }
+  }
+  if (/^(style|motion)\./.test(path) && path !== 'style.fontSize') S.settings.preset = 'custom';
+  if (path === 'style.fontFamily') {
+    const ws = weightsFor(S.settings.style.fontFamily);
+    if (ws.indexOf(Number(S.settings.style.fontWeight)) === -1) {
+      S.settings.style.fontWeight = ws.reduce((a, b) => (Math.abs(b - 800) < Math.abs(a - 800) ? b : a), ws[0]);
+    }
+  }
+  if (path === 'previewAspect') refreshSequence(false);
+  if (RELAYOUT.test(path)) scheduleScene(); else requestDraw();
+  if (STRUCTURAL[path]) renderBody();
+  else if (path.indexOf('motion.') === 0 && S.tab === 'motion') drawMotionTiles();
+  saveSettingsSoon();
+}
+
+function readControl(el) {
+  const kind = el.dataset.kind;
+  if (kind === 'bool') return el.checked;
+  if (kind === 'num') {
+    let v = parseFloat(el.value);
+    if (isNaN(v)) return undefined;
+    v = clamp(v, parseFloat(el.dataset.min), parseFloat(el.dataset.max));
+    return el.dataset.scale ? v / parseFloat(el.dataset.scale) : v;
+  }
+  return el.value;
+}
+
+function onBoundInput(el) {
+  const v = readControl(el);
+  if (v === undefined) return;
+  const path = el.dataset.bind;
+  if (getPath(S.settings, path) === v) return;
+  setPath(S.settings, path, v);
+  $$(`[data-bind="${path}"]`).forEach((o) => {           // keep slider + number box in step
+    if (o === el || o.dataset.kind !== 'num') return;
+    o.value = fmtNum(el.dataset.scale ? v * parseFloat(el.dataset.scale) : v);
+  });
+  onSetting(path);
+}
+
+function bindEvents() {
+  root.addEventListener('input', (e) => {
+    const el = e.target;
+    if (el.id === 'cc-scrub') { setPlaying(false); seek(parseFloat(el.value) || 0); return; }
+    if (el.dataset && el.dataset.bind) onBoundInput(el);
+  });
+  root.addEventListener('change', (e) => {
+    const el = e.target;
+    if (el.id === 'cc-safe') { S.safe = el.value; requestDraw(); return; }
+    if (el.id === 'cc-file') { const f = el.files && el.files[0]; el.value = ''; if (f) transcribeFile(f); return; }
+    if (el.dataset && el.dataset.bind) onBoundInput(el);   // older CEF fires only change for some inputs
+  });
+  root.addEventListener('click', (e) => {
+    const t = e.target;
+    const tab = t.closest('[data-tab]');
+    if (tab) { S.tab = tab.dataset.tab; S.editing = -1; renderBody(); return; }
+    const seg = t.closest('.cc-seg button');
+    if (seg) {
+      const box = seg.parentElement;
+      const path = box.dataset.bind;
+      const v = /^-?\d+(\.\d+)?$/.test(seg.dataset.value) ? Number(seg.dataset.value) : seg.dataset.value;
+      setPath(S.settings, path, v);
+      $$('button', box).forEach((b) => b.classList.toggle('cc-on', b === seg));
+      onSetting(path);
+      return;
+    }
+    const preset = t.closest('[data-preset]');
+    if (preset) { applyPreset(preset.dataset.preset); return; }
+    const mot = t.closest('[data-motion]');
+    if (mot) { S.settings.motion.preset = mot.dataset.motion; onSetting('motion.preset'); return; }
+    const seekBtn = t.closest('[data-seek]');
+    if (seekBtn) { setPlaying(false); seek(parseFloat(seekBtn.dataset.seek) + 0.001); return; }
+    const w = t.closest('.cc-w');
+    if (w) {
+      S.sel = Number(w.dataset.i);
+      $$('.cc-w.cc-sel').forEach((x) => x.classList.remove('cc-sel'));
+      w.classList.add('cc-sel');
+      renderSelBar();
+      setPlaying(false);
+      seek(S.words[S.sel].start + 0.001);
+      const tx = $('#cc-tx');
+      if (tx) tx.focus({ preventScroll: true });
+      return;
+    }
+    const act = t.closest('[data-act]');
+    if (act && !act.disabled) onAction(act.dataset.act);
+  });
+  root.addEventListener('dblclick', (e) => {
+    const w = e.target.closest('.cc-w');
+    if (w) { S.sel = Number(w.dataset.i); S.editing = S.sel; renderTranscriptList(); }
+  });
+  root.addEventListener('keydown', (e) => {
+    const el = e.target;
+    if (el.id === 'cc-w-edit') {
+      if (e.key === 'Enter') { e.preventDefault(); commitEdit(el.value); }
+      else if (e.key === 'Escape') { S.editing = -1; renderTranscriptList(); }
+      return;
+    }
+    if (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return;
+    const k = e.key.toLowerCase();
+    if ((e.ctrlKey || e.metaKey) && k === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
+    if ((e.ctrlKey || e.metaKey) && k === 'y') { e.preventDefault(); redo(); return; }
+    if (k === ' ') { e.preventDefault(); setPlaying(!S.playing); return; }
+    if (S.tab !== 'transcript' || S.sel < 0) return;
+    if (k === 'h') wordAction('hide');
+    else if (k === 'e') wordAction('emph');
+    else if (k === 'b') wordAction('break');
+    else if (k === 'enter') { S.editing = S.sel; renderTranscriptList(); }
+    else if (k === 'arrowright' || k === 'arrowleft') {
+      S.sel = clamp(S.sel + (k === 'arrowright' ? 1 : -1), 0, S.words.length - 1);
+      renderTranscriptList();
+      seek(S.words[S.sel].start + 0.001);
+      const cur = $('.cc-w.cc-sel');
+      if (cur && cur.scrollIntoView) cur.scrollIntoView({ block: 'nearest' });
+    } else return;
     e.preventDefault();
-    const min = parseFloat(el.dataset.min), max = parseFloat(el.dataset.max);
-    const step = parseFloat(el.dataset.step) || 1;
-    const unit = el.dataset.unit || '';
-    const startV = parseFloat(el.dataset.val);
-    const startX = e.clientX;
-    let moved = false;
-    const show = (v) => {
-      el.dataset.val = v;
-      el.textContent = (Math.round(v * 100) / 100) + unit;
-    };
-    const move = (ev) => {
-      if (Math.abs(ev.clientX - startX) > 4) moved = true;
-      if (!moved) return;
-      const mult = ev.shiftKey ? 10 : 1;
-      const nv = Math.min(max, Math.max(min, startV + Math.round((ev.clientX - startX) / 6) * step * mult));
-      show(nv);
-      set(nv);
-    };
-    const up = () => {
-      document.removeEventListener('mousemove', move);
-      document.removeEventListener('mouseup', up);
-      if (!moved) {
-        // Click (no drag): type the exact value inline.
-        const inp = document.createElement('input');
-        inp.className = 'cc-input cc-miniedit';
-        inp.value = el.dataset.val;
-        el.replaceWith(inp);
-        inp.focus();
-        inp.select();
-        const commit = (ok) => {
-          const v = parseFloat(inp.value);
-          const span = document.createElement('span');
-          span.className = 'cc-val cc-scrub';
-          span.id = id;
-          span.dataset.min = min; span.dataset.max = max;
-          span.dataset.step = step; span.dataset.unit = unit;
-          span.title = 'Drag ↔ to change, click to type';
-          if (ok && !isNaN(v)) {
-            const nv = Math.min(max, Math.max(min, v));
-            span.dataset.val = nv;
-            span.textContent = (Math.round(nv * 100) / 100) + unit;
-            set(nv);
-          } else {
-            span.dataset.val = el.dataset.val;
-            span.textContent = el.dataset.val + unit;
-          }
-          inp.replaceWith(span);
-          _bindRange(id, set);
-        };
-        inp.onkeydown = (ev) => {
-          if (ev.key === 'Enter') commit(true);
-          else if (ev.key === 'Escape') commit(false);
-        };
-        inp.onblur = () => commit(true);
-      }
-    };
-    document.addEventListener('mousemove', move);
-    document.addEventListener('mouseup', up);
-  };
-}
-function _colorRow(id, label, val) {
-  return `<label class="cc-label">${label}</label>`
-    + `<input class="cc-color" id="${id}" type="color" value="${val}" />`;
-}
-function _bindColor(id, set) {
-  const el = document.getElementById(id);
-  if (el) el.oninput = () => set(el.value);
-}
-async function _ensurePresets() {
-  if (S.presets.length) return;
-  try {
-    const resp = await apiGet('/api/captions/presets', { timeoutMs: 10000 });
-    S.presets = resp.presets || [];
-  } catch (_) { S.presets = []; }
-}
-function _renderStyle(body) {
-  body.innerHTML = `
-    <label class="cc-label">Font family</label>
-    <select id="cc-fontfam" class="cc-input">${FONT_FAMILIES.map(f => `<option${f === S.fontFamily ? ' selected' : ''}>${f}</option>`).join('')}<option value="__custom"${FONT_FAMILIES.indexOf(S.fontFamily) === -1 ? ' selected' : ''}>Custom…</option></select>
-    <input id="cc-fontcustom" class="cc-input" type="text" value="${_esc(S.fontCustom)}" placeholder="Custom PostScript name" style="margin-top:4px;${FONT_FAMILIES.indexOf(S.fontFamily) === -1 ? '' : 'display:none'}" spellcheck="false" />
-    <div class="cc-checkrow"><label class="cc-check"><input type="checkbox" id="cc-fontbold"${S.fontBold ? ' checked' : ''} /> Bold</label>
-    <label class="cc-check"><input type="checkbox" id="cc-caps"${S.allCaps ? ' checked' : ''} /> UPPERCASE</label></div>
-    <div class="cc-row">
-      <div>${_rangeRow('cc-fontsize', 'Font size', 20, 200, 1, S.fontSize, 'px')}</div>
-      <div><label class="cc-label">Text</label><input class="cc-color cc-sw" id="cc-textcolor" type="color" value="${S.textColor}" /></div>
-      <div><label class="cc-label">Outline</label><input class="cc-color cc-sw" id="cc-strokecolor" type="color" value="${S.strokeColor}" /></div>
-    </div>
-    ${_rangeRow('cc-strokew', 'Outline width (0 = off)', 0, 10, 1, S.strokeWidth, 'px')}
-    <div class="cc-checkrow"><label class="cc-check"><input type="checkbox" id="cc-shadowon"${S.shadowOn ? ' checked' : ''} /> Shadow</label>
-    <label class="cc-label"><input class="cc-color cc-sw" id="cc-shadowcolor" type="color" value="${S.shadowColor}" /></label></div>
-    <div class="cc-row">
-      <div>${_rangeRow('cc-shadowop', 'Sh. opacity', 0, 100, 1, S.shadowOpacity, '%')}</div>
-      <div>${_rangeRow('cc-shadowdist', 'Sh. distance', 0, 50, 1, S.shadowDistance, 'px')}</div>
-      <div>${_rangeRow('cc-shadowblur', 'Sh. blur', 0, 50, 1, S.shadowBlur, 'px')}</div>
-    </div>
-    <div class="cc-row">
-      <div>${_rangeRow('cc-posx', 'Position X', 0, 100, 1, S.posX, '%')}</div>
-      <div>${_rangeRow('cc-posy', 'Position Y', 0, 100, 1, S.posY, '%')}</div>
-      <div>${_rangeRow('cc-boxw', 'Box width', 60, 100, 1, S.boxW, '%')}</div>
-    </div>
-    <label class="cc-label">Pill background</label>
-    <div class="cc-row">
-      <div><label class="cc-label">Color</label><input class="cc-color cc-sw" id="cc-pillcolor" type="color" value="${S.pillColor}" /></div>
-      <div>${_rangeRow('cc-pillop', 'Opacity', 0, 100, 1, S.pillOpacity, '%')}</div>
-      <div><label class="cc-label">Rim</label><input class="cc-color cc-sw" id="cc-pillstrokecolor" type="color" value="${S.pillStrokeColor}" /></div>
-    </div>
-    <div class="cc-row">
-      <div>${_rangeRow('cc-pillstrokew', 'Rim width (0 = off)', 0, 10, 1, S.pillStrokeWidth, 'px')}</div>
-      <div>${_rangeRow('cc-pillradius', 'Roundness', 0, 100, 1, Math.round(S.pillRadius * 100), '%')}</div>
-    </div>
-    <label class="cc-check"><input type="checkbox" id="cc-pilloutline"${S.pillOutline ? ' checked' : ''} /> Pill rim</label>
-    <p class="cc-hint">Drag values ↔, click to type. Preview above updates as you drag.</p>`;
-  const fam = body.querySelector('#cc-fontfam');
-  if (fam) fam.onchange = () => {
-    if (fam.value === '__custom') { body.querySelector('#cc-fontcustom').style.display = ''; }
-    else { S.fontFamily = fam.value; S.fontCustom = ''; body.querySelector('#cc-fontcustom').style.display = 'none'; }
-  };
-  const fc = body.querySelector('#cc-fontcustom');
-  if (fc) fc.onchange = () => { S.fontCustom = fc.value.trim(); };
-  const fb = body.querySelector('#cc-fontbold');
-  if (fb) fb.onchange = () => { S.fontBold = fb.checked; };
-  const caps = body.querySelector('#cc-caps');
-  if (caps) caps.onchange = () => { S.allCaps = caps.checked; };
-  _bindRange('cc-fontsize', v => { if (!isNaN(v)) S.fontSize = Math.max(20, Math.min(200, Math.round(v))); });
-  _bindColor('cc-textcolor', v => { S.textColor = v; });
-  _bindColor('cc-strokecolor', v => { S.strokeColor = v; });
-  _bindRange('cc-strokew', v => { if (!isNaN(v)) S.strokeWidth = Math.max(0, Math.min(10, Math.round(v))); });
-  const sh = body.querySelector('#cc-shadowon');
-  if (sh) sh.onchange = () => { S.shadowOn = sh.checked; };
-  _bindColor('cc-shadowcolor', v => { S.shadowColor = v; });
-  _bindRange('cc-shadowop', v => { if (!isNaN(v)) S.shadowOpacity = Math.max(0, Math.min(100, Math.round(v))); });
-  _bindRange('cc-shadowdist', v => { if (!isNaN(v)) S.shadowDistance = Math.max(0, Math.min(50, Math.round(v))); });
-  _bindRange('cc-shadowblur', v => { if (!isNaN(v)) S.shadowBlur = Math.max(0, Math.min(50, Math.round(v))); });
-  _bindRange('cc-posx', v => { if (!isNaN(v)) S.posX = Math.max(0, Math.min(100, Math.round(v))); });
-  _bindRange('cc-posy', v => { if (!isNaN(v)) S.posY = Math.max(0, Math.min(100, Math.round(v))); });
-  _bindRange('cc-boxw', v => { if (!isNaN(v)) S.boxW = Math.max(60, Math.min(100, Math.round(v))); });
-  _bindColor('cc-pillcolor', v => { S.pillColor = v; });
-  _bindRange('cc-pillop', v => { if (!isNaN(v)) S.pillOpacity = Math.max(0, Math.min(100, Math.round(v))); });
-  _bindColor('cc-pillstrokecolor', v => { S.pillStrokeColor = v; });
-  _bindRange('cc-pillstrokew', v => { if (!isNaN(v)) S.pillStrokeWidth = Math.max(0, Math.min(10, Math.round(v))); });
-  _bindRange('cc-pillradius', v => { if (!isNaN(v)) S.pillRadius = Math.max(0, Math.min(100, Math.round(v))) / 100; });
-  const pl = body.querySelector('#cc-pilloutline');
-  if (pl) pl.onchange = () => { S.pillOutline = pl.checked; };
+  });
+  root.addEventListener('focusout', (e) => {
+    if (e.target.id === 'cc-w-edit' && S.editing >= 0) commitEdit(e.target.value);
+  });
+  // drag the caption in the preview to move it; drag its sides to resize
+  const cvWrap = $('#cc-canvas-wrap');
+  cvWrap.addEventListener('pointerdown', onCanvasDown);
+  cvWrap.addEventListener('pointermove', (e) => { if (!S.drag) onCanvasHover(e); });
+  cvWrap.addEventListener('pointerleave', () => { if (S.hoverBox) { S.hoverBox = false; requestDraw(); } });
 }
 
-// ── Tab 4: Generate ──────────────────────────────────────────
-function _renderGenerate(body) {
-  if (!S.words.length) {
-    body.innerHTML = `<p class="cc-hint">No words yet — transcribe first (tab 1).</p>`;
-    return;
-  }
-  body.innerHTML = `
-    <div class="cc-row">
-      <div><label class="cc-label">Timing source</label><select id="cc-src" class="cc-input">
-        <option value="standalone"${S.sourceMode === 'standalone' ? ' selected' : ''}>Standalone (source times)</option>
-        <option value="final_cut"${S.sourceMode === 'final_cut' ? ' selected' : ''}>Post-cut (excluded words removed)</option>
-      </select></div>
-      <div><label class="cc-label">File name</label><input id="cc-name" class="cc-input" value="${_esc(S.fileName)}" spellcheck="false" /></div>
-    </div>
-    <div class="cc-actions">
-      <button class="cc-btn" data-act="build" ${S.busy ? 'disabled' : ''}>${S.busy ? 'Working…' : 'Build cues'}</button>
-      <button class="cc-btn" data-act="preview" ${S.busy || !S.cues.length ? 'disabled' : ''}>${S.busy ? 'Working…' : 'Preview first 6s'}</button>
-      <button class="cc-btn cc-primary" data-act="import" ${S.busy || !S.cues.length ? 'disabled' : ''}>Export SRT + Import to timeline</button>
-    </div>
-    <div class="cc-actions">
-      <button class="cc-btn" data-act="overlay" ${S.busy || !S.cues.length ? 'disabled' : ''}>${S.busy ? 'Working…' : 'Build animated overlay (fade-up words)'}</button>
-    </div>
-    <p class="cc-hint">Overlay renders each word rising + fading in (his AE look) as a transparent clip on V2. Render takes minutes for long reels.</p>
-    <div class="cc-strip" id="cc-strip">${S.previewMp4
-      ? `<video class="cc-video" src="${S.previewMp4}" controls autoplay muted loop playsinline></video>`
-      : (S.previewFrames || []).map(f => `<figure><img src="${f.png}" alt="t=${f.t}s" /><figcaption>${f.t}s</figcaption></figure>`).join('')}</div>
-    <div class="cc-cues">${S.cues.map(c => `<div class="cc-cue"><span class="cc-time">${_fmtT(c.start)} → ${_fmtT(c.end)}</span><span class="cc-text">${_esc(c.text)}</span></div>`).join('')}</div>`;
-  body.querySelector('#cc-src').onchange = (e) => { S.sourceMode = e.target.value; S.cues = []; _render(); };
-  body.querySelector('#cc-name').onchange = (e) => { S.fileName = e.target.value.trim() || 'captions'; };
-  body.querySelector('[data-act="build"]').onclick = _buildCues;
-  body.querySelector('[data-act="preview"]').onclick = _preview;
-  body.querySelector('[data-act="import"]').onclick = _exportImport;
-  body.querySelector('[data-act="overlay"]').onclick = _buildOverlay;
+function canvasPoint(e) {
+  const r = $('#cc-canvas').getBoundingClientRect();
+  return { x: ((e.clientX - r.left) / r.width) * 100, y: ((e.clientY - r.top) / r.height) * 100 };
 }
-async function _buildCues() {
-  S.busy = true; _render(); _setStatus('Grouping words into cues…');
-  try {
-    let words = S.words.map(w => ({ text: w.text, start: w.start, end: w.end, keep: w.keep !== false, pill: !!w.pill }));
-    if (S.allCaps) words = words.map(w => ({ ...w, text: w.text.toUpperCase() }));
-    const resp = await apiPost('/api/captions/cues', { words, source: S.sourceMode, opts: S.opts }, { timeoutMs: 30000 });
-    S.cues = resp.cues || [];
-    _setStatus(`${S.cues.length} cues from ${resp.summary?.words ?? words.length} words.`);
-  } catch (e) {
-    _setStatus('Cue build failed: ' + String((e && e.message) || e).slice(0, 200));
-  } finally {
-    S.busy = false; _render();
-  }
+function boxHit(p) {
+  const lay = S.settings.layout;
+  const half = lay.boxWidth / 2;
+  const fsPct = (S.settings.style.fontSize * scaleK()) / S.seq.height * 100;
+  const hh = (fsPct * (lay.lineHeight || 1.12) * Math.max(1, S.settings.grouping.maxLines || 1)) / 2 + 2;
+  if (Math.abs(p.y - lay.posY) > hh) return null;
+  if (Math.abs(p.x - (lay.posX - half)) < 3) return 'left';
+  if (Math.abs(p.x - (lay.posX + half)) < 3) return 'right';
+  if (Math.abs(p.x - lay.posX) < half) return 'move';
+  return null;
 }
-async function _exportImport() {
-  if (!S.cues.length) return;
-  if (!isExtendScriptAvailable()) { _setStatus('ExtendScript unavailable — open the panel inside Premiere Pro.'); return; }
-  S.busy = true; _render(); _setStatus('Exporting SRT + importing…');
-  try {
-    const srt = await apiPost('/api/captions/srt', { cues: S.cues, name: S.fileName }, { timeoutMs: 30000 });
-    if (!srt.srt_path) throw new Error('backend did not return an srt_path');
-    S.srtPath = srt.srt_path;
-    const res = await importCaptionsFromSRT(srt.srt_path);
-    _setStatus(res && res.method === 'createCaptionTrack'
-      ? `On the timeline (“${res.itemName || 'SRT'}”, ${S.cues.length} cues). Edit in Premiere's Text panel.`
-      : `In the project bin (“${(res && res.itemName) || 'SRT'}”) — ${(res && res.warning) || 'drag it to the timeline manually.'}`);
-  } catch (e) {
-    _setStatus('Export/import failed: ' + String((e && e.message) || e).slice(0, 200));
-  } finally {
-    S.busy = false; _render();
+function onCanvasHover(e) {
+  const hit = boxHit(canvasPoint(e));
+  $('#cc-canvas').style.cursor = hit === 'move' ? 'move' : hit ? 'ew-resize' : '';
+  if (!!hit !== S.hoverBox) { S.hoverBox = !!hit; requestDraw(); }
+}
+function onCanvasDown(e) {
+  const p = canvasPoint(e);
+  const hit = boxHit(p);
+  if (!hit) return;
+  e.preventDefault();
+  const lay = S.settings.layout;
+  S.drag = { mode: hit, x: p.x, y: p.y, posX: lay.posX, posY: lay.posY, box: lay.boxWidth };
+  const move = (ev) => {
+    const q = canvasPoint(ev);
+    if (S.drag.mode === 'move') {
+      lay.posX = clamp(Math.round((S.drag.posX + q.x - S.drag.x) * 2) / 2, 5, 95);
+      lay.posY = clamp(Math.round((S.drag.posY + q.y - S.drag.y) * 2) / 2, 5, 95);
+    } else {
+      const d = (q.x - S.drag.x) * (S.drag.mode === 'left' ? -2 : 2);
+      lay.boxWidth = clamp(Math.round(S.drag.box + d), 30, 100);
+    }
+    scheduleScene();
+  };
+  const up = () => {
+    document.removeEventListener('pointermove', move);
+    document.removeEventListener('pointerup', up);
+    S.drag = null;
+    saveSettingsSoon();
+    if (S.tab === 'style') renderBody();
+    requestDraw();
+  };
+  document.addEventListener('pointermove', move);
+  document.addEventListener('pointerup', up);
+}
+
+function onAction(act) {
+  switch (act) {
+    case 'close': closeCaptions(); break;
+    case 'refresh-seq':
+      refreshSequence(false);
+      setStatus(inCEP() ? 'Sequence re-read.' : 'Preview mode — not connected to Premiere.');
+      break;
+    case 'play': setPlaying(!S.playing); break;
+    case 'bg':
+      S.bg = S.bg === 'checker' ? 'dark' : (S.bg === 'dark' && S.bgImage ? 'frame' : 'checker');
+      requestDraw();
+      break;
+    case 'toggle-preview': S.previewOpen = !S.previewOpen; layoutPreview(); break;
+    case 'dismiss': setStatus(null); break;
+    case 'cancel': if (S.busy && S.busy.cancel) S.busy.cancel(); break;
+    case 'export': exportCaptions(); break;
+    case 'srt': exportSrt(false); break;
+    case 'srt-track': exportSrt(true); break;
+    case 'transcribe-seq': transcribeSequence(); break;
+    case 'upload': $('#cc-file').click(); break;
+    case 'paste-toggle': S.pasteOpen = !S.pasteOpen; renderBody(); break;
+    case 'paste-use': {
+      const words = parsePasted(($('#cc-paste') || {}).value);
+      if (!words.length) { setStatus('Nothing to use — paste SRT, JSON or plain text.', 'error'); break; }
+      setWords(words, `${words.length} words from the pasted transcript.`);
+      break;
+    }
+    case 'source-toggle': S.showSource = !S.showSource; renderBody(); break;
+    case 'find-toggle': S.findOpen = !S.findOpen; renderBody(); if (S.findOpen) { const f = $('#cc-find'); if (f) f.focus(); } break;
+    case 'replace-all': replaceAll(); break;
+    case 'undo': undo(); break;
+    case 'redo': redo(); break;
+    case 'w-hide': wordAction('hide'); break;
+    case 'w-emph': wordAction('emph'); break;
+    case 'w-break': wordAction('break'); break;
+    case 'w-earlier': wordAction('earlier'); break;
+    case 'w-later': wordAction('later'); break;
+    case 'w-edit': S.editing = S.sel; renderTranscriptList(); break;
+    default: break;
   }
 }
 
-function _stylePayload() {
-  return {
-    all_caps: S.allCaps, preset: S.preset, font_size: S.fontSize,
-    font_family: S.fontCustom || S.fontFamily, font_bold: S.fontBold,
-    text_color: S.textColor, stroke_color: S.strokeColor,
-    stroke_width: S.strokeWidth, shadow_enabled: S.shadowOn,
-    shadow_color: S.shadowColor, shadow_opacity: S.shadowOpacity / 100,
-    shadow_distance: S.shadowDistance, shadow_blur: S.shadowBlur,
-    pos_y_ratio: S.posY / 100, pos_x_ratio: S.posX / 100,
-    box_width_ratio: S.boxW / 100, pill_color: S.pillColor,
-    pill_opacity: S.pillOpacity / 100, pill_outline: S.pillOutline,
-    pill_stroke_color: S.pillStrokeColor, pill_stroke_width: S.pillStrokeWidth,
-    pill_radius: S.pillRadius,
-    animate_preset: S.animPreset, easing: S.wordEasing,
-    intensity: S.animIntensity, slide_px: S.slideDist,
-    rise_ms: Math.round(S.fadeDur * 1000),
-    width: S.seqW, height: S.seqH,
+// Read-only window for the browser test-suite (tests/ui) and the CEP
+// debugger: state snapshot + the pure model. Nothing here mutates.
+try {
+  window.__editflowCaptions = {
+    state: () => S,
+    model: M,
+    effSettings: () => effSettings(),
+    drawAt: (canvas, t) => { const sc = S.scene; if (!sc) return 0; return drawFrame(canvas.getContext('2d'), sc, effSettings(), t, { scale: canvas.width / sc.width }); },
   };
-}
-async function _preview() {
-  if (!S.cues.length) return;
-  S.busy = true; _render(); _setStatus('Rendering 6s preview…');
-  try {
-    const resp = await apiPost('/api/captions/preview',
-      { cues: S.cues, name: S.fileName, ..._stylePayload() }, { timeoutMs: 300000 });
-    S.previewFrames = resp.frames || [];
-    S.previewMp4 = resp.preview_mp4 ? getBaseUrl() + resp.preview_mp4 : '';
-    _setStatus(S.previewMp4
-      ? `Preview: first ${resp.seconds}s rendered — watch it above, then build full.`
-      : (S.previewFrames.length ? 'Preview frames below.' : 'Preview rendered no frames — check cue times.'));
-  } catch (e) {
-    _setStatus('Preview failed: ' + String((e && e.message) || e).slice(0, 200));
-  } finally {
-    S.busy = false; _render();
-  }
-}
-async function _buildOverlay() {
-  if (!S.cues.length) return;
-  if (!isExtendScriptAvailable()) { _setStatus('ExtendScript unavailable — open the panel inside Premiere Pro.'); return; }
-  S.busy = true; _render(); _setStatus('Rendering overlay (minutes for long reels)…');
-  try {
-    const ov = await apiPost('/api/captions/overlay', {
-      cues: S.cues, name: S.fileName, ..._stylePayload(),
-    }, { timeoutMs: 600000 });
-    if (!ov.mov_path) throw new Error('backend did not return a mov_path');
-    _setStatus(`Rendered (${ov.words} words) — placing on V2…`);
-    const res = await callExtendScript('processEDL', { ops: [
-      { action: 'import_file', mediaPath: ov.mov_path },
-      { action: 'add', mediaPath: ov.mov_path, trackIndex: 1, startTime: 0 },
-    ] });
-    const failed = res && res.results
-      ? res.results.filter(r => !r.success).map(r => `${r.action}: ${r.error || '?'}`).join('; ')
-      : '';
-    _setStatus(failed ? `Overlay ready but timeline insert had issues: ${failed}` : 'Animated overlay on V2 — scrub the timeline.');
-  } catch (e) {
-    // Show the TAIL of the error: the head is filter-graph noise, the
-    // reason ("Error opening output file …", "No such filter …") is last.
-    const msg = String((e && e.message) || e);
-    _setStatus('Overlay failed: ' + (msg.length > 220 ? '…' + msg.slice(-219) : msg));
-  } finally {
-    S.busy = false; _render();
-  }
-}
-
-// ── Helpers ──────────────────────────────────────────────────
-function _fmtT(s) {
-  s = Math.max(0, s || 0);
-  const m = Math.floor(s / 60), sec = (s % 60).toFixed(1).padStart(4, '0');
-  return `${String(m).padStart(2, '0')}:${sec}`;
-}
-function _esc(s) {
-  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-}
+} catch (_) { /* no window (Node harness) */ }
 
 export { openCaptions, closeCaptions };

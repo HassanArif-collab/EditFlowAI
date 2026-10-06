@@ -4,7 +4,7 @@
  * Initializes all modules, wires up DOM events, and starts the app.
  * This file owns no business logic — it delegates to the modules.
  */
-const BUILD_TAG = 'review-38';  // bump when shipping a fix; visible in header
+const BUILD_TAG = 'captions-2.0';  // bump when shipping a fix; visible in header
 
 // FIRST thing on parse: clear the inline boot-check banner. If the user sees
 // the banner disappear, we KNOW main.js parsed successfully and modules are
@@ -295,7 +295,7 @@ async function init() {
     btnReload.id = 'btn-dev-reload';
     btnReload.className = 'icon-btn';
     btnReload.title = 'Reload panel + ExtendScript (no Premiere restart needed)';
-    btnReload.textContent = '🔁';
+    btnReload.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.7 6.3A8 8 0 1 0 20 12h-2a6 6 0 1 1-1.8-4.2L13 11h7V4z"/></svg>';
     btnReload.addEventListener('click', () => devReload());
     btnReload.style.display = 'none';
     btnSettings.parentNode.insertBefore(btnReload, btnSettings);
@@ -531,6 +531,8 @@ function _initWebSocket() {
             onWsProgress(data.payload || data);
           }
         } catch (_) { /* ignore */ }
+        // Views outside the orchestrator (Captions) listen for the same events.
+        try { window.dispatchEvent(new CustomEvent('editflow:ws', { detail: data })); } catch (_) { /* ignore */ }
       }
       // Whisper download progress — routed to the Settings panel's progress bar.
       // settings.js handles the case where the panel isn't currently mounted

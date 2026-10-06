@@ -224,6 +224,14 @@ pytest tests/test_mvp_*.py -v   # legacy unit-style tests
 # ExtendScript harness (no Premiere needed — stubs the host, runs the real .jsx)
 node --test tests/jsx/captions.test.js
 
+# Caption model (grouping, timing, animation) — pure JS, no browser
+node --test tests/captions-model.test.js
+
+# Captions Studio in real Chromium: every control changes the preview,
+# transcript edits, render, and exported frames == preview (WYSIWYG).
+# Needs the backend running, Playwright (npm i -g playwright) and ffmpeg.
+node tests/ui/captions-panel.e2e.js
+
 # Live production-path proof (needs backend up + a cached transcript)
 python scripts/live_overlay_proof.py
 

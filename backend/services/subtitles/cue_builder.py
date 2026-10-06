@@ -97,24 +97,29 @@ def remap_kept_words_to_output(words: list[dict], max_gap: float = 0.35) -> list
     """Map kept words from SOURCE time to OUTPUT-sequence time after the cut.
 
     The built sequence concatenates the kept spans, so each kept run slides
-    left by the total removed before it. ``max_gap`` mirrors
-    ``review_service.words_to_cuts``: kept words within it belong to the same
-    span (their natural pauses survive); a larger gap starts a new span whose
-    silence is removed by the cut. Wrong remap = captions drift after the cut.
+    left by the total removed before it. Spans follow
+    ``review_service.words_to_cuts`` exactly: a kept word joins the current
+    span only if it IMMEDIATELY follows the previous kept word (nothing cut
+    in between) and the pause is within ``max_gap``. Merging across a cut
+    word by time alone (the old rule) left every later caption late by the
+    removed filler's length, accumulating through the video.
     """
-    kept = [w for w in words if w.get("keep", True)]
     out: list[dict] = []
     cursor = 0.0          # output time where the current run begins
     run_start: float | None = None
     prev_end = 0.0
-    for w in kept:
+    prev_idx = -2
+    for idx, w in enumerate(words):
+        if not w.get("keep", True):
+            continue
         if run_start is None:
             run_start = w["start"]
-        elif w["start"] - prev_end > max_gap:
+        elif idx != prev_idx + 1 or w["start"] - prev_end > max_gap:
             cursor += prev_end - run_start
             run_start = w["start"]
         out.append({**w,
                     "start": round(cursor + (w["start"] - run_start), 3),
                     "end": round(cursor + (w["end"] - run_start), 3)})
         prev_end = w["end"]
+        prev_idx = idx
     return out

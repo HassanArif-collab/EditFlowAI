@@ -81,6 +81,8 @@ body {
   border-color: var(--border);
 }
 
+.icon-btn svg { width: 17px; height: 17px; fill: currentColor; display: block; }
+
 #app-main {
   flex: 1;
   position: relative;
@@ -1074,6 +1076,7 @@ select.settings-input {
    latest main.js loaded. If it says "build:unloaded", the JS never ran
    and CEP is serving a stale cache. */
 .boot-tag {
+  white-space: nowrap;
   font-size: 9px;
   font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
   color: var(--text-dim);
