@@ -77,6 +77,34 @@ test('displayText: soft punctuation gives the clean social look, keeps ? and !',
   assert.equal(M.displayText('wow', { textCase: 'upper' }), 'WOW');
 });
 
+test('displayText: no_dots keeps commas and ?!, drops ending dots and ellipses', () => {
+  const o = { punctuation: 'no_dots' };
+  assert.equal(M.displayText('channel.', o), 'channel');
+  assert.equal(M.displayText('Hello,', o), 'Hello,');
+  assert.equal(M.displayText('wait...', o), 'wait');
+  assert.equal(M.displayText('really?', o), 'really?');
+  assert.equal(M.displayText('awesome!', o), 'awesome!');
+  assert.equal(M.displayText('3.5', o), '3.5');
+  // Urdu punctuation
+  assert.equal(M.displayText('بات،', o), 'بات،');
+  assert.equal(M.displayText('ہے۔', o), 'ہے');
+  assert.equal(M.displayText('کیوں؟', o), 'کیوں؟');
+});
+
+test('displayText: custom punctuation respects granular switches', () => {
+  // Keep dots, drop commas
+  const c1 = { punctuation: 'custom', punctCommas: false, punctDots: true, punctExpressive: true };
+  assert.equal(M.displayText('Hello,', c1), 'Hello');
+  assert.equal(M.displayText('channel.', c1), 'channel.');
+  assert.equal(M.displayText('really?', c1), 'really?');
+
+  // Keep commas, drop dots, drop expressive
+  const c2 = { punctuation: 'custom', punctCommas: true, punctDots: false, punctExpressive: false };
+  assert.equal(M.displayText('Hello,', c2), 'Hello,');
+  assert.equal(M.displayText('channel.', c2), 'channel');
+  assert.equal(M.displayText('really?', c2), 'really');
+});
+
 /* ── grouping ── */
 
 function group(ws, opts) {

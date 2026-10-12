@@ -15,7 +15,10 @@ export const STYLE_DEFAULTS = {
   fontWeight: 800,
   fontSize: 80,             // px at the sequence's resolution
   textCase: 'as_is',        // as_is | upper | lower
-  punctuation: 'soft',      // keep | soft | none
+  punctuation: 'no_dots',   // no_dots | keep | soft | none | custom
+  punctCommas: true,
+  punctDots: false,
+  punctExpressive: true,
   color: '#ffffff',
   activeColor: '#ffd84d',   // active-word highlight
   emphasis: 'color',        // color | pill | both — words you mark as emphasised

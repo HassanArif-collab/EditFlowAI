@@ -151,11 +151,54 @@ export function isVisible(w, hideFillers) {
 export function displayText(text, opts) {
   let t = String(text || '');
   const p = (opts && opts.punctuation) || 'keep';
-  if (p === 'soft') {
-    t = t.replace(/^["“”(\[]+(?=\w)/, '').replace(/(\.{2,}|…|[.,;:]+)(["”')\]]*)$/, '$2');
+
+  let keepCommas = true;
+  let keepDots = true;
+  let keepExpressive = true;
+
+  if (p === 'no_dots') {
+    keepCommas = true;
+    keepDots = false;
+    keepExpressive = true;
+  } else if (p === 'soft') {
+    keepCommas = false;
+    keepDots = false;
+    keepExpressive = true;
   } else if (p === 'none') {
+    keepCommas = false;
+    keepDots = false;
+    keepExpressive = false;
+  } else if (p === 'custom') {
+    keepCommas = opts && opts.punctCommas !== false;
+    keepDots = !!(opts && opts.punctDots);
+    keepExpressive = opts && opts.punctExpressive !== false;
+  }
+
+  // 1. Strip trailing sentence-ending dots if keepDots is false
+  if (!keepDots) {
+    t = t.replace(/(\.{1,}|…|۔+)(["”')\]]*)$/, '$2');
+  }
+
+  // 2. Strip trailing commas and inner pauses if keepCommas is false
+  if (!keepCommas) {
+    t = t.replace(/([,;:]+|،+|؛+)(["”')\]]*)$/, '$2');
+  }
+
+  // 3. Strip trailing question & exclamation marks if keepExpressive is false
+  if (!keepExpressive) {
+    t = t.replace(/([?!]+|؟+)(["”')\]]*)$/, '$2');
+  }
+
+  // 4. Strip decorative opening brackets / quotes in 'soft' mode
+  if (p === 'soft') {
+    t = t.replace(/^["“”(\[]+(?=\w)/, '');
+  }
+
+  // 5. In 'none' mode, strip all remaining non-word characters
+  if (p === 'none') {
     t = t.replace(/^[^\p{L}\p{N}]+/u, '').replace(/[^\p{L}\p{N}]+$/u, '');
   }
+
   const c = (opts && opts.textCase) || 'as_is';
   if (c === 'upper') t = t.toUpperCase();
   else if (c === 'lower') t = t.toLowerCase();

@@ -949,7 +949,19 @@ function tabStyle() {
       ${ctlSeg('style.fontWeight', 'Weight', ws.map((w) => [w, weightName(w)]))}
       ${ctlNum('style.fontSize', 'Size', 24, 220, 1, 'px')}
       ${ctlSeg('style.textCase', 'Case', [['as_is', 'As spoken'], ['upper', 'UPPER'], ['lower', 'lower']])}
-      ${ctlSeg('style.punctuation', 'Punctuation', [['keep', 'Keep'], ['soft', 'Clean', 'Hide commas and full stops, keep ? and !'], ['none', 'None']])}`)}
+      ${ctlSeg('style.punctuation', 'Punctuation', [
+        ['no_dots', 'No dots', 'Keep commas & pauses, drop ending dots (.)'],
+        ['keep', 'Keep all', 'Keep all punctuation as spoken'],
+        ['soft', 'Clean', 'Hide commas and full stops, keep ? and !'],
+        ['none', 'None', 'Strip all punctuation'],
+        ['custom', 'Custom', 'Choose specifically which punctuation to keep'],
+      ])}
+      ${st.punctuation === 'custom' ? `
+        <div class="cc-sub-ctls" style="margin: 6px 0 6px 8px; padding-left: 10px; border-left: 2px solid rgba(255,255,255,0.12);">
+          ${ctlToggle('style.punctCommas', 'Keep commas & inner pauses', 'Preserves , ; : (and Urdu ، ؛)')}
+          ${ctlToggle('style.punctDots', 'Keep sentence-ending dots', 'Preserves . … (and Urdu ۔)')}
+          ${ctlToggle('style.punctExpressive', 'Keep ? and !', 'Preserves question marks and exclamations')}
+        </div>` : ''}`)}
     ${section('Colour', `<div class="cc-swatches">
       ${ctlColor('style.color', 'Text')}
       ${M.highlightMode(S.settings.motion) === 'color' ? ctlColor('style.activeColor', 'Active word') : ''}
@@ -1180,10 +1192,10 @@ function applyPreset(id) {
 
 /* ── events ───────────────────────────────────────────────────── */
 
-const RELAYOUT = /^(style\.(fontFamily|fontWeight|fontSize|textCase|punctuation)|layout\.|grouping\.|timing\.)/;
+const RELAYOUT = /^(style\.(fontFamily|fontWeight|fontSize|textCase|punctuation|punctCommas|punctDots|punctExpressive)|layout\.|grouping\.|timing\.)/;
 // Settings that show or hide other controls: re-render the tab when they change.
 const STRUCTURAL = { 'style.background': 1, 'style.shadow': 1, 'style.emphasis': 1, 'style.fontFamily': 1,
-  'motion.preset': 1, 'motion.highlight': 1, 'timing.exit': 1, 'grouping.maxLines': 1, previewAspect: 1 };
+  'style.punctuation': 1, 'motion.preset': 1, 'motion.highlight': 1, 'timing.exit': 1, 'grouping.maxLines': 1, previewAspect: 1 };
 
 // Picking a colour for something that's switched off switches it on —
 // otherwise the swatch looks broken (nothing changes).
