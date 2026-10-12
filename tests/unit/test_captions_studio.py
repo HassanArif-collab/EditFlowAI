@@ -346,3 +346,56 @@ def test_encode_start_rapid_calls_generate_unique_paths(client, monkeypatch):
     client.post(f"/api/captions/encode/{r1.json()['job_id']}/cancel")
     client.post(f"/api/captions/encode/{r2.json()['job_id']}/cancel")
 
+
+def test_transcribe_sequence_offsets_words_when_range_in_provided(client, monkeypatch, tmp_path):
+    from backend.routes import captions
+
+    async def fake_transcribe(wav_path, fingerprint, language, engine, force, client_id):
+        return {"words": [{"text": "hello", "start": 1.0, "end": 2.0}]}
+
+    monkeypatch.setattr(captions, "_transcribe_wav", fake_transcribe)
+
+    dummy_audio = tmp_path / "clip.wav"
+    dummy_audio.write_bytes(b"dummy")
+
+    req = {
+        "clips": [{"path": str(dummy_audio), "start": 0, "end": 10, "in": 0}],
+        "duration": 10.0,
+        "range_in": 5.5,
+        "range_out": 15.5,
+    }
+    resp = client.post("/api/captions/transcribe-sequence", json=req)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["range_in"] == 5.5
+    assert len(data["words"]) == 1
+    assert data["words"][0]["start"] == 6.5
+    assert data["words"][0]["end"] == 7.5
+
+
+def test_sequence_frame_invalid_request_returns_400(client):
+    resp = client.post("/api/captions/sequence-frame", json={})
+    assert resp.status_code == 400
+    assert "No valid frame path" in resp.json()["detail"]
+
+
+@needs_ffmpeg
+def test_sequence_frame_direct_frame_converts_and_serves(client, tmp_path, monkeypatch):
+    from backend.services.subtitles import animated_overlay
+    monkeypatch.setattr(animated_overlay, "_ffmpeg_path", lambda: FFMPEG)
+
+    frame = tmp_path / "frame.png"
+    # Create a 10x10 test image via ffmpeg
+    subprocess.run([FFMPEG, "-y", "-f", "lavfi", "-i", "color=c=blue:s=10x10:d=1", "-vframes", "1", str(frame)], check=True)
+
+    resp = client.post("/api/captions/sequence-frame", json={"frame_path": str(frame), "width": 10, "height": 10})
+    assert resp.status_code == 200
+    url = resp.json()["url"]
+    assert "/api/captions/file/preview_frame.jpg" in url
+
+    # Verify the served file endpoint works
+    get_resp = client.get("/api/captions/file/preview_frame.jpg")
+    assert get_resp.status_code == 200
+    assert len(get_resp.content) > 0
+
+

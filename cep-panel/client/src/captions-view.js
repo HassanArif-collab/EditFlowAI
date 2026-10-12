@@ -72,6 +72,9 @@ const S = {
   drag: null,
   hoverBox: false,
   prevView: null,
+  previewZoom: 1.0,
+  previewHeight: null,
+  useInOut: true,
 };
 
 let root = null;
@@ -120,6 +123,7 @@ const ICONS = {
   redo: '<path d="M18.4 10.6A9.4 9.4 0 0 0 11.5 8a9.5 9.5 0 0 0-9.2 6.2l2.4.8A7 7 0 0 1 16.6 12.4L13 16h9V7z"/>',
   eye: '<path d="M12 5C6.5 5 2.7 9.3 1.5 12c1.2 2.7 5 7 10.5 7s9.3-4.3 10.5-7C21.3 9.3 17.5 5 12 5zm0 11a4 4 0 1 1 0-8 4 4 0 0 1 0 8z"/>',
   bg: '<path d="M3 3h8v8H3zM13 13h8v8h-8z"/><path d="M13 3h8v8h-8zM3 13h8v8H3z" opacity=".35"/>',
+  camera: '<path d="M9 3L7.17 5H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2h-3.17L15 3H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>',
   close: '<path d="M6.4 5 5 6.4 10.6 12 5 17.6 6.4 19 12 13.4 17.6 19 19 17.6 13.4 12 19 6.4 17.6 5 12 10.6z"/>',
   mic: '<path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-2.1A7 7 0 0 0 19 12z"/>',
   refresh: '<path d="M17.7 6.3A8 8 0 1 0 20 12h-2a6 6 0 1 1-1.8-4.2L13 11h7V4z"/>',
@@ -283,6 +287,9 @@ async function refreshSequence(first) {
         height: Math.round(info.height) || 1920,
         fps: info.timebase ? M.fpsFromTicks(info.timebase) : M.fpsFromNumber(info.fps),
         duration: info.duration || 0, playhead: info.playhead || 0, live: true,
+        inPoint: info.inPoint != null ? info.inPoint : 0,
+        outPoint: info.outPoint != null ? info.outPoint : (info.duration || 0),
+        hasInOut: !!info.hasInOut,
       };
     } catch (e) {
       S.seq = Object.assign({}, PREVIEW_SEQ, { error: String((e && e.message) || e) });
@@ -306,11 +313,15 @@ function renderSeqChip() {
   if (!el) return;
   const f = S.seq.fps;
   const fps = Math.round((f.num / f.den) * 1000) / 1000;
+  const inOutBadge = S.seq.hasInOut
+    ? ` · <span style="color:var(--cc-accent-2,#69a9ff)">In/Out: ${fmtTime(S.seq.inPoint)}–${fmtTime(S.seq.outPoint)}</span>`
+    : '';
   el.innerHTML = S.seq.live
-    ? `<b>${esc(S.seq.name)}</b> · ${S.seq.width}×${S.seq.height} · ${fps} fps`
+    ? `<b>${esc(S.seq.name)}</b> · ${S.seq.width}×${S.seq.height} · ${fps} fps${inOutBadge}`
     : (S.seq.error ? '<span class="cc-warn-text">No sequence open</span>'
       : '<span class="cc-dim">Preview mode</span>');
-  el.title = S.seq.error || (S.seq.live ? '' : 'Not connected to Premiere — rendering works, placing on the timeline does not.');
+  el.title = S.seq.error || (S.seq.live ? (S.seq.hasInOut ? `Sequence has In/Out set: ${fmtTime(S.seq.inPoint)} to ${fmtTime(S.seq.outPoint)}` : '')
+    : 'Not connected to Premiere — rendering works, placing on the timeline does not.');
 }
 
 /* ── shell ────────────────────────────────────────────────────── */
@@ -328,12 +339,19 @@ function renderShell() {
     <div class="cc-stage" id="cc-stage">
       <div class="cc-canvas-wrap" id="cc-canvas-wrap"><canvas id="cc-canvas"></canvas></div>
     </div>
+    <div class="cc-stage-resizer" id="cc-stage-resizer" title="Drag up or down to resize preview"></div>
     <div class="cc-transport">
       <button class="cc-icon-btn cc-play" data-act="play" title="Play / pause (Space)">${icon('play')}</button>
       <span class="cc-time" id="cc-time">0:00.0</span>
       <input type="range" class="cc-scrub" id="cc-scrub" min="0" max="1" step="0.001" value="0" aria-label="Preview time">
       <span class="cc-time cc-dur" id="cc-dur">0:00.0</span>
-      <button class="cc-icon-btn" data-act="bg" title="Preview background">${icon('bg')}</button>
+      <button class="cc-icon-btn" data-act="capture-frame" title="Grab current sequence frame as background">${icon('camera')}</button>
+      <button class="cc-icon-btn" data-act="bg" title="Cycle preview background (Frame / Dark / Checker)">${icon('bg')}</button>
+      <div class="cc-zoom-wrap">
+        <button class="cc-icon-btn cc-small" data-act="zoom-out" title="Zoom out">−</button>
+        <span class="cc-zoom-val" id="cc-zoom-val" data-act="zoom-reset" title="Click to reset zoom (Fit)">Fit</span>
+        <button class="cc-icon-btn cc-small" data-act="zoom-in" title="Zoom in">+</button>
+      </div>
       <select class="cc-mini-select" id="cc-safe" title="Show where TikTok / Reels / Shorts buttons cover the video">
         <option value="off">Safe zone</option>
         ${Object.keys(SAFE_ZONES).map((k) => `<option value="${k}">${SAFE_ZONES[k].label}</option>`).join('')}
@@ -347,9 +365,6 @@ function renderShell() {
     <div class="cc-footer" id="cc-footer"></div>
     <input type="file" id="cc-file" accept="audio/*,video/*" class="hidden">`;
   if (window.ResizeObserver) {
-    // React to WIDTH changes only, a frame later: resizing the canvas changes
-    // the stage's height, and reacting to that loops (Chromium then throws
-    // "ResizeObserver loop completed with undelivered notifications").
     let lastW = 0;
     new ResizeObserver((entries) => {
       const w = Math.round(entries[0].contentRect.width);
@@ -359,29 +374,131 @@ function renderShell() {
     }).observe($('#cc-stage'));
   }
   window.addEventListener('resize', () => requestAnimationFrame(layoutPreview));
+  bindResizer();
 }
 
-/* ── preview ──────────────────────────────────────────────────── */
+/* ── preview & zoom ───────────────────────────────────────────── */
 
 function layoutPreview() {
   const stage = $('#cc-stage');
   const cv = $('#cc-canvas');
   if (!stage || !cv) return;
   stage.classList.toggle('hidden', !S.previewOpen);
+  const resizer = $('#cc-stage-resizer');
+  if (resizer) resizer.classList.toggle('hidden', !S.previewOpen);
   if (!S.previewOpen) return;
-  // A third of the panel: room for the controls in a 400×600 dock, bigger
-  // when the panel is docked tall.
+
+  const userH = S.previewHeight || (S.settings && S.settings.previewHeight);
+  const baseH = userH ? Math.max(90, Math.min((root.clientHeight || 600) * 0.78, userH))
+                      : Math.max(120, Math.min(560, (root.clientHeight || 600) * 0.34));
+  stage.style.height = Math.round(baseH) + 'px';
+
   const avW = Math.max(120, stage.clientWidth - 16);
-  const avH = Math.max(120, Math.min(560, (root.clientHeight || 600) * 0.34));
+  const avH = Math.max(80, baseH - 16);
   const ar = S.seq.width / S.seq.height;
   let w = avW, h = w / ar;
   if (h > avH) { h = avH; w = h * ar; }
+
+  const zoom = S.previewZoom || 1.0;
   const dpr = window.devicePixelRatio || 1;
-  cv.style.width = Math.round(w) + 'px';
-  cv.style.height = Math.round(h) + 'px';
-  cv.width = Math.round(w * dpr);
-  cv.height = Math.round(h * dpr);
+  const dispW = Math.round(w * zoom);
+  const dispH = Math.round(h * zoom);
+
+  cv.style.width = dispW + 'px';
+  cv.style.height = dispH + 'px';
+  cv.width = Math.round(dispW * dpr);
+  cv.height = Math.round(dispH * dpr);
+
+  const zEl = $('#cc-zoom-val');
+  if (zEl) zEl.textContent = zoom === 1.0 ? 'Fit' : `${Math.round(zoom * 100)}%`;
+
   requestDraw();
+}
+
+function bindResizer() {
+  const resizer = $('#cc-stage-resizer');
+  if (!resizer) return;
+  let startY = 0, startH = 0;
+  const onMove = (e) => {
+    const dy = e.clientY - startY;
+    const newH = Math.max(90, Math.min((root.clientHeight || 600) * 0.78, startH + dy));
+    S.previewHeight = newH;
+    if (S.settings) S.settings.previewHeight = newH;
+    layoutPreview();
+  };
+  const onUp = () => {
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+    resizer.classList.remove('cc-resizing');
+    saveSettingsSoon();
+  };
+  resizer.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    startY = e.clientY;
+    startH = ($('#cc-stage') || {}).clientHeight || (root.clientHeight * 0.34);
+    resizer.classList.add('cc-resizing');
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  });
+}
+
+const ZOOM_LEVELS = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0];
+function changeZoom(delta) {
+  const cur = S.previewZoom || 1.0;
+  if (delta === 0) {
+    S.previewZoom = 1.0;
+  } else if (delta > 0) {
+    const next = ZOOM_LEVELS.find((z) => z > cur + 0.01);
+    S.previewZoom = next || 3.0;
+  } else {
+    const prev = [...ZOOM_LEVELS].reverse().find((z) => z < cur - 0.01);
+    S.previewZoom = prev || 0.5;
+  }
+  layoutPreview();
+}
+
+async function captureSequenceFrame() {
+  if (!inCEP()) {
+    setStatus('Frame capture requires an active Premiere Pro sequence.', 'info');
+    return;
+  }
+  setStatus('Grabbing sequence frame…', 'info');
+  try {
+    const curTime = S.t || S.seq.playhead || 0;
+    const res = await callCM('captureSequenceFrame', { time: curTime });
+    if (!res || !res.success) {
+      throw new Error((res && res.error) || 'Failed to capture frame from Premiere.');
+    }
+    let url = '';
+    if (res.method === 'exportFramePNG' && res.path) {
+      const r = await apiPost('/api/captions/sequence-frame', {
+        frame_path: res.path, width: S.seq.width, height: S.seq.height
+      });
+      url = r.url;
+    } else if (res.method === 'sourceClip' && res.clipPath) {
+      const r = await apiPost('/api/captions/sequence-frame', {
+        clip_path: res.clipPath,
+        source_time: res.sourceTime,
+        width: S.seq.width,
+        height: S.seq.height
+      });
+      url = r.url;
+    }
+    if (url) {
+      const im = new Image();
+      im.onload = () => {
+        S.bgImage = im;
+        S.bg = 'frame';
+        requestDraw();
+        setStatus(`Frame captured at ${fmtTime(curTime)}.`, 'ok');
+      };
+      im.src = getBaseUrl() + url;
+    } else {
+      throw new Error('No frame image returned');
+    }
+  } catch (err) {
+    setStatus('Could not grab sequence frame: ' + ((err && err.message) || err), 'error');
+  }
 }
 
 let drawQueued = false;
@@ -596,10 +713,27 @@ const LANGS = [['en', 'English'], ['auto', 'Auto-detect'], ['ur', 'Urdu'], ['hi'
 
 function sourceCard() {
   const live = inCEP();
+  const hasInOut = !!(S.seq && S.seq.hasInOut);
+  const inPt = S.seq && S.seq.inPoint != null ? S.seq.inPoint : 0;
+  const outPt = S.seq && S.seq.outPoint != null ? S.seq.outPoint : (S.seq && S.seq.duration ? S.seq.duration : 0);
+  const inOutSpan = fmtTime(Math.max(0, outPt - inPt));
+  const inOutText = `${fmtTime(inPt)} – ${fmtTime(outPt)}`;
+  const useInOut = S.useInOut !== false && hasInOut;
+
+  const btnLabel = (hasInOut && useInOut)
+    ? `${icon('mic')} Transcribe In/Out range (${inOutText})`
+    : `${icon('mic')} Transcribe this sequence`;
+
   return `<div class="cc-source">
-    <button class="cc-btn cc-primary cc-wide" data-act="transcribe-seq" ${live && !S.busy ? '' : 'disabled'}>${icon('mic')} Transcribe this sequence</button>
+    <button class="cc-btn cc-primary cc-wide" data-act="transcribe-seq" ${live && !S.busy ? '' : 'disabled'}>${btnLabel}</button>
     <p class="cc-hint">${live ? 'Uses the timeline audio as cut, so captions line up with your edit. Muted tracks are skipped — mute music first.'
       : 'Open the panel inside Premiere to transcribe the sequence. You can still upload a file or paste a transcript.'}</p>
+    ${hasInOut ? `<div style="margin:4px 0 6px">
+      <label class="cc-check" style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--cc-bright,#eee);cursor:pointer">
+        <input type="checkbox" id="cc-use-in-out" ${useInOut ? 'checked' : ''} style="cursor:pointer">
+        <span><b>Sequence In/Out active:</b> <span style="color:var(--cc-accent-2,#69a9ff)">${inOutText}</span> (${inOutSpan})</span>
+      </label>
+    </div>` : ''}
     <div class="cc-row2">
       ${ctlSelect('transcribe.language', 'Language', LANGS)}
       ${ctlSelect('transcribe.engine', 'Word timing', [['auto', 'Best available'], ['whisperx', 'WhisperX (precise)'], ['whisper', 'Whisper (fast)']])}
@@ -869,21 +1003,29 @@ async function transcribeSequence() {
   if (!inCEP() || S.busy) return;
   setBusy({ kind: 'transcribe', label: 'Reading the sequence audio…', progress: null });
   try {
-    const clips = await callCM('sequenceAudioClips');
+    const inOutBox = $('#cc-use-in-out');
+    const useInOut = inOutBox ? inOutBox.checked : (S.seq && S.seq.hasInOut);
+    S.useInOut = useInOut;
+    const clips = await callCM('sequenceAudioClips', { useInOut: useInOut });
     if (!clips.clips || !clips.clips.length) {
       throw new Error('No audio clips on unmuted tracks' + (clips.nested ? ` (${clips.nested} nested-sequence clip(s) are skipped)` : '') + '.');
     }
-    setBusy({ kind: 'transcribe', label: `Transcribing ${clips.clips.length} clip${clips.clips.length === 1 ? '' : 's'}… (can take minutes on CPU)`, progress: null });
+    const rangeLabel = clips.rangeIn > 0 ? ` [In/Out: ${fmtTime(clips.rangeIn)} – ${fmtTime(clips.rangeOut)}]` : '';
+    setBusy({ kind: 'transcribe', label: `Transcribing ${clips.clips.length} clip${clips.clips.length === 1 ? '' : 's'}${rangeLabel}… (can take minutes on CPU)`, progress: null });
     const tr = S.settings.transcribe;
     const force = !!($('#cc-force-transcribe') || {}).checked;
     const res = await apiPost('/api/captions/transcribe-sequence', {
       clips: clips.clips, sequence_name: clips.name, duration: clips.duration,
+      range_in: clips.rangeIn || 0, range_out: clips.rangeOut || clips.duration,
       language: tr.language, engine: tr.engine, force,
     }, { timeoutMs: 60 * 60 * 1000 });
     const words = (res.words || []).map((w) => ({ text: w.word || w.text, start: w.start, end: w.end }));
     const skipped = (res.skipped || []).length;
     S.sourceName = clips.name || 'Sequence';
-    setWords(words, `${words.length} words from “${clips.name}” (${res.engine || 'whisper'})${skipped ? ` — ${skipped} offline clip(s) skipped` : ''}.`);
+    setWords(words, `${words.length} words from “${clips.name}”${rangeLabel} (${res.engine || 'whisper'})${skipped ? ` — ${skipped} offline clip(s) skipped` : ''}.`);
+    if (!S.bgImage) {
+      try { captureSequenceFrame(); } catch (_) {}
+    }
   } catch (e) {
     transcribeError(e);
   } finally {
@@ -1297,8 +1439,18 @@ function bindEvents() {
     const el = e.target;
     if (el.id === 'cc-safe') { S.safe = el.value; requestDraw(); return; }
     if (el.id === 'cc-file') { const f = el.files && el.files[0]; el.value = ''; if (f) transcribeFile(f); return; }
+    if (el.id === 'cc-use-in-out') { S.useInOut = el.checked; renderBody(); return; }
     if (el.dataset && el.dataset.bind) onBoundInput(el);   // older CEF fires only change for some inputs
   });
+  const stEl = $('#cc-stage');
+  if (stEl) {
+    stEl.addEventListener('wheel', (e) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) {
+        e.preventDefault();
+        changeZoom(e.deltaY < 0 ? 1 : -1);
+      }
+    }, { passive: false });
+  }
   root.addEventListener('click', (e) => {
     const t = e.target;
     const tab = t.closest('[data-tab]');
@@ -1469,9 +1621,20 @@ function onAction(act) {
       break;
     case 'play': setPlaying(!S.playing); break;
     case 'bg':
-      S.bg = S.bg === 'checker' ? 'dark' : (S.bg === 'dark' && S.bgImage ? 'frame' : 'checker');
+      if (S.bg === 'checker') {
+        S.bg = 'dark';
+      } else if (S.bg === 'dark') {
+        S.bg = 'frame';
+        if (!S.bgImage) captureSequenceFrame();
+      } else {
+        S.bg = 'checker';
+      }
       requestDraw();
       break;
+    case 'capture-frame': captureSequenceFrame(); break;
+    case 'zoom-in': changeZoom(1); break;
+    case 'zoom-out': changeZoom(-1); break;
+    case 'zoom-reset': changeZoom(0); break;
     case 'toggle-preview': S.previewOpen = !S.previewOpen; layoutPreview(); break;
     case 'dismiss': setStatus(null); break;
     case 'cancel': if (S.busy && S.busy.cancel) S.busy.cancel(); break;

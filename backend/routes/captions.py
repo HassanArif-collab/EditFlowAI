@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+from pathlib import Path
 import subprocess
 import uuid
 from typing import Any, Optional
@@ -291,6 +292,8 @@ class SequenceTranscribeReq(BaseModel):
     clips: list[dict]                 # [{path, start, end, in, out}] from captionsManager.sequenceAudioClips
     sequence_name: Optional[str] = None
     duration: Optional[float] = None
+    range_in: Optional[float] = None
+    range_out: Optional[float] = None
     language: Optional[str] = None
     engine: str = "auto"
     force: bool = False
@@ -318,20 +321,81 @@ async def transcribe_sequence(req: SequenceTranscribeReq):
     try:
         active_model = whisper_service.get_active_model_name()
         lang_key = (req.language or "auto").strip().lower()
-        fp = clips_fp(clips, f"{active_model}|{lang_key}|{req.engine}")
+        rin = float(req.range_in or 0.0)
+        fp_suffix = f"{active_model}|{lang_key}|{req.engine}"
+        if rin > 0.01:
+            fp_suffix += f"|in:{rin:.3f}"
+        fp = clips_fp(clips, fp_suffix)
         wav_path = get_settings().DATA_DIR / "media_cache" / "mixdowns" / f"seq-{fp}.wav"
         info = {"duration": req.duration, "clips": len(clips), "overlaps": 0}
         if not wav_path.exists() or req.force:
             info = await asyncio.to_thread(mix_sequence_audio, _ffmpeg_path(), clips, wav_path, req.duration)
         out = await _transcribe_wav(wav_path, f"seq-{fp}", req.language, req.engine, req.force, req.client_id)
+        if rin > 0.01:
+            for w in out.get("words", []):
+                w["start"] = round(w["start"] + rin, 3)
+                w["end"] = round(w["end"] + rin, 3)
         out["mixdown"] = info
         out["skipped"] = skipped
+        out["range_in"] = rin
         return out
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001
         logger.exception("captions.transcribe_sequence failed")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+class SequenceFrameReq(BaseModel):
+    frame_path: Optional[str] = None
+    clip_path: Optional[str] = None
+    source_time: Optional[float] = None
+    width: Optional[int] = 1080
+    height: Optional[int] = 1920
+
+
+@router.post("/sequence-frame")
+async def get_sequence_frame(req: SequenceFrameReq):
+    """Save and serve a background preview frame from Premiere Pro or a source clip."""
+    import time as _time
+    from ..config import get_settings
+    from ..services.subtitles.animated_overlay import _ffmpeg_path
+
+    out_dir = get_settings().DATA_DIR / "output" / "captions"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_file = out_dir / "preview_frame.jpg"
+
+    # Option A: Frame exported directly by Premiere Pro (exportFramePNG)
+    if req.frame_path and Path(req.frame_path).is_file():
+        try:
+            ffmpeg = _ffmpeg_path()
+            cmd = [ffmpeg, "-y", "-v", "error", "-i", str(req.frame_path),
+                   "-vf", f"scale={min(1920, req.width or 1080)}:-2",
+                   "-q:v", "3", str(out_file)]
+            await asyncio.to_thread(subprocess.run, cmd, timeout=10)
+            if out_file.is_file():
+                return {"url": f"/api/captions/file/{out_file.name}?v={int(_time.time() * 1000)}"}
+        except Exception as e:
+            logger.warning("sequence_frame direct copy failed: %s", e)
+
+    # Option B: Fallback via source video clip under playhead
+    if req.clip_path and Path(req.clip_path).is_file():
+        try:
+            ffmpeg = _ffmpeg_path()
+            t = max(0.0, float(req.source_time or 0.0))
+            cmd = [ffmpeg, "-y", "-v", "error", "-ss", f"{t:.3f}",
+                   "-accurate_seek", "-i", str(req.clip_path),
+                   "-vframes", "1",
+                   "-vf", f"scale={min(1920, req.width or 1080)}:-2",
+                   "-q:v", "3", str(out_file)]
+            await asyncio.to_thread(subprocess.run, cmd, timeout=15)
+            if out_file.is_file():
+                return {"url": f"/api/captions/file/{out_file.name}?v={int(_time.time() * 1000)}"}
+        except Exception as e:
+            logger.warning("sequence_frame clip extract failed: %s", e)
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    raise HTTPException(status_code=400, detail="No valid frame path or source clip provided")
 
 
 # ── Fonts + frame encoder (the WYSIWYG render path) ─────────────────────

@@ -66,7 +66,7 @@ function loadEngine(host) {
   // NOTE: plain `function` (not shorthand methods) — ExtendScript calls
   // `new File(path)`, and shorthand methods cannot be constructed.
   File: function (f) { return { fsName: String(f), exists: fs.existsSync(String(f)) }; },
-  Folder: function () { return { fsName: '' }; },
+  Folder: Object.assign(function () { return { fsName: '' }; }, { temp: { fsName: 'C:\\temp' } }),
     app: host.app,
     ProjectItemType: host.ProjectItemType,
     qe: undefined,
@@ -295,3 +295,52 @@ test('placeOverlay refuses (with a clear message) when no video track is free', 
   assert.equal(res.success, false);
   assert.match(res.error, /Add one \(Sequence > Add Tracks\)/);
 });
+
+test('sequenceAudioClips trims and filters to In/Out range when specified', () => {
+  const host = makeHost();
+  makeTimeline(host, { video: [[]], audio: [
+    { clips: [
+      { path: 'G:\\audio1.mov', start: 0, end: 10, in: 0 },
+      { path: 'G:\\audio2.mov', start: 10, end: 20, in: 5 },
+      { path: 'G:\\audio3.mov', start: 20, end: 30, in: 0 }
+    ] }
+  ] });
+  const sb = loadWithTime(host);
+  // Request In/Out range: 5s to 15s
+  const res = callCM(sb, 'sequenceAudioClips', { inPoint: 5, outPoint: 15 });
+  assert.equal(res.success, true);
+  assert.equal(res.clips.length, 2, 'audio3 at 20-30s is excluded');
+  assert.equal(res.rangeIn, 5);
+  assert.equal(res.rangeOut, 15);
+  assert.equal(res.duration, 10);
+
+  // Clip 1 (originally 0-10s) trimmed to 5-10s -> relative start 0, end 5
+  assert.equal(res.clips[0].path, 'G:\\audio1.mov');
+  assert.equal(res.clips[0].start, 0);
+  assert.equal(res.clips[0].end, 5);
+  assert.equal(res.clips[0].in, 5);
+
+  // Clip 2 (originally 10-20s) trimmed to 10-15s -> relative start 5, end 10
+  assert.equal(res.clips[1].path, 'G:\\audio2.mov');
+  assert.equal(res.clips[1].start, 5);
+  assert.equal(res.clips[1].end, 10);
+});
+
+test('captureSequenceFrame identifies source video clip under playhead', () => {
+  const host = makeHost();
+  makeTimeline(host, {
+    video: [
+      [{ path: 'G:\\footage.mov', start: 0, end: 10, in: 100 }],
+      [{ path: 'G:\\overlay_broll.mov', start: 4, end: 8, in: 20 }]
+    ],
+    audio: []
+  });
+  const sb = loadWithTime(host);
+  // At playhead 5.0s, V2 (overlay_broll.mov) is the topmost visible clip
+  const res = callCM(sb, 'captureSequenceFrame', { time: 5.0 });
+  assert.equal(res.success, true);
+  assert.equal(res.method, 'sourceClip');
+  assert.equal(res.clipPath, 'G:\\overlay_broll.mov');
+  assert.equal(res.sourceTime, 21.0); // in (20) + (5 - start 4)
+});
+

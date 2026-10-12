@@ -127,6 +127,28 @@ captionsManager = (function() {
         var duration = Math.max(0, ticksToSec(seq.end) - zero);
         var playhead = 0;
         try { playhead = Math.max(0, timeSec(seq.getPlayerPosition()) - zero); } catch (e1) {}
+
+        var seqIn = 0, seqOut = duration, hasInOut = false;
+        try {
+            if (seq.getInPoint) {
+                var inTk = seq.getInPoint();
+                if (inTk !== undefined && inTk !== null && inTk !== "") {
+                    var inSec = ticksToSec(inTk) - zero;
+                    if (inSec > 0.04) { seqIn = Math.max(0, inSec); hasInOut = true; }
+                }
+            }
+        } catch (eIn) {}
+        try {
+            if (seq.getOutPoint) {
+                var outTk = seq.getOutPoint();
+                if (outTk !== undefined && outTk !== null && outTk !== "") {
+                    var outSec = ticksToSec(outTk) - zero;
+                    if (outSec > 0.04 && outSec < duration - 0.04) { seqOut = Math.max(seqIn + 0.1, outSec); hasInOut = true; }
+                    else if (outSec > 0) { seqOut = outSec; }
+                }
+            }
+        } catch (eOut) {}
+
         var out = {
             success: true,
             name: seq.name,
@@ -138,6 +160,9 @@ captionsManager = (function() {
             duration: duration,
             zeroPoint: zero,
             playhead: playhead,
+            inPoint: seqIn,
+            outPoint: seqOut,
+            hasInOut: hasInOut,
             videoTracks: seq.videoTracks.numTracks,
             audioTracks: []
         };
@@ -153,8 +178,41 @@ captionsManager = (function() {
 
     /** Audio clips on UNMUTED tracks, for the backend mixdown. */
     function sequenceAudioClips(options) {
+        options = options || {};
         var seq = app.project ? app.project.activeSequence : null;
         if (!seq) return err("No active sequence — open the sequence you want to caption.");
+
+        var zero = 0;
+        try { if (seq.zeroPoint) zero = ticksToSec(seq.zeroPoint); } catch (ez) {}
+        var duration = Math.max(0, ticksToSec(seq.end) - zero);
+
+        var seqIn = 0, seqOut = duration, hasInOut = false;
+        try {
+            if (seq.getInPoint) {
+                var inTk = seq.getInPoint();
+                if (inTk !== undefined && inTk !== null && inTk !== "") {
+                    var inSec = ticksToSec(inTk) - zero;
+                    if (inSec > 0.04) { seqIn = Math.max(0, inSec); hasInOut = true; }
+                }
+            }
+        } catch (eIn) {}
+        try {
+            if (seq.getOutPoint) {
+                var outTk = seq.getOutPoint();
+                if (outTk !== undefined && outTk !== null && outTk !== "") {
+                    var outSec = ticksToSec(outTk) - zero;
+                    if (outSec > 0.04 && outSec < duration - 0.04) { seqOut = Math.max(seqIn + 0.1, outSec); hasInOut = true; }
+                    else if (outSec > 0) { seqOut = outSec; }
+                }
+            }
+        } catch (eOut) {}
+
+        var useInOut = options.useInOut === true || (options.useInOut !== false && (options.inPoint != null || hasInOut));
+        var rangeIn = options.inPoint != null ? parseFloat(options.inPoint) : (useInOut && hasInOut ? seqIn : 0);
+        var rangeOut = options.outPoint != null ? parseFloat(options.outPoint) : (useInOut && hasInOut ? seqOut : duration);
+        if (rangeIn < 0) rangeIn = 0;
+        if (rangeOut <= rangeIn) rangeOut = duration;
+
         var clips = [], nested = 0;
         var seenIntervals = {};
         for (var i = 0; i < seq.audioTracks.numTracks; i++) {
@@ -170,20 +228,126 @@ captionsManager = (function() {
                 var path = "";
                 try { path = c.projectItem.getMediaPath(); } catch (e3) {}
                 if (!path) { nested++; continue; }     // nested sequence / synthetic item
-                var cStart = timeSec(c.start), cEnd = timeSec(c.end);
+                var cStart = timeSec(c.start) - zero, cEnd = timeSec(c.end) - zero;
                 var cIn = timeSec(c.inPoint), cOut = timeSec(c.outPoint);
-                var key = path + ":" + Math.round(cStart * 100) + ":" + Math.round(cEnd * 100);
-                if (seenIntervals[key]) continue;      // prevent duplicate multi-channel summing
+
+                // If In/Out range is active, filter and trim clips outside/spanning the boundary
+                if (cEnd <= rangeIn + 0.001 || cStart >= rangeOut - 0.001) continue;
+
+                var trimStart = Math.max(0, rangeIn - cStart);
+                var trimEnd = Math.max(0, cEnd - rangeOut);
+                var segStart = Math.max(cStart, rangeIn);
+                var segEnd = Math.min(cEnd, rangeOut);
+                if (segEnd - segStart < 0.015) continue;
+
+                var durOriginal = Math.max(0.001, cEnd - cStart);
+                var speed = (cOut - cIn) / durOriginal;
+                var srcIn = cIn + trimStart * speed;
+                var srcOut = cOut - trimEnd * speed;
+                if (srcOut <= srcIn) continue;
+
+                // De-duplicate ONLY true cloned channels (same media, same timeline range, AND same source in/out)
+                // This prevents dropping unique cuts or multi-mic dialogue from the same audio file!
+                var key = path + ":" + Math.round(segStart * 100) + ":" + Math.round(segEnd * 100) +
+                          ":" + Math.round(srcIn * 100) + ":" + Math.round(srcOut * 100);
+                if (seenIntervals[key]) continue;
                 seenIntervals[key] = true;
-                clips.push({ path: path, track: i, start: cStart, end: cEnd,
-                             "in": cIn, out: cOut });
+
+                clips.push({ path: path, track: i,
+                             start: segStart - rangeIn,
+                             end: segEnd - rangeIn,
+                             "in": srcIn, out: srcOut,
+                             timelineStart: segStart, timelineEnd: segEnd });
             }
         }
+        var effectiveDur = Math.max(0, rangeOut - rangeIn);
+        return { success: true, name: seq.name, clips: clips, nested: nested,
+                 duration: effectiveDur, totalDuration: duration,
+                 rangeIn: rangeIn, rangeOut: rangeOut, hasInOut: hasInOut,
+                 zeroPoint: zero };
+    }
+
+    /**
+     * Capture frame at playhead or specified time.
+     * Tries exportFramePNG, or identifies the top visible video clip for backend extraction.
+     */
+    function captureSequenceFrame(options) {
+        options = options || {};
+        var seq = app.project ? app.project.activeSequence : null;
+        if (!seq) return err("No active sequence");
         var zero = 0;
         try { if (seq.zeroPoint) zero = ticksToSec(seq.zeroPoint); } catch (ez) {}
-        var duration = Math.max(0, ticksToSec(seq.end) - zero);
-        return { success: true, name: seq.name, clips: clips, nested: nested,
-                 duration: duration, zeroPoint: zero };
+        var playhead = 0;
+        try { playhead = Math.max(0, timeSec(seq.getPlayerPosition()) - zero); } catch (e1) {}
+        var t = options.time != null ? parseFloat(options.time) : playhead;
+        var targetTicks = Math.round((zero + t) * TICKS);
+        var ticks = String(targetTicks);
+
+        var outDir = "";
+        try {
+            if (typeof Folder !== "undefined" && Folder.temp && Folder.temp.fsName) {
+                outDir = Folder.temp.fsName;
+            }
+        } catch (_) {}
+
+        var exported = false;
+        if (outDir) {
+            var outPath = outDir + "/editflow_seq_frame.png";
+            var file = null;
+            try { file = new File(outPath); } catch (_) {}
+            if (file && file.exists) { try { file.remove(); } catch (_) {} }
+
+            try {
+                if (seq.exportFramePNG) {
+                    exported = seq.exportFramePNG(ticks, outPath);
+                }
+            } catch (ePng) {}
+
+            if (!exported && typeof qe !== "undefined" && qe.project) {
+                try {
+                    var qeSeq = qe.project.getActiveSequence();
+                    if (qeSeq && qeSeq.exportFramePNG) {
+                        exported = qeSeq.exportFramePNG(ticks, outPath);
+                    }
+                } catch (eQe) {}
+            }
+
+            if (exported && file && file.exists) {
+                return { success: true, path: outPath, time: t, method: "exportFramePNG" };
+            }
+        }
+
+        // Fallback: locate top visible video clip under playhead
+        for (var v = seq.videoTracks.numTracks - 1; v >= 0; v--) {
+            var tr = seq.videoTracks[v];
+            var muted = false;
+            try { muted = tr.isMuted(); } catch (_) {}
+            if (muted) continue;
+            for (var k = 0; k < tr.clips.numItems; k++) {
+                var clip = tr.clips[k];
+                if (clip.disabled || !clip.projectItem) continue;
+                if (isOverlayItem(clip.projectItem)) continue; // skip our own overlay
+                var cStart = timeSec(clip.start) - zero, cEnd = timeSec(clip.end) - zero;
+                if (t >= cStart - 0.001 && t <= cEnd + 0.001) {
+                    var p = "";
+                    try { p = clip.projectItem.getMediaPath(); } catch (_) {}
+                    if (p) {
+                        var cIn = timeSec(clip.inPoint);
+                        var srcTime = cIn + (t - cStart);
+                        return {
+                            success: true,
+                            method: "sourceClip",
+                            clipPath: p,
+                            sourceTime: srcTime,
+                            time: t,
+                            width: seq.frameSizeHorizontal,
+                            height: seq.frameSizeVertical
+                        };
+                    }
+                }
+            }
+        }
+        return { success: false, error: "No video clip found at time " + t.toFixed(2) + "s", time: t };
     }
 
     function isOverlayItem(item) {
@@ -325,6 +489,8 @@ captionsManager = (function() {
         importSRTAsCaptionTrack: importSRTAsCaptionTrack,
         sequenceInfo: sequenceInfo,
         sequenceAudioClips: sequenceAudioClips,
+        captureSequenceFrame: captureSequenceFrame,
         placeOverlay: placeOverlay
     };
 })();
+

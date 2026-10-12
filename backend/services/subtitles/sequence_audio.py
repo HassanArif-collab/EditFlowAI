@@ -75,7 +75,8 @@ def _atempo(speed: float) -> str:
 
 def extract_command(ffmpeg: str, clip: dict) -> list[str]:
     cmd = [ffmpeg, "-v", "error", "-nostdin", "-ss", f"{clip['in']:.3f}",
-           "-t", f"{clip['out'] - clip['in']:.3f}", "-i", clip["path"], "-vn"]
+           "-accurate_seek", "-i", clip["path"],
+           "-t", f"{clip['out'] - clip['in']:.3f}", "-vn"]
     if abs(clip["speed"] - 1.0) > 0.01:
         cmd += ["-af", _atempo(clip["speed"])]
     return cmd + ["-ac", "1", "-ar", str(RATE), "-f", "s16le", "-"]

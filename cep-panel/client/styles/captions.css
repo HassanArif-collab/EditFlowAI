@@ -57,12 +57,30 @@
 .cc-warn-text { color: var(--cc-warn); }
 
 /* preview */
-.cc-stage { flex: none; display: flex; justify-content: center; padding: 8px 8px 4px; background: #161616; }
-.cc-canvas-wrap { position: relative; line-height: 0; }
-.cc-canvas-wrap canvas { border-radius: 4px; box-shadow: 0 0 0 1px #000, 0 2px 10px rgba(0,0,0,.5); touch-action: none; }
+.cc-stage { flex: none; display: flex; justify-content: center; align-items: center; padding: 8px; background: #161616; overflow: auto; min-height: 80px; max-height: 80vh; }
+.cc-stage::-webkit-scrollbar { width: 6px; height: 6px; }
+.cc-stage::-webkit-scrollbar-thumb { background: #3a3a3a; border-radius: 3px; }
+.cc-canvas-wrap { position: relative; line-height: 0; flex: none; }
+.cc-canvas-wrap canvas { border-radius: 4px; box-shadow: 0 0 0 1px #000, 0 2px 10px rgba(0,0,0,.5); touch-action: none; display: block; }
+.cc-stage-resizer {
+  flex: none; height: 7px; background: #161616; cursor: ns-resize; display: flex; align-items: center; justify-content: center;
+  border-bottom: 1px solid var(--cc-line); user-select: none; transition: background .12s ease;
+}
+.cc-stage-resizer:hover, .cc-stage-resizer.cc-resizing { background: #262626; }
+.cc-stage-resizer::after {
+  content: ""; width: 36px; height: 3px; border-radius: 2px; background: #4a4a4a; transition: background .12s, width .12s;
+}
+.cc-stage-resizer:hover::after, .cc-stage-resizer.cc-resizing::after {
+  background: var(--cc-accent-2); width: 54px;
+}
 .cc-transport { flex: none; display: flex; align-items: center; gap: 4px; height: 32px; padding: 0 6px; background: #161616; border-bottom: 1px solid var(--cc-line); }
 .cc-time { font: 11px/1 "Consolas", "Cascadia Code", monospace; color: var(--cc-dim); min-width: 38px; text-align: center; }
 .cc-play { color: var(--cc-bright); }
+.cc-zoom-wrap { display: inline-flex; align-items: center; gap: 1px; }
+.cc-zoom-val {
+  font: 11px/1 "Consolas", monospace; color: var(--cc-dim); padding: 2px 3px; border-radius: 3px; cursor: pointer; user-select: none; min-width: 34px; text-align: center;
+}
+.cc-zoom-val:hover { color: var(--cc-bright); background: var(--cc-hover); }
 .cc-mini-select { height: 24px; max-width: 92px; background: var(--cc-raised); color: var(--cc-text); border: 1px solid var(--cc-line); border-radius: 4px; font-size: 11px; padding: 0 4px; }
 
 /* range inputs (scrubber + control sliders) */
