@@ -91,12 +91,10 @@ function fillRound(ctx, x, y, w, h, radiusK, color, alpha) {
 function drawText(ctx, text, x, y, color, st, devScale) {
   const stroke = st.strokeWidth > 0;
   if (st.shadow && st.shadowOpacity > 0) {
-    // Canvas shadows ignore the transform — scale them by hand so the
-    // preview's shadow matches the full-resolution render.
     ctx.shadowColor = rgba(st.shadowColor, st.shadowOpacity);
-    ctx.shadowBlur = Math.max(0, st.shadowBlur * devScale);
+    ctx.shadowBlur = Math.max(0, st.shadowBlur);
     ctx.shadowOffsetX = 0;
-    ctx.shadowOffsetY = st.shadowDistance * devScale;
+    ctx.shadowOffsetY = st.shadowDistance;
   }
   if (stroke) {
     ctx.lineJoin = 'round';
@@ -189,25 +187,26 @@ function drawCaption(ctx, c, scene, st, motion, t, sc) {
       const emph = w.emphasis;
       if (emph && (st.emphasis === 'color' || st.emphasis === 'both')) color = st.emphasisColor;
       if (s.hi > 0 && mode === 'color') color = mixHex(color, st.activeColor, s.hi);
-      if (motion.spokenDim && !s.spoken) alpha *= 0.4;
+      if (motion.spokenDim) alpha *= (0.4 + 0.6 * s.spoken);
 
       const pill = st.background === 'pills' || (emph && (st.emphasis === 'pill' || st.emphasis === 'both'));
       if (pill) {
         const pk = emph && st.background !== 'pills' ? st.pillOpacity : st.bgOpacity;
         const pc = emph && st.background !== 'pills' ? st.pillColor : st.bgColor;
-        const pw = s.chars >= 0 ? w.w : w.w;
-        fillRound(ctx, w.x - pad * 0.7 + s.dx, l.y - asc - padY + s.dy, pw + pad * 1.4, asc + desc + 2 * padY,
+        const pw = s.chars >= 0 ? (w.w * Math.min(1, s.chars / Math.max(1, w.text.length))) : w.w;
+        const pillPadX = Math.min(pad * 0.7, 12);
+        fillRound(ctx, w.x - pillPadX + s.dx, l.y - asc - padY + s.dy, pw + 2 * pillPadX, asc + desc + 2 * padY,
           Math.max(0.5, st.bgRadius), pc, pk * alpha);
       }
 
       const scale = s.scale * (mode === 'scale' ? 1 + 0.12 * s.hi : 1);
+      const cy = l.y - (asc - desc) / 2 + s.dy;          // scale about the word's true visual centre
       const ox = w.x + w.w / 2 + s.dx;
-      const oy = l.y - asc / 2 + s.dy;          // scale about the word's visual centre
       ctx.save();
       ctx.globalAlpha = alpha;
-      ctx.translate(ox, oy);
+      ctx.translate(ox, cy);
       if (scale !== 1) ctx.scale(scale, scale);
-      drawText(ctx, text, -w.w / 2, asc / 2, color, st, devScale * scale);
+      drawText(ctx, text, -w.w / 2, (asc - desc) / 2, color, st, devScale * scale);
       ctx.restore();
     }
   }

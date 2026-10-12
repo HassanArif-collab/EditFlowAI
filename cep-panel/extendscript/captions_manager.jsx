@@ -122,6 +122,11 @@ captionsManager = (function() {
         var seq = app.project ? app.project.activeSequence : null;
         if (!seq) return err("No active sequence — open the sequence you want to caption.");
         var tb = String(seq.timebase || "");
+        var zero = 0;
+        try { if (seq.zeroPoint) zero = ticksToSec(seq.zeroPoint); } catch (ez) {}
+        var duration = Math.max(0, ticksToSec(seq.end) - zero);
+        var playhead = 0;
+        try { playhead = Math.max(0, timeSec(seq.getPlayerPosition()) - zero); } catch (e1) {}
         var out = {
             success: true,
             name: seq.name,
@@ -130,12 +135,12 @@ captionsManager = (function() {
             height: seq.frameSizeVertical,
             timebase: tb,
             fps: tb ? TICKS / parseFloat(tb) : 0,
-            duration: ticksToSec(seq.end),
-            playhead: 0,
+            duration: duration,
+            zeroPoint: zero,
+            playhead: playhead,
             videoTracks: seq.videoTracks.numTracks,
             audioTracks: []
         };
-        try { out.playhead = timeSec(seq.getPlayerPosition()); } catch (e1) {}
         for (var i = 0; i < seq.audioTracks.numTracks; i++) {
             var tr = seq.audioTracks[i];
             var muted = false;
@@ -151,6 +156,7 @@ captionsManager = (function() {
         var seq = app.project ? app.project.activeSequence : null;
         if (!seq) return err("No active sequence — open the sequence you want to caption.");
         var clips = [], nested = 0;
+        var seenIntervals = {};
         for (var i = 0; i < seq.audioTracks.numTracks; i++) {
             var tr = seq.audioTracks[i];
             var muted = false;
@@ -164,12 +170,20 @@ captionsManager = (function() {
                 var path = "";
                 try { path = c.projectItem.getMediaPath(); } catch (e3) {}
                 if (!path) { nested++; continue; }     // nested sequence / synthetic item
-                clips.push({ path: path, track: i, start: timeSec(c.start), end: timeSec(c.end),
-                             "in": timeSec(c.inPoint), out: timeSec(c.outPoint) });
+                var cStart = timeSec(c.start), cEnd = timeSec(c.end);
+                var cIn = timeSec(c.inPoint), cOut = timeSec(c.outPoint);
+                var key = path + ":" + Math.round(cStart * 100) + ":" + Math.round(cEnd * 100);
+                if (seenIntervals[key]) continue;      // prevent duplicate multi-channel summing
+                seenIntervals[key] = true;
+                clips.push({ path: path, track: i, start: cStart, end: cEnd,
+                             "in": cIn, out: cOut });
             }
         }
+        var zero = 0;
+        try { if (seq.zeroPoint) zero = ticksToSec(seq.zeroPoint); } catch (ez) {}
+        var duration = Math.max(0, ticksToSec(seq.end) - zero);
         return { success: true, name: seq.name, clips: clips, nested: nested,
-                 duration: ticksToSec(seq.end) };
+                 duration: duration, zeroPoint: zero };
     }
 
     function isOverlayItem(item) {
@@ -184,12 +198,18 @@ captionsManager = (function() {
     }
 
     function findByPath(bin, path) {
+        if (!bin) return null;
         var want = normPath(path);
         for (var i = 0; i < bin.children.numItems; i++) {
             var it = bin.children[i];
-            var p = "";
-            try { p = it.getMediaPath ? normPath(it.getMediaPath()) : ""; } catch (e) {}
-            if (p && p === want) return it;
+            if (it.type === ProjectItemType.BIN) {
+                var found = findByPath(it, path);
+                if (found) return found;
+            } else {
+                var p = "";
+                try { p = it.getMediaPath ? normPath(it.getMediaPath()) : ""; } catch (e) {}
+                if (p && p === want) return it;
+            }
         }
         return null;
     }
@@ -235,12 +255,13 @@ captionsManager = (function() {
         }
         if (!item) return err("Imported the caption file but could not find it in the project: " + path);
 
+        if (app.beginUndoGroup) app.beginUndoGroup("EditFlow Place Captions");
         var removed = 0, prefer = -1;
         for (var v = 0; v < seq.videoTracks.numTracks; v++) {
             var tr = seq.videoTracks[v];
             for (var k = tr.clips.numItems - 1; k >= 0; k--) {
                 var clip = tr.clips[k];
-                if (clip.projectItem && clip.projectItem !== item && isOverlayItem(clip.projectItem)) {
+                if (clip.projectItem && isOverlayItem(clip.projectItem)) {
                     if (prefer < 0) prefer = v;
                     try { clip.remove(false, false); removed++; } catch (e3) {}
                 }
@@ -248,16 +269,28 @@ captionsManager = (function() {
         }
 
         var target = -1;
-        if (prefer >= 0 && trackFree(seq.videoTracks[prefer], start, end)) target = prefer;
+        if (prefer > 0 && prefer < seq.videoTracks.numTracks && trackFree(seq.videoTracks[prefer], start, end)) {
+            target = prefer;
+        }
         for (var t = 1; target < 0 && t < seq.videoTracks.numTracks; t++) {
             if (trackFree(seq.videoTracks[t], start, end)) target = t;
         }
         if (target < 0) {
+            if (app.endUndoGroup) app.endUndoGroup();
             return err("No empty, unlocked video track above V1 for the captions. " +
                        "Add one (Sequence > Add Tracks) and run it again.");
         }
 
-        var ticks = String(Math.round(start * TICKS));
+        var zeroTicks = 0;
+        try {
+            if (seq.zeroPoint) {
+                zeroTicks = parseFloat(seq.zeroPoint.ticks || seq.zeroPoint) || 0;
+            }
+        } catch (ez) {}
+
+        var targetTicks = zeroTicks + Math.round(start * TICKS);
+        var ticks = String(targetTicks);
+
         var placed = false, how = "";
         try {
             var tm = new Time();
@@ -266,12 +299,24 @@ captionsManager = (function() {
             placed = true; how = "track.overwriteClip";
         } catch (e4) {
             try {
-                seq.overwriteClip(item, ticks, target, 0);
-                placed = true; how = "sequence.overwriteClip";
-            } catch (e5) {
-                return err("Premiere refused to place the captions: " + e5.toString());
+                seq.videoTracks[target].overwriteClip(item, ticks);
+                placed = true; how = "track.overwriteClip(ticks)";
+            } catch (e4b) {
+                try {
+                    seq.overwriteClip(item, ticks, target, -1);
+                    placed = true; how = "sequence.overwriteClip(-1)";
+                } catch (e5) {
+                    try {
+                        seq.overwriteClip(item, ticks, target, 0);
+                        placed = true; how = "sequence.overwriteClip(0)";
+                    } catch (e6) {
+                        if (app.endUndoGroup) app.endUndoGroup();
+                        return err("Premiere refused to place the captions: " + e6.toString());
+                    }
+                }
             }
         }
+        if (app.endUndoGroup) app.endUndoGroup();
         return { success: placed, track: target, trackName: "V" + (target + 1), method: how,
                  start: start, end: end, removed: removed, item: String(item.name || "") };
     }

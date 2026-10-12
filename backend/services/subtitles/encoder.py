@@ -221,6 +221,10 @@ def finish(job: EncodeJob, timeout: float = 600) -> dict:
     with _jobs_lock:
         _jobs.pop(job.id, None)
     if job.error or code != 0 or not job.path.exists():
+        try:
+            job.path.unlink(missing_ok=True)
+        except OSError:
+            pass
         raise RuntimeError(job.error or f"encode failed: {_error(job)}")
     return {"path": str(job.path), "frames": job.frames,
             "seconds": round(job.frames * job.fps_den / job.fps_num, 3),
@@ -238,10 +242,24 @@ def cancel(job_id: str) -> bool:
         job.proc.wait(timeout=10)
     except Exception:  # noqa: BLE001
         pass
+    with job.lock:
+        try:
+            job.proc.stdin.close()
+        except OSError:
+            pass
     if job.writer is not None:
         try:
-            job.q.put_nowait(None)             # wake the writer so it exits
-        except queue.Full:
+            while not job.q.empty():
+                try:
+                    job.q.get_nowait()
+                except queue.Empty:
+                    break
+            job.q.put_nowait(None)
+        except Exception:
+            pass
+        try:
+            job.writer.join(timeout=2)
+        except Exception:
             pass
     try:
         job.path.unlink(missing_ok=True)

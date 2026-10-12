@@ -329,3 +329,20 @@ def test_transcribe_mixdown_force_passes_through(client, monkeypatch):
     assert r.status_code == 200
     assert len(calls) == 1
     assert calls[0]["force"] is True
+
+
+@needs_ffmpeg
+def test_encode_start_rapid_calls_generate_unique_paths(client, monkeypatch):
+    from backend.services.subtitles import animated_overlay
+    monkeypatch.setattr(animated_overlay, "_ffmpeg_path", lambda: FFMPEG)
+
+    req = {"width": 64, "height": 64, "band_y": 0, "band_h": 64, "fps_num": 30, "fps_den": 1, "name": "Rapid"}
+    r1 = client.post("/api/captions/encode/start", json=req)
+    r2 = client.post("/api/captions/encode/start", json=req)
+    assert r1.status_code == 200 and r2.status_code == 200
+    p1 = r1.json()["path"]
+    p2 = r2.json()["path"]
+    assert p1 != p2, f"Rapid encode/start calls must not produce identical paths: {p1}"
+    client.post(f"/api/captions/encode/{r1.json()['job_id']}/cancel")
+    client.post(f"/api/captions/encode/{r2.json()['job_id']}/cancel")
+

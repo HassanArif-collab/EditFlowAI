@@ -95,9 +95,12 @@ function setPath(obj, path, v) {
   o[ks[ks.length - 1]] = v;
 }
 function fmtTime(s) {
-  s = Math.max(0, s || 0);
-  const m = Math.floor(s / 60);
-  return m + ':' + (s - m * 60).toFixed(1).padStart(4, '0');
+  if (!isFinite(s) || s < 0) return '0:00.0';
+  const tenths = Math.round(s * 10);
+  const m = Math.floor(tenths / 600);
+  const remSec = Math.floor((tenths % 600) / 10);
+  const remTenths = tenths % 10;
+  return m + ':' + (remSec < 10 ? '0' : '') + remSec + '.' + remTenths;
 }
 function fmtNum(v) { return Math.round(Number(v) * 100) / 100; }
 function deepMerge(base, over) {
@@ -441,21 +444,33 @@ function drawPreview() {
 function tick(now) {
   rafId = 0;
   if (!S.playing) return;
-  const dt = lastTick ? (now - lastTick) / 1000 : 0;
+  const rawDt = lastTick ? (now - lastTick) / 1000 : 0;
+  const dt = Math.min(0.1, Math.max(0, rawDt));
   lastTick = now;
   const dur = S.scene ? S.scene.duration : 0;
   S.t += dt;
-  if (S.t > dur) S.t = 0;          // loop: handy while styling
+  if (dur > 0 && S.t > dur) S.t = 0;          // loop: handy while styling
   drawPreview();
   updateTransport();
   highlightPlayingWord();
   rafId = requestAnimationFrame(tick);
 }
 function setPlaying(on) {
-  S.playing = !!on && !!(S.scene && S.scene.duration);
+  const next = !!on && !!(S.scene && S.scene.duration);
+  if (S.playing === next) return;
+  S.playing = next;
   const b = $('[data-act="play"]');
   if (b) b.innerHTML = icon(S.playing ? 'pause' : 'play');
-  if (S.playing && !rafId) { lastTick = 0; rafId = requestAnimationFrame(tick); }
+  if (S.playing) {
+    lastTick = 0;
+    if (!rafId) rafId = requestAnimationFrame(tick);
+  } else {
+    if (rafId) {
+      cancelAnimationFrame(rafId);
+      rafId = 0;
+    }
+    lastTick = 0;
+  }
 }
 function seek(t) {
   S.t = clamp(t, 0, S.scene ? S.scene.duration : 0);
@@ -479,7 +494,12 @@ function highlightPlayingWord() {
   const prev = $(`.cc-w[data-i="${lastPlayingWord}"]`);
   if (prev) prev.classList.remove('cc-now');
   const cur = $(`.cc-w[data-i="${idx}"]`);
-  if (cur) cur.classList.add('cc-now');
+  if (cur) {
+    cur.classList.add('cc-now');
+    if (S.playing && cur.scrollIntoView) {
+      cur.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  }
   lastPlayingWord = idx;
 }
 
@@ -694,6 +714,10 @@ function snapshot() {
 function wordsChanged() {
   saveWords();
   rebuildScene();
+  const list = $('#cc-words-list');
+  const scroll = list ? list.scrollTop : 0;
+  if (S.tab === 'transcript') renderTranscriptList();
+  if (list) list.scrollTop = scroll;
   const u = $('[data-act="undo"]'), r = $('[data-act="redo"]');
   if (u) u.disabled = !S.history.length;
   if (r) r.disabled = !S.future.length;
@@ -720,7 +744,13 @@ function wordAction(act) {
   else if (act === 'earlier' || act === 'later') {
     const f = (S.seq.fps.den / S.seq.fps.num) * (act === 'earlier' ? -1 : 1);
     const prev = S.words[S.sel - 1];
-    w.start = Math.max(prev ? prev.start + 0.02 : 0, Math.min(w.end - 0.02, w.start + f));
+    const next = S.words[S.sel + 1];
+    const dur = Math.max(0.04, w.end - w.start);
+    let newStart = w.start + f;
+    if (prev) newStart = Math.max(prev.start + 0.02, newStart);
+    else newStart = Math.max(0, newStart);
+    w.start = newStart;
+    w.end = next ? Math.min(next.end - 0.02, newStart + dur) : newStart + dur;
     if (prev && prev.end > w.start) prev.end = w.start;
     seek(w.start + 0.001);
   }
@@ -751,6 +781,8 @@ function commitEdit(text) {
     S.words.splice(i, 1, ...repl);
   }
   wordsChanged();
+  const cur = $(`.cc-w[data-i="${i}"]`);
+  if (cur && cur.focus) cur.focus();
 }
 function replaceAll() {
   const f = ($('#cc-find') || {}).value || '';
@@ -762,8 +794,13 @@ function replaceAll() {
   snapshot();
   for (const w of S.words) {
     if (norm(w.text) === want) {
+      const lead = (w.text.match(/^[^\p{L}\p{N}']+/u) || [''])[0];
       const trail = (w.text.match(/[^\p{L}\p{N}']+$/u) || [''])[0];
-      if (r) w.text = r + trail;
+      let repl = r;
+      const core = w.text.slice(lead.length, w.text.length - (trail ? trail.length : 0));
+      if (core === core.toUpperCase() && core.length > 1) repl = r.toUpperCase();
+      else if (/^[A-Z]/.test(core)) repl = r.charAt(0).toUpperCase() + r.slice(1);
+      if (r) w.text = lead + repl + trail;
       n++;
     }
   }
@@ -1319,11 +1356,19 @@ function bindEvents() {
     else if (k === 'b') wordAction('break');
     else if (k === 'enter') { S.editing = S.sel; renderTranscriptList(); }
     else if (k === 'arrowright' || k === 'arrowleft') {
-      S.sel = clamp(S.sel + (k === 'arrowright' ? 1 : -1), 0, S.words.length - 1);
-      renderTranscriptList();
-      seek(S.words[S.sel].start + 0.001);
-      const cur = $('.cc-w.cc-sel');
-      if (cur && cur.scrollIntoView) cur.scrollIntoView({ block: 'nearest' });
+      const nextIdx = clamp(S.sel + (k === 'arrowright' ? 1 : -1), 0, S.words.length - 1);
+      if (nextIdx !== S.sel) {
+        const prev = $(`.cc-w[data-i="${S.sel}"]`);
+        if (prev) prev.classList.remove('cc-sel');
+        S.sel = nextIdx;
+        const cur = $(`.cc-w[data-i="${nextIdx}"]`);
+        if (cur) {
+          cur.classList.add('cc-sel');
+          if (cur.scrollIntoView) cur.scrollIntoView({ block: 'nearest' });
+        }
+        renderSelBar();
+        seek(S.words[S.sel].start + 0.001);
+      }
     } else return;
     e.preventDefault();
   });
@@ -1342,19 +1387,27 @@ function canvasPoint(e) {
   return { x: ((e.clientX - r.left) / r.width) * 100, y: ((e.clientY - r.top) / r.height) * 100 };
 }
 function boxHit(p) {
+  const cv = $('#cc-canvas');
+  const r = cv ? cv.getBoundingClientRect() : { width: 100, height: 100 };
+  const pxPerPctX = (r.width || 100) / 100;
+  const pxPerPctY = (r.height || 100) / 100;
+  const hitTolX = Math.max(3.5, 12 / Math.max(0.1, pxPerPctX));
+  const hitTolY = Math.max(3.5, 12 / Math.max(0.1, pxPerPctY));
+
   const lay = S.settings.layout;
   const half = lay.boxWidth / 2;
   const fsPct = (S.settings.style.fontSize * scaleK()) / S.seq.height * 100;
   const hh = (fsPct * (lay.lineHeight || 1.12) * Math.max(1, S.settings.grouping.maxLines || 1)) / 2 + 2;
-  if (Math.abs(p.y - lay.posY) > hh) return null;
-  if (Math.abs(p.x - (lay.posX - half)) < 3) return 'left';
-  if (Math.abs(p.x - (lay.posX + half)) < 3) return 'right';
+  if (Math.abs(p.y - lay.posY) > hh + hitTolY) return null;
+  if (Math.abs(p.x - (lay.posX - half)) < hitTolX) return 'left';
+  if (Math.abs(p.x - (lay.posX + half)) < hitTolX) return 'right';
   if (Math.abs(p.x - lay.posX) < half) return 'move';
   return null;
 }
 function onCanvasHover(e) {
   const hit = boxHit(canvasPoint(e));
-  $('#cc-canvas').style.cursor = hit === 'move' ? 'move' : hit ? 'ew-resize' : '';
+  const cv = $('#cc-canvas');
+  if (cv) cv.style.cursor = hit === 'move' ? 'move' : hit ? 'ew-resize' : '';
   if (!!hit !== S.hoverBox) { S.hoverBox = !!hit; requestDraw(); }
 }
 function onCanvasDown(e) {
@@ -1362,29 +1415,49 @@ function onCanvasDown(e) {
   const hit = boxHit(p);
   if (!hit) return;
   e.preventDefault();
+  const cvWrap = $('#cc-canvas-wrap');
+  if (cvWrap && cvWrap.setPointerCapture) {
+    try { cvWrap.setPointerCapture(e.pointerId); } catch (_) {}
+  }
   const lay = S.settings.layout;
-  S.drag = { mode: hit, x: p.x, y: p.y, posX: lay.posX, posY: lay.posY, box: lay.boxWidth };
+  S.drag = { mode: hit, x: p.x, y: p.y, posX: lay.posX, posY: lay.posY, box: lay.boxWidth, pointerId: e.pointerId };
   const move = (ev) => {
+    if (!S.drag) return;
     const q = canvasPoint(ev);
     if (S.drag.mode === 'move') {
       lay.posX = clamp(Math.round((S.drag.posX + q.x - S.drag.x) * 2) / 2, 5, 95);
       lay.posY = clamp(Math.round((S.drag.posY + q.y - S.drag.y) * 2) / 2, 5, 95);
-    } else {
-      const d = (q.x - S.drag.x) * (S.drag.mode === 'left' ? -2 : 2);
-      lay.boxWidth = clamp(Math.round(S.drag.box + d), 30, 100);
+    } else if (S.drag.mode === 'left') {
+      const rightEdge = S.drag.posX + S.drag.box / 2;
+      const newLeft = clamp(S.drag.posX - S.drag.box / 2 + (q.x - S.drag.x), 5, rightEdge - 20);
+      lay.boxWidth = clamp(Math.round(rightEdge - newLeft), 20, 100);
+      lay.posX = clamp(Math.round((newLeft + rightEdge) / 2 * 2) / 2, 5, 95);
+    } else if (S.drag.mode === 'right') {
+      const leftEdge = S.drag.posX - S.drag.box / 2;
+      const newRight = clamp(S.drag.posX + S.drag.box / 2 + (q.x - S.drag.x), leftEdge + 20, 95);
+      lay.boxWidth = clamp(Math.round(newRight - leftEdge), 20, 100);
+      lay.posX = clamp(Math.round((leftEdge + newRight) / 2 * 2) / 2, 5, 95);
     }
+    $$('[data-bind="layout.posX"]').forEach((el) => { el.value = lay.posX; });
+    $$('[data-bind="layout.posY"]').forEach((el) => { el.value = lay.posY; });
+    $$('[data-bind="layout.boxWidth"]').forEach((el) => { el.value = lay.boxWidth; });
     scheduleScene();
   };
   const up = () => {
-    document.removeEventListener('pointermove', move);
-    document.removeEventListener('pointerup', up);
+    if (cvWrap && cvWrap.releasePointerCapture && S.drag && S.drag.pointerId != null) {
+      try { cvWrap.releasePointerCapture(S.drag.pointerId); } catch (_) {}
+    }
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', up);
+    window.removeEventListener('pointercancel', up);
     S.drag = null;
     saveSettingsSoon();
     if (S.tab === 'style') renderBody();
     requestDraw();
   };
-  document.addEventListener('pointermove', move);
-  document.addEventListener('pointerup', up);
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', up);
+  window.addEventListener('pointercancel', up);
 }
 
 function onAction(act) {

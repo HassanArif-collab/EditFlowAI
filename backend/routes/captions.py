@@ -358,6 +358,7 @@ class EncodeStartReq(BaseModel):
 async def encode_start(req: EncodeStartReq):
     """Open a render job; the panel then streams frames to /encode/{id}/frames."""
     import time as _time
+    import uuid as _uuid
 
     from ..config import get_settings
     from ..services.subtitles import encoder
@@ -365,7 +366,7 @@ async def encode_start(req: EncodeStartReq):
 
     stem = "".join(ch if ch.isalnum() or ch in " -_" else "_" for ch in (req.name or "Captions")).strip()[:60]
     out = (get_settings().DATA_DIR / "output" / "captions" /
-           f"EditFlow Captions - {stem or 'Captions'} - {_time.strftime('%Y%m%d-%H%M%S')}.mov")
+           f"EditFlow Captions - {stem or 'Captions'} - {_time.strftime('%Y%m%d-%H%M%S')}-{_uuid.uuid4().hex[:6]}.mov")
     try:
         job = await asyncio.to_thread(
             encoder.start, _ffmpeg_path(), out, req.width, req.height, req.band_y,

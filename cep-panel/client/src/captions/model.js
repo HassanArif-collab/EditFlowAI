@@ -70,7 +70,14 @@ export function clamp01(p) { return p < 0 ? 0 : p > 1 ? 1 : p; }
 function ease(name, p) { return (EASINGS[name] || EASINGS.ease_out)(clamp01(p)); }
 function mix(a, b, k) { return a + (b - a) * k; }
 
-/* ── Words ───────────────────────────────────────────────────────────── */
+export function fmtTime(s) {
+  if (!isFinite(s) || s < 0) return '0:00.0';
+  const tenths = Math.round(s * 10);
+  const m = Math.floor(tenths / 600);
+  const remSec = Math.floor((tenths % 600) / 10);
+  const remTenths = tenths % 10;
+  return m + ':' + (remSec < 10 ? '0' : '') + remSec + '.' + remTenths;
+}
 
 const MIN_WORD = 0.04;   // shortest word we keep on the clock (s)
 
@@ -104,10 +111,13 @@ export function sanitizeWords(raw) {
   out.sort((a, b) => a.start - b.start);
   for (let i = 0; i < out.length; i++) {
     const w = out[i], next = out[i + 1];
-    if (next && w.end > next.start) w.end = Math.max(w.start + 0.02, next.start);
+    if (next) {
+      if (next.start < w.start) next.start = w.start;
+      if (w.end > next.start) w.end = Math.max(w.start + MIN_WORD, next.start);
+    }
     if (w.end - w.start < MIN_WORD) {
-      w.end = next ? Math.min(w.start + MIN_WORD, Math.max(next.start, w.start + 0.02))
-                   : w.start + MIN_WORD;
+      w.end = w.start + MIN_WORD;
+      if (next && next.start < w.end) next.start = w.end;
     }
   }
   return out;
@@ -176,22 +186,22 @@ export function displayText(text, opts) {
 
   // 1. Strip trailing sentence-ending dots if keepDots is false
   if (!keepDots) {
-    t = t.replace(/(\.{1,}|…|۔+)(["”')\]]*)$/, '$2');
+    t = t.replace(/(\.{1,}|…|۔+|।+|॥+)(["”’')\]»›]*)$/, '$2');
   }
 
   // 2. Strip trailing commas and inner pauses if keepCommas is false
   if (!keepCommas) {
-    t = t.replace(/([,;:]+|،+|؛+)(["”')\]]*)$/, '$2');
+    t = t.replace(/([,;:]+|،+|؛+)(["”’')\]»›]*)$/, '$2');
   }
 
   // 3. Strip trailing question & exclamation marks if keepExpressive is false
   if (!keepExpressive) {
-    t = t.replace(/([?!]+|؟+)(["”')\]]*)$/, '$2');
+    t = t.replace(/([?!]+|؟+|‽+)(["”’')\]»›]*)$/, '$2');
   }
 
   // 4. Strip decorative opening brackets / quotes in 'soft' mode
   if (p === 'soft') {
-    t = t.replace(/^["“”(\[]+(?=\w)/, '');
+    t = t.replace(/^["“”«‹'‘(\[]+(?=[\p{L}\p{N}])/u, '');
   }
 
   // 5. In 'none' mode, strip all remaining non-word characters
@@ -202,6 +212,7 @@ export function displayText(text, opts) {
   const c = (opts && opts.textCase) || 'as_is';
   if (c === 'upper') t = t.toUpperCase();
   else if (c === 'lower') t = t.toLowerCase();
+  if (p === 'none') return t;
   return t || String(text || '');
 }
 
@@ -296,8 +307,9 @@ export function groupWords(words, opts, layout) {
     // Worth an extra (even brief) caption to avoid: an extra caption costs
     // ~2, a brief one up to ~3 more.
     if (isWeak(t)) return 4.5;
-    // "…a fascinating | topic": the noun phrase continues in the next caption
-    if (i > j && DETERMINERS.has(bare(words[i - 1].text))) return 5.0;
+    if (DETERMINERS.has(bare(t))) return 5.0;
+    // "…a fascinating | topic": determiner + adjective with the noun pushed to next caption
+    if (i > j && i + 1 < n && DETERMINERS.has(bare(words[i - 1].text)) && !isWeak(words[i + 1].text)) return 5.0;
     return 1.0;
   };
 
@@ -382,8 +394,8 @@ export function captionTiming(groups, opts, fps) {
       const handoff = ins[i + 1];
       const held = visibleEnd + o.maxHold;
       if (handoff <= held) {                 // next caption takes over
-        tOut = exitDur > 0 ? handoff + exitDur : handoff + 2 * frame;
-        exitStart = exitDur > 0 ? handoff : tOut;
+        tOut = exitDur > 0 ? handoff + exitDur : handoff;
+        exitStart = exitDur > 0 ? handoff : handoff;
       } else {                               // silence: clear on our own
         tOut = held;
         exitStart = tOut - exitDur;
@@ -398,7 +410,10 @@ export function captionTiming(groups, opts, fps) {
   });
 }
 
-/* ── Scene ───────────────────────────────────────────────────────────── */
+const RTL_REGEX = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/;
+export function isRTLText(text) {
+  return RTL_REGEX.test(String(text || ''));
+}
 
 /**
  * Everything the renderer needs, in OUTPUT pixels:
@@ -449,14 +464,17 @@ export function buildScene(rawWords, settings, env) {
       let x0 = align === 'left' ? ax - maxWidth / 2
         : align === 'right' ? ax + maxWidth / 2 - l.width : ax - l.width / 2;
       const baseline = top + li * lineH + (lineH - (asc + desc)) / 2 + asc;
-      let x = x0;
+      const isRtl = l.ws.some((w) => isRTLText(w.display || w.text));
+      let x = isRtl ? (x0 + l.width) : x0;
       const lw = l.ws.map((w, k) => {
-        const item = { text: w.display, src: w.text, x, w: l.ww[k], start: w.start + ((s.timing && s.timing.offset) || 0),
-                       end: w.end + ((s.timing && s.timing.offset) || 0), emphasis: w.emphasis, id: w.id, gi: gi++ };
-        x += l.ww[k] + spaceW;
+        const itemX = isRtl ? (x - l.ww[k]) : x;
+        const item = { text: w.display, src: w.text, x: itemX, w: l.ww[k], start: w.start + ((s.timing && s.timing.offset) || 0),
+                       end: w.end + ((s.timing && s.timing.offset) || 0), emphasis: w.emphasis, id: w.id, gi: gi++, rtl: isRtl };
+        if (isRtl) x -= (l.ww[k] + spaceW);
+        else x += (l.ww[k] + spaceW);
         return item;
       });
-      return { y: baseline, x: x0, width: l.width, words: lw };
+      return { y: baseline, x: x0, width: l.width, words: lw, rtl: isRtl };
     });
     const bx = Math.min.apply(null, outLines.map((l) => l.x));
     const bw = Math.max.apply(null, outLines.map((l) => l.x + l.width)) - bx;
@@ -502,7 +520,8 @@ export function wordState(t, word, cap, motion, fontSize) {
   const m = Object.assign({}, MOTION_DEFAULTS, motion || {});
   const dur = Math.max(0.04, m.duration);
   const dist = (m.distance || 0) * fontSize;
-  const st = { alpha: 1, dx: 0, dy: 0, scale: 1, chars: -1, hi: 0, spoken: t >= word.start ? 1 : 0 };
+  const spokenK = clamp01((t - (word.start - 0.04)) / 0.08);
+  const st = { alpha: 1, dx: 0, dy: 0, scale: 1, chars: -1, hi: 0, spoken: spokenK };
   const wordLevel = !!WORD_LEVEL[m.preset];
   const t0 = wordLevel ? word.start : cap.tIn;
   const dt = t - t0;
@@ -517,18 +536,20 @@ export function wordState(t, word, cap, motion, fontSize) {
     }
     case 'pop': {
       if (dt < 0) { st.alpha = 0; st.scale = 0.6; break; }
-      const k = 9, w = 2 * Math.PI * 2.2;
+      const durScale = 0.25 / dur;
+      const k = 9 * durScale, w = 2 * Math.PI * 2.2 * durScale;
       const over = 0.4 * Math.min(2, m.intensity || 1);
       st.scale = 1 - over * Math.exp(-k * dt) * Math.cos(w * dt);
-      st.alpha = clamp01(dt / 0.07);
+      st.alpha = clamp01(dt / Math.min(0.07, dur * 0.3));
       break;
     }
     case 'bounce': {
       if (dt < 0) { st.alpha = 0; break; }
       // drops in from above and settles with two shrinking hops
-      st.alpha = clamp01(dt / 0.06);
-      st.dy = dt > 1 ? 0 : -0.9 * fontSize * (m.intensity || 1) *
-        Math.exp(-7 * dt) * Math.abs(Math.cos(2 * Math.PI * 1.6 * dt));
+      const durScale = 0.25 / dur;
+      st.alpha = clamp01(dt / Math.min(0.06, dur * 0.25));
+      st.dy = dt > dur * 2 ? 0 : -0.9 * fontSize * (m.intensity || 1) *
+        Math.exp(-7 * dt * durScale) * Math.abs(Math.cos(2 * Math.PI * 1.6 * dt * durScale));
       break;
     }
     case 'typewriter': {
@@ -558,7 +579,7 @@ export function wordState(t, word, cap, motion, fontSize) {
   // active-word highlight: on from this word's start until the next word
   // (or the caption's end), with 70 ms in/out so it glides instead of blinking
   if (highlightMode(m) !== 'none') {
-    const nextStart = word.nextStart != null ? word.nextStart : cap.exitStart;
+    const nextStart = word.nextStart != null ? word.nextStart : Math.min(cap.exitStart, word.end + 0.08);
     const inK = clamp01((t - word.start) / 0.07);
     const outK = clamp01((t - nextStart) / 0.07);
     st.hi = Math.max(0, inK - outK);
@@ -626,11 +647,11 @@ export function frameKey(scene, t, motion) {
     key += c.id + ':' + q(clamp01((t - c.tIn) / 0.12), 255) + ',' + q(exitFactor(c, t), 255) + ':';
     for (const l of c.lines) for (const w of l.words) {
       const s = wordState(t, w, c, motion, scene.fontSize);
-      key += q(s.alpha, 255) + ',' + q(s.dy, 8) + ',' + q(s.scale, 1000) + ',' + s.chars + ',' + q(s.hi, 255) + ',' + s.spoken + ';';
+      key += q(s.alpha, 255) + ',' + q(s.dx, 8) + ',' + q(s.dy, 8) + ',' + q(s.scale, 1000) + ',' + s.chars + ',' + q(s.hi, 255) + ',' + q(s.spoken, 255) + ';';
     }
     if (highlightMode(motion) === 'box') {
       const hb = highlightBox(t, c, motion.duration);
-      if (hb) key += 'h' + q(hb.x, 8) + ',' + q(hb.w, 8) + ',' + q(hb.k, 255);
+      if (hb) key += 'h' + q(hb.x, 8) + ',' + q(hb.y, 8) + ',' + q(hb.w, 8) + ',' + q(hb.k, 255);
     }
     key += '|';
   }

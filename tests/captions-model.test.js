@@ -292,3 +292,44 @@ test('frameKey: static holds repeat, animation changes', () => {
   assert.notEqual(M.frameKey(sc, 0.05, m), M.frameKey(sc, 0.05 + 1 / 30, m), 'entrance animates');
   assert.equal(M.frameKey(sc, 50, m), '', 'nothing on screen');
 });
+
+test('fmtTime: tenths quantization avoids 0:60.0 rounding anomaly', () => {
+  assert.equal(M.fmtTime(0), '0:00.0');
+  assert.equal(M.fmtTime(59.94), '0:59.9');
+  assert.equal(M.fmtTime(59.96), '1:00.0'); // 59.96s must roll over to 1:00.0, never 0:60.0
+  assert.equal(M.fmtTime(65.4), '1:05.4');
+  assert.equal(M.fmtTime(3600), '60:00.0');
+  assert.equal(M.fmtTime(-5), '0:00.0');
+});
+
+test('cut exit timing: clean handoff without double-exposure overlap', () => {
+  const ws = words('first@0-0.5 caption.@0.5-0.9 second@0.95-1.4 caption.@1.4-1.8');
+  const sc = scene(ws, { timing: { exit: 'cut' } });
+  assert.equal(sc.captions.length, 2);
+  const [c0, c1] = sc.captions;
+  assert.equal(c0.tOut, c1.tIn, 'c0 cuts out exactly when c1 begins');
+  assert.equal(c0.exitStart, c1.tIn, 'c0 exitStart matches handoff');
+});
+
+test('RTL layout: Urdu and Arabic text is laid out right-to-left', () => {
+  assert.equal(M.isRTLText('یہ ایک ٹیسٹ ہے'), true);
+  assert.equal(M.isRTLText('This is English'), false);
+
+  const urduWords = [
+    { text: 'یہ', start: 0, end: 0.3 },
+    { text: 'ایک', start: 0.3, end: 0.6 },
+    { text: 'بات', start: 0.6, end: 0.9 },
+    { text: 'ہے', start: 0.9, end: 1.2 }
+  ];
+  const sc = scene(urduWords);
+  assert.equal(sc.captions.length, 1);
+  const line = sc.captions[0].lines[0];
+  assert.equal(line.rtl, true, 'line is marked RTL');
+  assert.equal(line.words.length, 4);
+
+  // In RTL layout, the first spoken word is positioned on the right (higher X coordinate)
+  const firstWord = line.words[0];
+  const secondWord = line.words[1];
+  assert.ok(firstWord.x > secondWord.x, `RTL: first word x (${firstWord.x}) must be > second word x (${secondWord.x})`);
+});
+

@@ -46,9 +46,10 @@ export async function renderOverlay(scene, settings, opts) {
   const fps = scene.fps;
   const W = scene.width, H = scene.height;
   const band = captionBand(scene, settings);
-  const total = Math.max(1, frameCount(scene.duration + 0.05, fps));
+  const total = Math.max(1, frameCount(scene.duration, fps));
   const base = o.baseUrl || '';
-  const job = await post(base, '/api/captions/encode/start', {
+  let job = null;
+  job = await post(base, '/api/captions/encode/start', {
     width: W, height: H, band_y: band.y, band_h: band.h,
     fps_num: fps.num, fps_den: fps.den, name: o.name || 'Captions', codec: o.codec || 'prores',
   }, o.signal);
@@ -98,7 +99,9 @@ export async function renderOverlay(scene, settings, opts) {
     const fin = await post(base, `/api/captions/encode/${job.job_id}/finish`, {}, o.signal);
     return Object.assign({ band, renderSeconds: (performance.now() - t0) / 1000 }, fin);
   } catch (e) {
-    try { await fetch(`${base}/api/captions/encode/${job.job_id}/cancel`, { method: 'POST' }); } catch (_) { /* ignore */ }
+    if (job && job.job_id) {
+      try { await fetch(`${base}/api/captions/encode/${job.job_id}/cancel`, { method: 'POST' }); } catch (_) { /* ignore */ }
+    }
     throw e;
   }
 }

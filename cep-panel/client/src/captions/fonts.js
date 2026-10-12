@@ -63,9 +63,12 @@ export function isFontAvailable(family, weight) {
   if (typeof document === 'undefined') return true;
   const c = probeCtx();
   const sample = 'mmmmmmmmwwwwwwlliI10O@#&QgjyH';
-  const w = (f) => { c.font = `${weight || 400} 72px ${f}`; return c.measureText(sample).width; };
+  const sampleUrdu = 'ابپتٹثجچحخدڈذرڑزژسشصضطظعغفقکگلمنووہھیئے';
+  const w = (f, text) => { c.font = `${weight || 400} 72px ${f}`; return c.measureText(text).width; };
   const fam = `"${String(family).replace(/"/g, '')}"`;
-  return w(`${fam}, monospace`) !== w('monospace') || w(`${fam}, serif`) !== w('serif');
+  const latinDiff = w(`${fam}, monospace`, sample) !== w('monospace', sample) || w(`${fam}, serif`, sample) !== w('serif', sample);
+  if (latinDiff) return true;
+  return w(`${fam}, monospace`, sampleUrdu) !== w('monospace', sampleUrdu) || w(`${fam}, serif`, sampleUrdu) !== w('serif', sampleUrdu);
 }
 
 /** Wait for a family/weight to load (bundled fonts load lazily). */
@@ -74,7 +77,7 @@ export async function ensureFont(family, weight) {
   await injectFontStyles();
   try {
     await Promise.race([
-      document.fonts.load(`${weight || 400} 64px "${String(family).replace(/"/g, '')}"`, 'AaBbHgWq0'),
+      document.fonts.load(`${weight || 400} 64px "${String(family).replace(/"/g, '')}"`, 'AaBbHgWq0 ابپتٹث'),
       new Promise((r) => setTimeout(r, 4000)),
     ]);
   } catch (_) { /* fall through to the availability check */ }
@@ -97,8 +100,11 @@ export function makeMeasurer(style) {
   const size = style.fontSize || 80;
   const mH = ctx.measureText('H');
   const mg = ctx.measureText('gjpqy');
-  const capH = mH.actualBoundingBoxAscent > 0 ? mH.actualBoundingBoxAscent : size * 0.72;
+  const mUrdu = ctx.measureText('ٹآقےج');
+  let capH = mH.actualBoundingBoxAscent > 0 ? mH.actualBoundingBoxAscent : size * 0.72;
+  if (mUrdu && mUrdu.actualBoundingBoxAscent > capH) capH = mUrdu.actualBoundingBoxAscent;
   let desc = mg.actualBoundingBoxDescent > 0 ? mg.actualBoundingBoxDescent : size * 0.2;
+  if (mUrdu && mUrdu.actualBoundingBoxDescent > desc) desc = mUrdu.actualBoundingBoxDescent;
   if (style.textCase === 'upper') desc *= 0.3;      // no descenders in caps
   return { measure, fontMetrics: { ascent: capH, descent: desc } };
 }
