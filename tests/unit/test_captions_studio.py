@@ -191,6 +191,14 @@ def test_fingerprint_changes_when_the_edit_changes(tmp_path):
     assert sequence_audio.fingerprint(a) != sequence_audio.fingerprint(b)
 
 
+def test_fingerprint_changes_when_out_point_changes(tmp_path):
+    f = tmp_path / "a.wav"
+    f.write_bytes(b"x")
+    a = [{"path": str(f), "start": 0.0, "end": 1.0, "in": 0.0, "out": 1.0}]
+    b = [{"path": str(f), "start": 0.0, "end": 1.0, "in": 0.0, "out": 1.5}]
+    assert sequence_audio.fingerprint(a) != sequence_audio.fingerprint(b)
+
+
 def _tone(path: Path, seconds: float, freq: float, rate: int = 16000) -> None:
     n = int(seconds * rate)
     with wave.open(str(path), "wb") as w:
@@ -272,3 +280,52 @@ def test_encode_routes_round_trip(client, tmp_path, monkeypatch):
     fin = client.post(f"/api/captions/encode/{job['job_id']}/finish").json()
     assert fin["frames"] == 24 and fin["seconds"] == pytest.approx(1.001)
     assert client.post(f"/api/captions/encode/{job['job_id']}/frames", content=b"\x01").status_code == 404
+
+
+def test_transcribe_mixdown_distinct_files_distinct_fingerprints(client, monkeypatch):
+    calls = []
+
+    async def fake_transcribe(wav_path, fingerprint, language, engine, force, client_id):
+        calls.append({"path": str(wav_path), "fp": fingerprint, "force": force})
+        return {"words": [{"word": "hello", "start": 0.0, "end": 0.5}]}
+
+    from backend.routes import captions
+    monkeypatch.setattr(captions, "_transcribe_wav", fake_transcribe)
+
+    # Upload file 1
+    r1 = client.post(
+        "/api/captions/transcribe-mixdown",
+        files={"file": ("file1.wav", b"unique_audio_content_one", "audio/wav")},
+    )
+    assert r1.status_code == 200
+
+    # Upload file 2 with different content
+    r2 = client.post(
+        "/api/captions/transcribe-mixdown",
+        files={"file": ("file2.wav", b"unique_audio_content_two", "audio/wav")},
+    )
+    assert r2.status_code == 200
+
+    assert len(calls) == 2
+    assert calls[0]["fp"] != calls[1]["fp"]
+    assert calls[0]["path"] != calls[1]["path"]
+
+
+def test_transcribe_mixdown_force_passes_through(client, monkeypatch):
+    calls = []
+
+    async def fake_transcribe(wav_path, fingerprint, language, engine, force, client_id):
+        calls.append({"force": force})
+        return {"words": []}
+
+    from backend.routes import captions
+    monkeypatch.setattr(captions, "_transcribe_wav", fake_transcribe)
+
+    r = client.post(
+        "/api/captions/transcribe-mixdown",
+        data={"force": "true"},
+        files={"file": ("test.wav", b"audio_content", "audio/wav")},
+    )
+    assert r.status_code == 200
+    assert len(calls) == 1
+    assert calls[0]["force"] is True

@@ -21,7 +21,8 @@ import { PRESETS, findPreset } from './captions/presets.js';
 import { renderOverlay } from './captions/export.js';
 import { SAFE_ZONES, drawSafeZones } from './captions/safe-zones.js';
 
-const SETTINGS_KEY = 'editflow.captions.settings.v2';
+const SETTINGS_KEY = 'editflow.captions.settings.v3';
+const SETTINGS_KEY_V2 = 'editflow.captions.settings.v2';
 const WORDS_KEY = 'editflow.captions.words.';
 const REF = 1080;   // style sizes are authored at 1080p and scale with the sequence
 
@@ -43,6 +44,7 @@ const PREVIEW_SEQ = { name: 'Preview', id: 'preview', width: 1080, height: 1920,
 const S = {
   settings: null,
   words: [],
+  sourceName: '',
   seq: PREVIEW_SEQ,
   scene: null,
   sceneGen: 0,
@@ -126,7 +128,12 @@ const icon = (n) => `<svg class="cc-ico" viewBox="0 0 24 24" aria-hidden="true">
 
 function loadSettings() {
   let saved = null;
-  try { saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null'); } catch (_) { saved = null; }
+  try {
+    saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null');
+    if (!saved) {
+      saved = JSON.parse(localStorage.getItem(SETTINGS_KEY_V2) || 'null');
+    }
+  } catch (_) { saved = null; }
   return deepMerge(DEFAULTS, saved || {});
 }
 function saveSettingsSoon() {
@@ -310,7 +317,7 @@ const TABS = [['transcript', 'Transcript'], ['style', 'Style'], ['motion', 'Moti
 function renderShell() {
   root.innerHTML = `
     <div class="cc-top">
-      <div class="cc-title">Captions</div>
+      <div class="cc-title">Captions 3.0</div>
       <div class="cc-seq" id="cc-seq"></div>
       <button class="cc-icon-btn" data-act="refresh-seq" title="Re-read the active sequence">${icon('refresh')}</button>
       <button class="cc-icon-btn" data-act="close" title="Close captions">${icon('close')}</button>
@@ -577,6 +584,12 @@ function sourceCard() {
       ${ctlSelect('transcribe.language', 'Language', LANGS)}
       ${ctlSelect('transcribe.engine', 'Word timing', [['auto', 'Best available'], ['whisperx', 'WhisperX (precise)'], ['whisper', 'Whisper (fast)']])}
     </div>
+    <div class="cc-row2" style="margin-top:4px">
+      <label class="cc-check" style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text-dim,#aaa);cursor:pointer">
+        <input type="checkbox" id="cc-force-transcribe" style="cursor:pointer">
+        <span>Force fresh transcription (ignore cache)</span>
+      </label>
+    </div>
     <div class="cc-row2">
       <button class="cc-btn" data-act="upload" ${S.busy ? 'disabled' : ''}>Upload audio / video…</button>
       <button class="cc-btn" data-act="paste-toggle">${S.pasteOpen ? 'Hide paste box' : 'Paste transcript…'}</button>
@@ -591,13 +604,15 @@ function tabTranscript() {
   const vis = S.scene ? S.scene.captions.length : 0;
   const hideF = S.settings.grouping.hideFillers !== false;
   const hidden = S.words.filter((w) => !M.isVisible(w, hideF)).length;
+  const sourceLabel = S.sourceName ? ` · <span title="${esc(S.sourceName)}">${esc(S.sourceName)}</span>` : '';
   return `
     <div class="cc-txbar">
       <button class="cc-icon-btn" data-act="undo" title="Undo (Ctrl+Z)" ${S.history.length ? '' : 'disabled'}>${icon('undo')}</button>
       <button class="cc-icon-btn" data-act="redo" title="Redo (Ctrl+Shift+Z)" ${S.future.length ? '' : 'disabled'}>${icon('redo')}</button>
       <button class="cc-icon-btn${S.findOpen ? ' cc-on' : ''}" data-act="find-toggle" title="Find & replace">${icon('search')}</button>
-      <span class="cc-dim cc-grow" id="cc-txcount">${S.words.length} words · ${vis} captions${hidden ? ` · ${hidden} hidden` : ''}</span>
+      <span class="cc-dim cc-grow" id="cc-txcount">${S.words.length} words · ${vis} captions${hidden ? ` · ${hidden} hidden` : ''}${sourceLabel}</span>
       <button class="cc-btn cc-small" data-act="source-toggle">${S.showSource ? 'Done' : 'Re-transcribe…'}</button>
+      <button class="cc-btn cc-small" data-act="clear-tx" title="Clear current transcript and start fresh">Clear</button>
     </div>
     ${S.showSource ? `<div class="cc-sec">${sourceCard()}</div>` : ''}
     ${S.findOpen ? `<div class="cc-find">
@@ -779,6 +794,22 @@ function setWords(words, note) {
   if (note) setStatus(note, 'ok');
 }
 
+function clearTranscript() {
+  if (S.words.length) snapshot();
+  S.words = [];
+  S.sourceName = '';
+  S.sel = -1;
+  S.editing = -1;
+  S.showSource = false;
+  S.pasteOpen = false;
+  saveWords();
+  S.t = 0;
+  setPlaying(false);
+  renderBody();
+  rebuildScene();
+  setStatus('Transcript cleared.', 'ok');
+}
+
 function onWsMessage(ev) {
   const d = ev && ev.detail;
   const p = d && (d.payload || d);
@@ -807,12 +838,14 @@ async function transcribeSequence() {
     }
     setBusy({ kind: 'transcribe', label: `Transcribing ${clips.clips.length} clip${clips.clips.length === 1 ? '' : 's'}… (can take minutes on CPU)`, progress: null });
     const tr = S.settings.transcribe;
+    const force = !!($('#cc-force-transcribe') || {}).checked;
     const res = await apiPost('/api/captions/transcribe-sequence', {
       clips: clips.clips, sequence_name: clips.name, duration: clips.duration,
-      language: tr.language, engine: tr.engine,
+      language: tr.language, engine: tr.engine, force,
     }, { timeoutMs: 60 * 60 * 1000 });
     const words = (res.words || []).map((w) => ({ text: w.word || w.text, start: w.start, end: w.end }));
     const skipped = (res.skipped || []).length;
+    S.sourceName = clips.name || 'Sequence';
     setWords(words, `${words.length} words from “${clips.name}” (${res.engine || 'whisper'})${skipped ? ` — ${skipped} offline clip(s) skipped` : ''}.`);
   } catch (e) {
     transcribeError(e);
@@ -826,8 +859,9 @@ async function transcribeFile(file) {
   setBusy({ kind: 'transcribe', label: `Uploading ${file.name}…`, progress: null });
   try {
     const tr = S.settings.transcribe;
+    const force = !!($('#cc-force-transcribe') || {}).checked;
     const res = await apiUpload('/api/captions/transcribe-mixdown', file,
-      { language: tr.language, engine: tr.engine }, { timeoutMs: 60 * 60 * 1000 });
+      { language: tr.language, engine: tr.engine, force: force ? 'true' : 'false' }, { timeoutMs: 60 * 60 * 1000 });
     const words = (res.words || []).map((w) => ({ text: w.word || w.text, start: w.start, end: w.end }));
     if (res.bg_url) {
       const im = new Image();
@@ -835,6 +869,7 @@ async function transcribeFile(file) {
       im.src = getBaseUrl() + res.bg_url;
       S.bgImage = im;
     }
+    S.sourceName = file.name;
     setWords(words, `${words.length} words from ${file.name} (${res.engine || 'whisper'}). Times count from the start of the sequence.`);
   } catch (e) {
     transcribeError(e);
@@ -1368,6 +1403,7 @@ function onAction(act) {
       break;
     }
     case 'source-toggle': S.showSource = !S.showSource; renderBody(); break;
+    case 'clear-tx': clearTranscript(); break;
     case 'find-toggle': S.findOpen = !S.findOpen; renderBody(); if (S.findOpen) { const f = $('#cc-find'); if (f) f.focus(); } break;
     case 'replace-all': replaceAll(); break;
     case 'undo': undo(); break;

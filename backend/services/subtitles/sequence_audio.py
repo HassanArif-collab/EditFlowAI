@@ -58,7 +58,7 @@ def fingerprint(clips: list[dict], extra: str = "") -> str:
             stamp = f"{st.st_size}:{int(st.st_mtime)}"
         except OSError:
             stamp = "?"
-        items.append([c["path"], stamp, round(c["start"], 3), round(c["end"], 3), round(c["in"], 3)])
+        items.append([c["path"], stamp, round(c["start"], 3), round(c["end"], 3), round(c["in"], 3), round(c.get("out", 0), 3)])
     return hashlib.sha256((json.dumps(items) + "|" + extra).encode("utf-8")).hexdigest()[:16]
 
 

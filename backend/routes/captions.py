@@ -135,29 +135,32 @@ async def transcribe_mixdown(
     from ..config import get_settings
 
     try:
-        # 1. Resolve the active model + compute a *range-based* fingerprint.
-        #    Same sequence + In/Out + model → same fingerprint → same on-disk
-        #    WAV, so re-runs hit the transcript cache instead of re-uploading.
+        # 1. Read the uploaded file bytes and compute a content-addressed hash.
+        content = await file.read()
+        await file.close()
+        file_content_hash = hashlib.sha256(content).hexdigest()[:16]
+
+        # 2. Resolve the active model + compute a deterministic fingerprint
+        #    incorporating the file content hash. Different files will never
+        #    share a fingerprint or return each other's cached transcripts.
         active_model = whisper_service.get_active_model_name()
-        # Language MUST be part of the key — otherwise re-transcribing the same
-        # range in a different language returns the first language's cached
-        # transcript.
         lang_key = (language or "auto").strip().lower()
-        # Engine is part of the key: whisperx vs whisper timings differ.
+        seq_key = (
+            f"{sequence_name}|{in_seconds}|{out_seconds}"
+            if sequence_name
+            else (file.filename or "upload").strip()
+        )
         fingerprint = hashlib.sha256(
-            f"{sequence_name}|{in_seconds}|{out_seconds}|{active_model}|{lang_key}"
-            f"|{engine}".encode("utf-8")
+            f"{file_content_hash}|{seq_key}|{active_model}|{lang_key}|{engine}".encode("utf-8")
         ).hexdigest()[:16]
 
-        # 2. Persist the uploaded WAV under data/media_cache/mixdowns/.
+        # 3. Persist the uploaded media under data/media_cache/mixdowns/ with its true extension.
         mixdowns_dir = get_settings().DATA_DIR / "media_cache" / "mixdowns"
         mixdowns_dir.mkdir(parents=True, exist_ok=True)
-        wav_path = mixdowns_dir / f"{fingerprint}.wav"
-        try:
-            content = await file.read()
-            wav_path.write_bytes(content)
-        finally:
-            await file.close()
+        ext = (file.filename or "").rsplit(".", 1)[-1].lower() if "." in (file.filename or "") else ""
+        file_ext = f".{ext}" if ext else ".wav"
+        wav_path = mixdowns_dir / f"{fingerprint}{file_ext}"
+        wav_path.write_bytes(content)
         # 2b. If the upload itself is a video, keep one frame as the
         # preview background (AE frame-capture parity, source-side).
         # Never breaks transcription.
