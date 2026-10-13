@@ -267,6 +267,19 @@ captionsManager = (function() {
                  zeroPoint: zero };
     }
 
+    function toTimecode(sec, timebase) {
+        var tb = parseFloat(timebase);
+        var fps = (tb && tb > 0) ? (TICKS / tb) : 30;
+        if (fps <= 0) fps = 30;
+        var total = Math.max(0, parseFloat(sec) || 0);
+        var hh = Math.floor(total / 3600);
+        var mm = Math.floor((total % 3600) / 60);
+        var ss = Math.floor(total % 60);
+        var ff = Math.floor((total - Math.floor(total)) * fps);
+        var pad = function(n) { return (n < 10 ? "0" : "") + n; };
+        return pad(hh) + ":" + pad(mm) + ":" + pad(ss) + ":" + pad(ff);
+    }
+
     /**
      * Capture frame at playhead or specified time.
      * Tries exportFramePNG, or identifies the top visible video clip for backend extraction.
@@ -285,35 +298,78 @@ captionsManager = (function() {
 
         var outDir = "";
         try {
-            if (typeof Folder !== "undefined" && Folder.temp && Folder.temp.fsName) {
-                outDir = Folder.temp.fsName;
+            if (typeof Folder !== "undefined" && Folder.temp) {
+                var tf = Folder.temp;
+                // Fix Adobe's double-Temp bug on Windows (Folder.temp returning ...\AppData\Local\Temp\Temp)
+                if (!tf.exists) {
+                    var raw = tf.fsName || "";
+                    var fixed = raw.replace(/[\/\\]Temp[\/\\]Temp$/i, "\\Temp");
+                    var fAlt = new Folder(fixed);
+                    if (fAlt.exists) {
+                        tf = fAlt;
+                    } else {
+                        try { tf.create(); } catch (_) {}
+                    }
+                }
+                if (tf.exists) outDir = tf.fsName;
             }
         } catch (_) {}
+        if (!outDir) {
+            try {
+                if (typeof Folder !== "undefined" && Folder.userData) {
+                    var uf = new Folder(Folder.userData.fsName + "/EditFlow");
+                    if (!uf.exists) try { uf.create(); } catch (_) {}
+                    if (uf.exists) outDir = uf.fsName;
+                }
+            } catch (_) {}
+        }
 
         var exported = false;
         if (outDir) {
-            var outPath = outDir + "/editflow_seq_frame.png";
+            outDir = outDir.replace(/\\/g, "/");
+            try { var chk = new Folder(outDir); if (!chk.exists) chk.create(); } catch (_) {}
+
+            // Premiere's exportFramePNG automatically appends '.png' to the given path.
+            // Do NOT include '.png' in basePath to avoid '...png.png'.
+            var basePath = outDir + "/editflow_seq_frame";
+            var expectedPngPath = basePath + ".png";
             var file = null;
-            try { file = new File(outPath); } catch (_) {}
+            try { file = new File(expectedPngPath); } catch (_) {}
             if (file && file.exists) { try { file.remove(); } catch (_) {} }
 
-            try {
-                if (seq.exportFramePNG) {
-                    exported = seq.exportFramePNG(ticks, outPath);
-                }
-            } catch (ePng) {}
+            var tc = toTimecode(zero + t, seq.timebase);
 
-            if (!exported && typeof qe !== "undefined" && qe.project) {
+            // Enable QE DOM safely
+            try { if (app.enableQE) app.enableQE(); } catch (_) {}
+
+            if (typeof qe !== "undefined" && qe.project) {
                 try {
                     var qeSeq = qe.project.getActiveSequence();
                     if (qeSeq && qeSeq.exportFramePNG) {
-                        exported = qeSeq.exportFramePNG(ticks, outPath);
+                        exported = qeSeq.exportFramePNG(tc, basePath);
                     }
                 } catch (eQe) {}
             }
 
-            if (exported && file && file.exists) {
-                return { success: true, path: outPath, time: t, method: "exportFramePNG" };
+            if (!exported) {
+                try {
+                    if (seq.exportFramePNG) {
+                        exported = seq.exportFramePNG(tc, basePath);
+                    }
+                } catch (ePng) {}
+            }
+
+            // Fallback for Premiere versions expecting ticks without extension
+            if (!exported && (!file || !file.exists)) {
+                try {
+                    if (seq.exportFramePNG) {
+                        exported = seq.exportFramePNG(ticks, basePath);
+                    }
+                } catch (ePng2) {}
+            }
+
+            if (file && file.exists) {
+                return { success: true, path: expectedPngPath, time: t, method: "exportFramePNG" };
             }
         }
 

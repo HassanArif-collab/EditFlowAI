@@ -65,8 +65,54 @@ function loadEngine(host) {
     },
   // NOTE: plain `function` (not shorthand methods) — ExtendScript calls
   // `new File(path)`, and shorthand methods cannot be constructed.
-  File: function (f) { return { fsName: String(f), exists: fs.existsSync(String(f)) }; },
-  Folder: Object.assign(function () { return { fsName: '' }; }, { temp: { fsName: 'C:\\temp' } }),
+  File: function (f) {
+    const s = String(f);
+    return {
+      fsName: s,
+      get exists() {
+        const norm = s.toLowerCase().replace(/\\/g, '/');
+        if (host.virtualFiles && norm in host.virtualFiles) return !!host.virtualFiles[norm];
+        return fs.existsSync(s);
+      },
+      remove() {
+        if (host.virtualFiles) delete host.virtualFiles[s.toLowerCase().replace(/\\/g, '/')];
+      }
+    };
+  },
+  Folder: Object.assign(
+    function (p) {
+      const s = String(p || '');
+      return {
+        fsName: s,
+        get exists() {
+          const norm = s.toLowerCase().replace(/\\/g, '/');
+          if (host.virtualFolders && norm in host.virtualFolders) return !!host.virtualFolders[norm];
+          return fs.existsSync(s);
+        },
+        create() {
+          if (host.virtualFolders) host.virtualFolders[s.toLowerCase().replace(/\\/g, '/')] = true;
+          return true;
+        }
+      };
+    },
+    {
+      get temp() {
+        const tp = host.tempPath || 'C:\\temp';
+        return {
+          fsName: tp,
+          get exists() {
+            const norm = tp.toLowerCase().replace(/\\/g, '/');
+            if (host.virtualFolders && norm in host.virtualFolders) return !!host.virtualFolders[norm];
+            return fs.existsSync(tp);
+          },
+          create() {
+            if (host.virtualFolders) host.virtualFolders[tp.toLowerCase().replace(/\\/g, '/')] = true;
+            return true;
+          }
+        };
+      }
+    }
+  ),
     app: host.app,
     ProjectItemType: host.ProjectItemType,
     qe: undefined,
@@ -342,5 +388,32 @@ test('captureSequenceFrame identifies source video clip under playhead', () => {
   assert.equal(res.method, 'sourceClip');
   assert.equal(res.clipPath, 'G:\\overlay_broll.mov');
   assert.equal(res.sourceTime, 21.0); // in (20) + (5 - start 4)
+});
+
+test('captureSequenceFrame exports frame using exportFramePNG with timecode and sanitized folder', () => {
+  const host = makeHost({
+    tempPath: 'C:\\Users\\test\\AppData\\Local\\Temp\\Temp',
+    virtualFolders: {
+      'c:/users/test/appdata/local/temp': true,
+    },
+    virtualFiles: {},
+  });
+  makeTimeline(host, { video: [[]], audio: [] });
+  let exportedTimecode = null;
+  let exportedBasePath = null;
+  host.app.project.activeSequence.exportFramePNG = (tc, basePath) => {
+    exportedTimecode = tc;
+    exportedBasePath = basePath;
+    host.virtualFiles[(basePath + '.png').toLowerCase().replace(/\\/g, '/')] = true;
+    return true;
+  };
+  const sb = loadWithTime(host);
+  const res = callCM(sb, 'captureSequenceFrame', { time: 5.5 });
+  assert.equal(res.success, true);
+  assert.equal(res.method, 'exportFramePNG');
+  assert.ok(res.path.endsWith('.png'));
+  assert.ok(!res.path.endsWith('.png.png'), 'path must not have duplicate .png extension');
+  assert.ok(!exportedBasePath.endsWith('.png'), 'basePath passed to Premiere must not have .png');
+  assert.match(exportedTimecode, /^\d{2}:\d{2}:\d{2}:\d{2}$/);
 });
 
