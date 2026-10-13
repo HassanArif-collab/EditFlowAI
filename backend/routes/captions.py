@@ -412,11 +412,18 @@ async def get_sequence_frame(req: SequenceFrameReq):
         try:
             ffmpeg = _ffmpeg_path()
             t = max(0.0, float(req.source_time or 0.0))
-            cmd = [ffmpeg, "-y", "-v", "error", "-ss", f"{t:.3f}",
-                   "-accurate_seek", "-i", str(req.clip_path),
-                   "-vframes", "1",
-                   "-vf", f"scale={min(1920, req.width or 1080)}:-2",
-                   "-q:v", "3", str(out_file)]
+            is_image = Path(req.clip_path).suffix.lower() in (
+                ".png", ".jpg", ".jpeg", ".bmp", ".webp", ".gif", ".psd", ".tiff"
+            )
+            cmd = [ffmpeg, "-y", "-v", "error"]
+            if not is_image:
+                cmd.extend(["-ss", f"{t:.3f}", "-accurate_seek"])
+            cmd.extend([
+                "-i", str(req.clip_path),
+                "-vframes", "1",
+                "-vf", f"scale={min(1920, req.width or 1080)}:-2",
+                "-q:v", "3", str(out_file)
+            ])
             await asyncio.to_thread(subprocess.run, cmd, timeout=15)
             if out_file.is_file():
                 return {"url": f"/api/captions/file/{out_file.name}?v={int(_time.time() * 1000)}"}

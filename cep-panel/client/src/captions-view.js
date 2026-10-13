@@ -498,15 +498,27 @@ function changeZoom(delta) {
   layoutPreview();
 }
 
-async function captureSequenceFrame() {
+async function captureSequenceFrame(usePlayhead) {
   if (!inCEP()) {
     setStatus('Frame capture requires an active Premiere Pro sequence.', 'info');
     return;
   }
   setStatus('Grabbing sequence frame…', 'info');
   try {
-    const curTime = S.t || S.seq.playhead || 0;
-    const res = await callCM('captureSequenceFrame', { time: curTime });
+    let targetTime = null;
+    if (usePlayhead) {
+      try {
+        const info = await callCM('sequenceInfo');
+        if (info && info.playhead != null) {
+          S.seq.playhead = info.playhead;
+          targetTime = info.playhead;
+        }
+      } catch (_) {}
+    }
+    if (targetTime == null) {
+      targetTime = (S.t != null && S.t > 0) ? S.t : (S.seq && S.seq.playhead ? S.seq.playhead : 0);
+    }
+    const res = await callCM('captureSequenceFrame', { time: targetTime, usePlayhead: !!usePlayhead });
     if (!res || !res.success) {
       throw new Error((res && res.error) || 'Failed to capture frame from Premiere.');
     }
@@ -526,14 +538,18 @@ async function captureSequenceFrame() {
       url = r.url;
     }
     if (url) {
+      const fullUrl = (url.startsWith('http') ? url : (getBaseUrl() + url)).replace('://localhost:', '://127.0.0.1:');
       const im = new Image();
       im.onload = () => {
         S.bgImage = im;
         S.bg = 'frame';
         requestDraw();
-        setStatus(`Frame captured at ${fmtTime(curTime)}.`, 'ok');
+        setStatus(`Frame captured at ${fmtTime(targetTime)}.`, 'ok');
       };
-      im.src = getBaseUrl() + url;
+      im.onerror = () => {
+        setStatus('Could not load captured frame image.', 'error');
+      };
+      im.src = fullUrl;
     } else {
       throw new Error('No frame image returned');
     }
@@ -1252,7 +1268,7 @@ async function transcribeSequence() {
       initAudio(res.audio_url, res.range_in || 0);
     }
     if (!S.bgImage) {
-      try { captureSequenceFrame(); } catch (_) {}
+      try { captureSequenceFrame(true); } catch (_) {}
     }
   } catch (e) {
     transcribeError(e);
@@ -1890,13 +1906,13 @@ function onAction(act, el) {
         S.bg = 'dark';
       } else if (S.bg === 'dark') {
         S.bg = 'frame';
-        if (!S.bgImage) captureSequenceFrame();
+        if (!S.bgImage) captureSequenceFrame(true);
       } else {
         S.bg = 'checker';
       }
       requestDraw();
       break;
-    case 'capture-frame': captureSequenceFrame(); break;
+    case 'capture-frame': captureSequenceFrame(true); break;
     case 'zoom-in': changeZoom(1); break;
     case 'zoom-out': changeZoom(-1); break;
     case 'zoom-reset': changeZoom(0); break;

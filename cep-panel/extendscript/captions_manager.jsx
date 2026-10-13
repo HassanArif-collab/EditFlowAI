@@ -294,9 +294,22 @@ captionsManager = (function() {
         return pad(hh) + ":" + pad(mm) + ":" + pad(ss) + ":" + pad(ff);
     }
 
+    var VIDEO_EXTS = {
+        "mp4": 1, "mov": 1, "m4v": 1, "mkv": 1, "webm": 1, "avi": 1,
+        "mts": 1, "m2ts": 1, "mxf": 1, "prores": 1, "r3d": 1, "braw": 1
+    };
+
+    function isVideoFile(p) {
+        if (!p) return false;
+        var dot = String(p).lastIndexOf(".");
+        if (dot === -1) return false;
+        var ext = String(p).substring(dot + 1).toLowerCase();
+        return !!VIDEO_EXTS[ext];
+    }
+
     /**
      * Capture frame at playhead or specified time.
-     * Tries exportFramePNG, or identifies the top visible video clip for backend extraction.
+     * Tries exportFramePNG (QE DOM), or identifies the top visible video clip for backend extraction.
      */
     function captureSequenceFrame(options) {
         options = options || {};
@@ -306,24 +319,66 @@ captionsManager = (function() {
         try { if (seq.zeroPoint) zero = ticksToSec(seq.zeroPoint); } catch (ez) {}
         var playhead = 0;
         try { playhead = Math.max(0, timeSec(seq.getPlayerPosition()) - zero); } catch (e1) {}
-        var t = options.time != null ? parseFloat(options.time) : playhead;
+
+        var usePlayhead = options.usePlayhead === true || (options.time == null);
+        var t = usePlayhead ? playhead : parseFloat(options.time);
+        if (isNaN(t) || t < 0) t = playhead;
+
         var targetTicks = Math.round((zero + t) * TICKS);
         var ticks = String(targetTicks);
+
+        var origTicks = "";
+        try { origTicks = String(seq.getPlayerPosition().ticks); } catch (_) {}
+
+        // Enable QE DOM safely
+        try { if (app.enableQE) app.enableQE(); } catch (_) {}
+
+        var qeSeq = null;
+        try {
+            if (typeof qe !== "undefined" && qe && qe.project) {
+                qeSeq = qe.project.getActiveSequence();
+                if (!qeSeq && qe.project.getSequenceAt && qe.project.numSequences) {
+                    for (var sIdx = 0; sIdx < qe.project.numSequences; sIdx++) {
+                        var s = qe.project.getSequenceAt(sIdx);
+                        if (s && s.name === seq.name) {
+                            qeSeq = s;
+                            break;
+                        }
+                    }
+                }
+            }
+        } catch (eQe) {}
+
+        var didMovePlayhead = false;
+        if (!usePlayhead && seq.setPlayerPosition) {
+            try {
+                seq.setPlayerPosition(ticks);
+                didMovePlayhead = true;
+            } catch (eSeek) {}
+        }
+
+        // Exact timecode string from QE CTI or calculate
+        var tc = "";
+        try {
+            if (qeSeq && qeSeq.CTI && qeSeq.CTI.timecode) {
+                tc = String(qeSeq.CTI.timecode);
+            }
+        } catch (eTc) {}
+        if (!tc) {
+            tc = toTimecode(zero + t, seq.timebase);
+        }
 
         var outDir = "";
         try {
             if (typeof Folder !== "undefined" && Folder.temp) {
                 var tf = Folder.temp;
-                // Fix Adobe's double-Temp bug on Windows (Folder.temp returning ...\AppData\Local\Temp\Temp)
+                // Fix Adobe's double-Temp bug on Windows
                 if (!tf.exists) {
                     var raw = tf.fsName || "";
                     var fixed = raw.replace(/[\/\\]Temp[\/\\]Temp$/i, "\\Temp");
                     var fAlt = new Folder(fixed);
-                    if (fAlt.exists) {
-                        tf = fAlt;
-                    } else {
-                        try { tf.create(); } catch (_) {}
-                    }
+                    if (fAlt.exists) tf = fAlt;
+                    else try { tf.create(); } catch (_) {}
                 }
                 if (tf.exists) outDir = tf.fsName;
             }
@@ -338,56 +393,95 @@ captionsManager = (function() {
             } catch (_) {}
         }
 
-        var exported = false;
         if (outDir) {
-            outDir = outDir.replace(/\\/g, "/");
-            try { var chk = new Folder(outDir); if (!chk.exists) chk.create(); } catch (_) {}
+            var targetFolder = new Folder(outDir);
+            if (!targetFolder.exists) try { targetFolder.create(); } catch (_) {}
 
-            // Premiere's exportFramePNG automatically appends '.png' to the given path.
-            // Do NOT include '.png' in basePath to avoid '...png.png'.
-            var basePath = outDir + "/editflow_seq_frame";
-            var expectedPngPath = basePath + ".png";
-            var file = null;
-            try { file = new File(expectedPngPath); } catch (_) {}
-            if (file && file.exists) { try { file.remove(); } catch (_) {} }
+            var cleanDir = targetFolder.fsName.replace(/\\/g, "/");
+            var basePath = cleanDir + "/editflow_seq_frame";
+            var uniqueBasePath = cleanDir + "/editflow_frame_" + (new Date().getTime());
 
-            var tc = toTimecode(zero + t, seq.timebase);
-
-            // Enable QE DOM safely
-            try { if (app.enableQE) app.enableQE(); } catch (_) {}
-
-            if (typeof qe !== "undefined" && qe.project) {
-                try {
-                    var qeSeq = qe.project.getActiveSequence();
-                    if (qeSeq && qeSeq.exportFramePNG) {
-                        exported = qeSeq.exportFramePNG(tc, basePath);
-                    }
-                } catch (eQe) {}
+            function findPng(stem) {
+                var checkList = [
+                    stem + ".png",
+                    stem + ".png.png",
+                    stem,
+                    stem.replace(/\//g, "\\") + ".png",
+                    stem.replace(/\//g, "\\") + ".png.png",
+                    stem.replace(/\//g, "\\")
+                ];
+                for (var ci = 0; ci < checkList.length; ci++) {
+                    try {
+                        var cf = new File(checkList[ci]);
+                        if (cf && cf.exists) {
+                            var sz = -1;
+                            try { if (typeof cf.length !== "undefined") sz = cf.length; } catch (_) {}
+                            if (sz !== 0) return cf;
+                        }
+                    } catch (_) {}
+                }
+                return null;
             }
 
-            if (!exported) {
-                try {
-                    if (seq.exportFramePNG) {
-                        exported = seq.exportFramePNG(tc, basePath);
-                    }
-                } catch (ePng) {}
+            // Remove any old frame at basePath.png
+            try {
+                var oldF = new File(basePath + ".png");
+                if (oldF && oldF.exists) oldF.remove();
+            } catch (_) {}
+
+            var exportedFile = null;
+
+            // 1. Try qeSeq.exportFramePNG
+            if (qeSeq && qeSeq.exportFramePNG) {
+                try { qeSeq.exportFramePNG(tc, uniqueBasePath); } catch (_) {}
+                exportedFile = findPng(uniqueBasePath);
+
+                if (!exportedFile) {
+                    try { qeSeq.exportFramePNG(tc, uniqueBasePath.replace(/\//g, "\\")); } catch (_) {}
+                    exportedFile = findPng(uniqueBasePath);
+                }
+                if (!exportedFile) {
+                    try { qeSeq.exportFramePNG(tc, basePath); } catch (_) {}
+                    exportedFile = findPng(basePath);
+                }
             }
 
-            // Fallback for Premiere versions expecting ticks without extension
-            if (!exported && (!file || !file.exists)) {
-                try {
-                    if (seq.exportFramePNG) {
-                        exported = seq.exportFramePNG(ticks, basePath);
-                    }
-                } catch (ePng2) {}
+            // 2. Try seq.exportFramePNG
+            if (!exportedFile && seq && seq.exportFramePNG) {
+                try { seq.exportFramePNG(tc, basePath); } catch (_) {}
+                exportedFile = findPng(basePath);
+                if (!exportedFile) {
+                    try { seq.exportFramePNG(ticks, basePath); } catch (_) {}
+                    exportedFile = findPng(basePath);
+                }
             }
 
-            if (file && file.exists) {
-                return { success: true, path: expectedPngPath, time: t, method: "exportFramePNG" };
+            // Restore playhead if moved
+            if (didMovePlayhead && origTicks && seq.setPlayerPosition) {
+                try { seq.setPlayerPosition(origTicks); } catch (_) {}
+            }
+
+            if (exportedFile) {
+                return {
+                    success: true,
+                    path: exportedFile.fsName.replace(/\\/g, "/"),
+                    time: t,
+                    method: "exportFramePNG"
+                };
             }
         }
 
-        // Fallback: locate top visible video clip under playhead
+        // Restore playhead if moved
+        if (didMovePlayhead && origTicks && seq.setPlayerPosition) {
+            try { seq.setPlayerPosition(origTicks); } catch (_) {}
+        }
+
+        // Fallback: Locate video clip under playhead.
+        // We prioritize true VIDEO files (.mp4, .mov, etc.) over still image graphics (.png, .jpg, etc.)
+        // so that overlays/logos/watermarks on higher tracks don't hijack the frame!
+        var topVideoClip = null;
+        var topImageClip = null;
+
         for (var v = seq.videoTracks.numTracks - 1; v >= 0; v--) {
             var tr = seq.videoTracks[v];
             var muted = false;
@@ -403,20 +497,36 @@ captionsManager = (function() {
                     try { p = clip.projectItem.getMediaPath(); } catch (_) {}
                     if (p) {
                         var cIn = timeSec(clip.inPoint);
-                        var srcTime = cIn + (t - cStart);
-                        return {
+                        var durOrig = Math.max(0.001, cEnd - cStart);
+                        var durSrc = timeSec(clip.outPoint) - cIn;
+                        var spd = (durSrc > 0) ? (durSrc / durOrig) : 1;
+                        var srcTime = cIn + (t - cStart) * spd;
+                        var clipInfo = {
                             success: true,
                             method: "sourceClip",
                             clipPath: p,
-                            sourceTime: srcTime,
+                            sourceTime: Math.max(0, srcTime),
                             time: t,
+                            track: v,
                             width: seq.frameSizeHorizontal,
                             height: seq.frameSizeVertical
                         };
+                        if (isVideoFile(p)) {
+                            if (!topVideoClip) topVideoClip = clipInfo;
+                        } else {
+                            if (!topImageClip) topImageClip = clipInfo;
+                        }
                     }
                 }
             }
+            if (topVideoClip) break; // found topmost video clip!
         }
+
+        var chosen = topVideoClip || topImageClip;
+        if (chosen) {
+            return chosen;
+        }
+
         return { success: false, error: "No video clip found at time " + t.toFixed(2) + "s", time: t };
     }
 
