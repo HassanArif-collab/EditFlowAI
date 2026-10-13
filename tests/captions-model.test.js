@@ -204,7 +204,7 @@ test('continuous speech never shows a blank frame between captions', () => {
   const motion = { preset: 'fade_up', duration: 0.28 };
   for (let i = 0; i + 1 < sc.captions.length; i++) {
     const a = sc.captions[i], b = sc.captions[i + 1];
-    if (b.tIn - a.lines[a.lines.length - 1].words.slice(-1)[0].end > 0.6) continue;  // real silence
+    if (b.tIn - a.lines[a.lines.length - 1].words.slice(-1)[0].end > 0.15) continue;  // real silence
     for (let t = b.tIn; t < b.tIn + 0.2; t += 1 / 30) {
       let ink = 0;
       for (const c of M.activeCaptions(sc, t)) {
@@ -224,6 +224,25 @@ test('captions clear during silence instead of lingering', () => {
     assert.ok(held <= M.TIMING_DEFAULTS.maxHold + M.TIMING_DEFAULTS.exitDuration + 1e-6 ||
               c === sc.captions[sc.captions.length - 1], `caption ${c.id} lingers ${held.toFixed(2)} s`);
   }
+});
+
+test('captionTiming: 0 gap on continuous speech, clears during real speech silence', () => {
+  // Continuous speech (pause <= 0.12s): handoff is exact, 0 gap between captions
+  const continuous = [
+    { start: 1.0, end: 2.0 },
+    { start: 2.05, end: 3.0 }
+  ];
+  const tCont = M.captionTiming(continuous, { exit: 'cut' });
+  assert.equal(tCont[0].tOut, tCont[1].tIn, 'continuous speech has 0 gap');
+
+  // Silence pause (pause > 0.12s): clears during the silence, leaving screen clear before next
+  const paused = [
+    { start: 1.0, end: 2.0 },
+    { start: 2.8, end: 3.8 }
+  ];
+  const tPause = M.captionTiming(paused, { exit: 'cut' });
+  assert.ok(tPause[0].tOut < tPause[1].tIn, 'caption clears during silence');
+  assert.ok(tPause[1].tIn - tPause[0].tOut >= 0.4, 'blank pause before next sentence starts');
 });
 
 test('every caption stays on screen long enough to read', () => {

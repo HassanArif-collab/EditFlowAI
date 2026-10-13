@@ -24,6 +24,7 @@ import { SAFE_ZONES, drawSafeZones } from './captions/safe-zones.js';
 const SETTINGS_KEY = 'editflow.captions.settings.v3';
 const SETTINGS_KEY_V2 = 'editflow.captions.settings.v2';
 const WORDS_KEY = 'editflow.captions.words.';
+const AUDIO_KEY = 'editflow.captions.audio.';
 const REF = 1080;   // style sizes are authored at 1080p and scale with the sequence
 
 const DEFAULTS = {
@@ -75,6 +76,7 @@ const S = {
   previewZoom: 1.0,
   previewHeight: null,
   useInOut: true,
+  transcribeScope: 'inout',
   audio: null,
   audioUrl: '',
   audioMuted: false,
@@ -156,15 +158,44 @@ function saveSettingsSoon() {
   }, 250);
 }
 function wordsKey() { return WORDS_KEY + (S.seq && S.seq.id ? S.seq.id : 'default'); }
+function audioKey() { return AUDIO_KEY + (S.seq && S.seq.id ? S.seq.id : 'default'); }
 function saveWords() {
   try {
     if (S.words.length) localStorage.setItem(wordsKey(), JSON.stringify(S.words));
     else localStorage.removeItem(wordsKey());
   } catch (_) { /* quota — words still live in memory */ }
 }
+function saveAudio() {
+  try {
+    if (S.audioUrl) {
+      localStorage.setItem(audioKey(), JSON.stringify({ url: S.audioUrl, rangeIn: S.audioRangeIn || 0 }));
+    } else {
+      localStorage.removeItem(audioKey());
+    }
+  } catch (_) { /* quota */ }
+}
+function loadAudio() {
+  try {
+    const raw = localStorage.getItem(audioKey());
+    if (raw) {
+      const data = JSON.parse(raw);
+      if (data && data.url) {
+        initAudio(data.url, data.rangeIn || 0);
+        return;
+      }
+    }
+  } catch (_) {}
+  if (S.audio) {
+    try { S.audio.pause(); S.audio.src = ''; } catch (_) {}
+  }
+  S.audioUrl = '';
+  S.audioRangeIn = 0;
+  updateAudioBtn();
+}
 function loadWords() {
   try { S.words = JSON.parse(localStorage.getItem(wordsKey()) || '[]') || []; } catch (_) { S.words = []; }
   S.sel = -1; S.history = []; S.future = []; S.editing = -1;
+  loadAudio();
 }
 
 /* ── effective settings (style scaled to the sequence) ────────── */
@@ -370,6 +401,7 @@ function renderShell() {
     <div class="cc-body" id="cc-body"></div>
     <div class="cc-status hidden" id="cc-status"></div>
     <div class="cc-footer" id="cc-footer"></div>
+    <audio id="cc-audio" preload="auto" style="display:none"></audio>
     <input type="file" id="cc-file" accept="audio/*,video/*" class="hidden">`;
   if (window.ResizeObserver) {
     let lastW = 0;
@@ -382,6 +414,7 @@ function renderShell() {
   }
   window.addEventListener('resize', () => requestAnimationFrame(layoutPreview));
   bindResizer();
+  if (S.audioUrl) initAudio(S.audioUrl, S.audioRangeIn);
   updateAudioBtn();
 }
 
@@ -584,27 +617,42 @@ function drawPreview() {
 function initAudio(url, rangeIn) {
   if (S.audio) {
     try { S.audio.pause(); } catch (_) {}
-    S.audio = null;
   }
   if (!url) {
     S.audioUrl = '';
     S.audioRangeIn = 0;
+    if (S.audio) {
+      try { S.audio.src = ''; } catch (_) {}
+    }
+    saveAudio();
     updateAudioBtn();
     return;
   }
   S.audioUrl = url;
   if (rangeIn != null) S.audioRangeIn = Number(rangeIn) || 0;
+  saveAudio();
   try {
-    const fullUrl = url.startsWith('http') ? url : (getBaseUrl() + url);
-    const a = new Audio(fullUrl);
-    a.preload = 'auto';
-    a.muted = !!S.audioMuted;
-    a.onerror = () => {
-      console.warn('Preview audio failed to load:', fullUrl);
-      S.audio = null;
+    let audioEl = $('#cc-audio');
+    if (!audioEl) {
+      audioEl = document.createElement('audio');
+      audioEl.id = 'cc-audio';
+      audioEl.preload = 'auto';
+      audioEl.style.display = 'none';
+      document.body.appendChild(audioEl);
+    }
+    const fullUrl = (url.startsWith('http') ? url : (getBaseUrl() + url)).replace('://localhost:', '://127.0.0.1:');
+    if (audioEl.src !== fullUrl) {
+      audioEl.src = fullUrl;
+    }
+    audioEl.muted = !!S.audioMuted;
+    audioEl.onerror = (e) => {
+      console.warn('Preview audio failed to load:', fullUrl, e);
       updateAudioBtn();
     };
-    S.audio = a;
+    audioEl.oncanplay = () => {
+      updateAudioBtn();
+    };
+    S.audio = audioEl;
     updateAudioBtn();
   } catch (err) {
     console.warn('Could not initialize audio player:', err);
@@ -629,7 +677,7 @@ function tick(now) {
   if (!S.playing) return;
   const dur = S.scene ? S.scene.duration : 0;
   const rin = S.audioRangeIn || 0;
-  if (S.audio && !S.audio.paused && !S.audio.ended) {
+  if (S.audio && !S.audio.paused && !S.audio.ended && isFinite(S.audio.currentTime)) {
     S.t = S.audio.currentTime + rin;
     lastTick = now;
   } else {
@@ -644,7 +692,8 @@ function tick(now) {
     if (S.audio) {
       try {
         S.audio.currentTime = Math.max(0, startT - rin);
-        S.audio.play().catch(() => {});
+        const p = S.audio.play();
+        if (p && typeof p.catch === 'function') p.catch(() => {});
       } catch (_) {}
     }
   }
@@ -661,12 +710,23 @@ function setPlaying(on) {
   if (b) b.innerHTML = icon(S.playing ? 'pause' : 'play');
   if (S.playing) {
     lastTick = 0;
-    if (S.audio) {
+    if (S.audio && S.audioUrl) {
       try {
         const audioT = Math.max(0, S.t - (S.audioRangeIn || 0));
-        S.audio.currentTime = audioT;
-        S.audio.play().catch(() => {});
-      } catch (_) {}
+        if (isFinite(S.audio.duration) && audioT < S.audio.duration) {
+          S.audio.currentTime = audioT;
+        } else if (audioT === 0 || !isFinite(S.audio.duration)) {
+          S.audio.currentTime = 0;
+        }
+        const p = S.audio.play();
+        if (p && typeof p.catch === 'function') {
+          p.catch((err) => {
+            console.warn('Audio play was prevented or failed:', err);
+          });
+        }
+      } catch (err) {
+        console.warn('Audio playback exception:', err);
+      }
     }
     if (!rafId) rafId = requestAnimationFrame(tick);
   } else {
@@ -859,25 +919,44 @@ function sourceCard() {
   const live = inCEP();
   const hasInOut = !!(S.seq && S.seq.hasInOut);
   const inPt = S.seq && S.seq.inPoint != null ? S.seq.inPoint : 0;
-  const outPt = S.seq && S.seq.outPoint != null ? S.seq.outPoint : (S.seq && S.seq.duration ? S.seq.duration : 0);
+  const seqDur = S.seq && S.seq.duration ? S.seq.duration : 0;
+  const outPt = S.seq && S.seq.outPoint != null ? S.seq.outPoint : seqDur;
   const inOutSpan = fmtTime(Math.max(0, outPt - inPt));
   const inOutText = `${fmtTime(inPt)} – ${fmtTime(outPt)}`;
-  const useInOut = S.useInOut !== false && hasInOut;
+  const fullSpan = fmtTime(seqDur);
+  const fullText = `0:00.0 – ${fullSpan}`;
 
-  const btnLabel = (hasInOut && useInOut)
+  const isInOut = S.transcribeScope === 'inout';
+  const currentSpanText = isInOut ? inOutText : fullText;
+  const currentSpanDuration = isInOut ? inOutSpan : fullSpan;
+  const btnLabel = isInOut
     ? `${icon('mic')} Transcribe In/Out range (${inOutText})`
-    : `${icon('mic')} Transcribe this sequence`;
+    : `${icon('mic')} Transcribe entire sequence (${fullText})`;
 
   return `<div class="cc-source">
+    <div style="margin: 0 0 10px; background: var(--cc-raised, #242424); border: 1px solid var(--cc-line, #383838); border-radius: 6px; padding: 8px 10px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 6px;">
+        <span style="font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--cc-bright, #eee);">Transcription Scope</span>
+        <button class="cc-btn cc-small" data-act="refresh-seq" title="Re-read timeline markers from Premiere" style="padding: 2px 7px; font-size: 11px; height: 22px;">
+          ${icon('refresh')} Re-read Timeline
+        </button>
+      </div>
+      <div class="cc-seg" style="margin-bottom: 6px;">
+        <button type="button" class="${isInOut ? 'cc-on' : ''}" data-act="set-scope" data-scope="inout" title="Transcribe strictly between In and Out points (${inOutText})">
+          In/Out Range (${inOutSpan})
+        </button>
+        <button type="button" class="${!isInOut ? 'cc-on' : ''}" data-act="set-scope" data-scope="full" title="Transcribe entire sequence (${fullSpan})">
+          Full Sequence (${fullSpan})
+        </button>
+      </div>
+      <div style="display:flex; justify-content:space-between; align-items:center; font-size: 11px; color: var(--cc-dim, #aaa);">
+        <span>Region: <b style="color:var(--cc-accent-2, #69a9ff)">${currentSpanText}</b> (${currentSpanDuration})</span>
+        ${hasInOut ? '<span style="color:#7ee787; font-size: 10.5px;">● In/Out marked</span>' : '<span style="font-size: 10.5px; opacity: 0.8;">(no markers set)</span>'}
+      </div>
+    </div>
     <button class="cc-btn cc-primary cc-wide" data-act="transcribe-seq" ${live && !S.busy ? '' : 'disabled'}>${btnLabel}</button>
-    <p class="cc-hint">${live ? 'Uses the timeline audio as cut, so captions line up with your edit. Muted tracks are skipped — mute music first.'
+    <p class="cc-hint">${live ? 'Uses timeline audio as cut, so captions line up with your edit. Muted tracks are skipped — mute music first.'
       : 'Open the panel inside Premiere to transcribe the sequence. You can still upload a file or paste a transcript.'}</p>
-    ${hasInOut ? `<div style="margin:4px 0 6px">
-      <label class="cc-check" style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--cc-bright,#eee);cursor:pointer">
-        <input type="checkbox" id="cc-use-in-out" ${useInOut ? 'checked' : ''} style="cursor:pointer">
-        <span><b>Sequence In/Out active:</b> <span style="color:var(--cc-accent-2,#69a9ff)">${inOutText}</span> (${inOutSpan})</span>
-      </label>
-    </div>` : ''}
     <div class="cc-row2">
       ${ctlSelect('transcribe.language', 'Language', LANGS)}
       ${ctlSelect('transcribe.engine', 'Word timing', [['auto', 'Best available'], ['whisperx', 'WhisperX (precise)'], ['whisper', 'Whisper (fast)']])}
@@ -1149,8 +1228,8 @@ async function transcribeSequence() {
   setBusy({ kind: 'transcribe', label: 'Reading the sequence audio…', progress: null });
   try {
     await refreshSequence(false);
-    const inOutBox = $('#cc-use-in-out');
-    const useInOut = inOutBox ? inOutBox.checked : (S.seq && S.seq.hasInOut);
+    const scope = S.transcribeScope || 'inout';
+    const useInOut = (scope === 'inout');
     S.useInOut = useInOut;
     const clips = await callCM('sequenceAudioClips', { useInOut: useInOut });
     if (!clips.clips || !clips.clips.length) {
@@ -1621,11 +1700,13 @@ function bindEvents() {
     if (seg) {
       const box = seg.parentElement;
       const path = box.dataset.bind;
-      const v = /^-?\d+(\.\d+)?$/.test(seg.dataset.value) ? Number(seg.dataset.value) : seg.dataset.value;
-      setPath(S.settings, path, v);
-      $$('button', box).forEach((b) => b.classList.toggle('cc-on', b === seg));
-      onSetting(path);
-      return;
+      if (path) {
+        const v = /^-?\d+(\.\d+)?$/.test(seg.dataset.value) ? Number(seg.dataset.value) : seg.dataset.value;
+        setPath(S.settings, path, v);
+        $$('button', box).forEach((b) => b.classList.toggle('cc-on', b === seg));
+        onSetting(path);
+        return;
+      }
     }
     const preset = t.closest('[data-preset]');
     if (preset) { applyPreset(preset.dataset.preset); return; }
@@ -1646,7 +1727,7 @@ function bindEvents() {
       return;
     }
     const act = t.closest('[data-act]');
-    if (act && !act.disabled) onAction(act.dataset.act);
+    if (act && !act.disabled) onAction(act.dataset.act, act);
   });
   root.addEventListener('dblclick', (e) => {
     const w = e.target.closest('.cc-w');
@@ -1774,12 +1855,23 @@ function onCanvasDown(e) {
   window.addEventListener('pointercancel', up);
 }
 
-function onAction(act) {
+function onAction(act, el) {
   switch (act) {
     case 'close': closeCaptions(); break;
+    case 'set-scope': {
+      const scope = (el && el.dataset.scope) || 'inout';
+      S.transcribeScope = scope;
+      S.useInOut = (scope === 'inout');
+      renderBody();
+      break;
+    }
     case 'refresh-seq':
-      refreshSequence(false);
-      setStatus(inCEP() ? 'Sequence re-read.' : 'Preview mode — not connected to Premiere.');
+      refreshSequence(false).then(() => {
+        renderBody();
+        setStatus(inCEP() ? 'Timeline markers refreshed.' : 'Preview mode — not connected to Premiere.', 'ok');
+      }).catch((e) => {
+        setStatus('Could not read sequence: ' + formatUserError(e), 'error');
+      });
       break;
     case 'center-x':
       S.settings.layout.posX = 50;

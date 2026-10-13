@@ -388,21 +388,26 @@ export function captionTiming(groups, opts, fps) {
   return groups.map((g, i) => {
     const tIn = ins[i];
     const wordsEnd = g.end + o.offset;
-    const visibleEnd = Math.max(wordsEnd, tIn + o.minDuration);
     let tOut, exitStart;
     if (i + 1 < groups.length) {
       const handoff = ins[i + 1];
-      const held = visibleEnd + o.maxHold;
-      if (handoff <= held) {                 // next caption takes over
+      const speechPause = handoff - wordsEnd;
+      if (speechPause <= 0.12) {
+        // Continuous speech: seamless handoff, 0 gap between captions
         tOut = exitDur > 0 ? handoff + exitDur : handoff;
-        exitStart = exitDur > 0 ? handoff : handoff;
-      } else {                               // silence: clear on our own
-        tOut = held;
-        exitStart = tOut - exitDur;
+        exitStart = handoff;
+      } else {
+        // Real speech pause / silence: clear caption during silence
+        // Hold briefly for readability (at most 0.25s or 40% of pause), then clear
+        const hold = Math.max(0, Math.min(0.25, speechPause * 0.4));
+        const clearTime = Math.max(wordsEnd + hold, tIn + o.minDuration);
+        const maxOut = handoff - (exitDur > 0 ? exitDur : frame);
+        tOut = Math.min(clearTime, Math.max(tIn + frame, maxOut));
+        exitStart = Math.max(tIn, tOut - exitDur);
       }
     } else {
-      tOut = visibleEnd + o.tailHold;
-      exitStart = tOut - exitDur;
+      tOut = Math.max(wordsEnd + o.tailHold, tIn + o.minDuration);
+      exitStart = Math.max(tIn, tOut - exitDur);
     }
     if (tOut <= tIn) tOut = tIn + frame;
     if (exitStart < tIn) exitStart = tIn;

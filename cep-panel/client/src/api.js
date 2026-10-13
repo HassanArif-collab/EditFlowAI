@@ -6,7 +6,8 @@
  */
 
 function getBaseUrl() {
-  return localStorage.editflow_backend_url || 'http://localhost:8765';
+  const url = localStorage.editflow_backend_url || 'http://127.0.0.1:8765';
+  return url.replace('://localhost:', '://127.0.0.1:');
 }
 
 function setBaseUrl(url) {
