@@ -197,6 +197,7 @@ async def transcribe_mixdown(
         # 3. Transcribe (shared with /transcribe-sequence).
         out = await _transcribe_wav(wav_path, fingerprint, language, engine, force, client_id)
         out["bg_url"] = bg_url
+        out["audio_url"] = f"/api/captions/file/{wav_path.name}"
         return out
 
     except HTTPException:
@@ -275,13 +276,31 @@ async def _transcribe_wav(wav_path, fingerprint: str, language: Optional[str], e
     # zero durations and missing timestamps.
     words_out: list[dict] = []
     for seg in result.segments:
-        for w in seg.words:
-            words_out.append({
-                "word": w.word,
-                "start": w.start,
-                "end": w.end,
-                "confidence": w.probability,
-            })
+        if getattr(seg, "words", None):
+            for w in seg.words:
+                words_out.append({
+                    "word": w.word,
+                    "start": w.start,
+                    "end": w.end,
+                    "confidence": getattr(w, "probability", None),
+                })
+        elif getattr(seg, "text", "").strip():
+            # Fallback: segment text exists but word-level alignment missed words
+            # (e.g. fast speech, accents, overlapping audio).
+            # Interpolate word timings across segment duration so zero sentences are dropped.
+            raw_words = seg.text.strip().split()
+            if raw_words:
+                s_dur = max(0.05, seg.end - seg.start)
+                w_step = s_dur / len(raw_words)
+                for idx, rw in enumerate(raw_words):
+                    w_start = round(seg.start + idx * w_step, 3)
+                    w_end = round(seg.start + (idx + 1) * w_step, 3)
+                    words_out.append({
+                        "word": rw,
+                        "start": w_start,
+                        "end": w_end,
+                        "confidence": 0.5,
+                    })
     words_out = sanitize_words(words_out)
 
     return {
@@ -343,6 +362,7 @@ async def transcribe_sequence(req: SequenceTranscribeReq):
         out["mixdown"] = info
         out["skipped"] = skipped
         out["range_in"] = rin
+        out["audio_url"] = f"/api/captions/file/{wav_path.name}"
         return out
     except HTTPException:
         raise
@@ -775,9 +795,11 @@ async def caption_file(name: str):
     from ..config import get_settings
     if not name or "/" in name or "\\" in name or ".." in name:
         raise HTTPException(status_code=400, detail="Bad file name.")
-    if not name.endswith((".mp4", ".mov", ".srt", ".ass", ".jpg", ".png")):
+    if not name.endswith((".mp4", ".mov", ".srt", ".ass", ".jpg", ".png", ".wav")):
         raise HTTPException(status_code=400, detail="Unsupported file type.")
     path = get_settings().DATA_DIR / "output" / "captions" / name
+    if not path.is_file():
+        path = get_settings().DATA_DIR / "media_cache" / "mixdowns" / name
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Not found.")
     return FileResponse(path)

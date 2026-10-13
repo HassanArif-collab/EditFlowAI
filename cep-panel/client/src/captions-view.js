@@ -75,6 +75,10 @@ const S = {
   previewZoom: 1.0,
   previewHeight: null,
   useInOut: true,
+  audio: null,
+  audioUrl: '',
+  audioMuted: false,
+  audioRangeIn: 0,
 };
 
 let root = null;
@@ -124,6 +128,8 @@ const ICONS = {
   eye: '<path d="M12 5C6.5 5 2.7 9.3 1.5 12c1.2 2.7 5 7 10.5 7s9.3-4.3 10.5-7C21.3 9.3 17.5 5 12 5zm0 11a4 4 0 1 1 0-8 4 4 0 0 1 0 8z"/>',
   bg: '<path d="M3 3h8v8H3zM13 13h8v8h-8z"/><path d="M13 3h8v8h-8zM3 13h8v8H3z" opacity=".35"/>',
   camera: '<path d="M9 3L7.17 5H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2h-3.17L15 3H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>',
+  volume: '<path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>',
+  mute: '<path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27l4.73 4.73H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/>',
   close: '<path d="M6.4 5 5 6.4 10.6 12 5 17.6 6.4 19 12 13.4 17.6 19 19 17.6 13.4 12 19 6.4 17.6 5 12 10.6z"/>',
   mic: '<path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-2.1A7 7 0 0 0 19 12z"/>',
   refresh: '<path d="M17.7 6.3A8 8 0 1 0 20 12h-2a6 6 0 1 1-1.8-4.2L13 11h7V4z"/>',
@@ -345,6 +351,7 @@ function renderShell() {
       <span class="cc-time" id="cc-time">0:00.0</span>
       <input type="range" class="cc-scrub" id="cc-scrub" min="0" max="1" step="0.001" value="0" aria-label="Preview time">
       <span class="cc-time cc-dur" id="cc-dur">0:00.0</span>
+      <button class="cc-icon-btn hidden" id="cc-audio-btn" data-act="toggle-audio" title="Mute / unmute audio">${icon('volume')}</button>
       <button class="cc-icon-btn" data-act="capture-frame" title="Grab current sequence frame as background">${icon('camera')}</button>
       <button class="cc-icon-btn" data-act="bg" title="Cycle preview background (Frame / Dark / Checker)">${icon('bg')}</button>
       <div class="cc-zoom-wrap">
@@ -375,6 +382,7 @@ function renderShell() {
   }
   window.addEventListener('resize', () => requestAnimationFrame(layoutPreview));
   bindResizer();
+  updateAudioBtn();
 }
 
 /* ── preview & zoom ───────────────────────────────────────────── */
@@ -558,15 +566,75 @@ function drawPreview() {
   }
 }
 
+/* ── audio player & playback sync ────────────────────────────── */
+
+function initAudio(url, rangeIn) {
+  if (S.audio) {
+    try { S.audio.pause(); } catch (_) {}
+    S.audio = null;
+  }
+  if (!url) {
+    S.audioUrl = '';
+    S.audioRangeIn = 0;
+    updateAudioBtn();
+    return;
+  }
+  S.audioUrl = url;
+  if (rangeIn != null) S.audioRangeIn = Number(rangeIn) || 0;
+  try {
+    const fullUrl = url.startsWith('http') ? url : (getBaseUrl() + url);
+    const a = new Audio(fullUrl);
+    a.preload = 'auto';
+    a.muted = !!S.audioMuted;
+    a.onerror = () => {
+      console.warn('Preview audio failed to load:', fullUrl);
+      S.audio = null;
+      updateAudioBtn();
+    };
+    S.audio = a;
+    updateAudioBtn();
+  } catch (err) {
+    console.warn('Could not initialize audio player:', err);
+  }
+}
+
+function updateAudioBtn() {
+  const b = $('#cc-audio-btn');
+  if (!b) return;
+  if (!S.audioUrl) {
+    b.classList.add('hidden');
+    return;
+  }
+  b.classList.remove('hidden');
+  b.innerHTML = icon(S.audioMuted ? 'mute' : 'volume');
+  b.title = S.audioMuted ? 'Unmute preview audio' : 'Mute preview audio';
+  b.classList.toggle('cc-on', !S.audioMuted);
+}
+
 function tick(now) {
   rafId = 0;
   if (!S.playing) return;
-  const rawDt = lastTick ? (now - lastTick) / 1000 : 0;
-  const dt = Math.min(0.1, Math.max(0, rawDt));
-  lastTick = now;
   const dur = S.scene ? S.scene.duration : 0;
-  S.t += dt;
-  if (dur > 0 && S.t > dur) S.t = 0;          // loop: handy while styling
+  const rin = S.audioRangeIn || 0;
+  if (S.audio && !S.audio.paused && !S.audio.ended) {
+    S.t = S.audio.currentTime + rin;
+    lastTick = now;
+  } else {
+    const rawDt = lastTick ? (now - lastTick) / 1000 : 0;
+    const dt = Math.min(0.1, Math.max(0, rawDt));
+    lastTick = now;
+    S.t += dt;
+  }
+  const startT = (S.words && S.words.length && S.words[0].start != null) ? S.words[0].start : 0;
+  if (dur > 0 && (S.t >= dur || (S.audio && S.audio.ended))) {
+    S.t = startT;
+    if (S.audio) {
+      try {
+        S.audio.currentTime = Math.max(0, startT - rin);
+        S.audio.play().catch(() => {});
+      } catch (_) {}
+    }
+  }
   drawPreview();
   updateTransport();
   highlightPlayingWord();
@@ -580,8 +648,18 @@ function setPlaying(on) {
   if (b) b.innerHTML = icon(S.playing ? 'pause' : 'play');
   if (S.playing) {
     lastTick = 0;
+    if (S.audio) {
+      try {
+        const audioT = Math.max(0, S.t - (S.audioRangeIn || 0));
+        S.audio.currentTime = audioT;
+        S.audio.play().catch(() => {});
+      } catch (_) {}
+    }
     if (!rafId) rafId = requestAnimationFrame(tick);
   } else {
+    if (S.audio) {
+      try { S.audio.pause(); } catch (_) {}
+    }
     if (rafId) {
       cancelAnimationFrame(rafId);
       rafId = 0;
@@ -591,6 +669,14 @@ function setPlaying(on) {
 }
 function seek(t) {
   S.t = clamp(t, 0, S.scene ? S.scene.duration : 0);
+  if (S.audio) {
+    try {
+      const audioT = Math.max(0, S.t - (S.audioRangeIn || 0));
+      if (!isFinite(S.audio.duration) || audioT <= S.audio.duration) {
+        S.audio.currentTime = audioT;
+      }
+    } catch (_) {}
+  }
   requestDraw();
   updateTransport();
   highlightPlayingWord();
@@ -1004,7 +1090,7 @@ function setWords(words, note) {
   S.showSource = false;
   S.pasteOpen = false;
   saveWords();
-  S.t = 0;
+  S.t = (S.words && S.words.length && S.words[0].start != null) ? S.words[0].start : 0;
   renderBody();
   rebuildScene();
   if (note) setStatus(note, 'ok');
@@ -1021,6 +1107,7 @@ function clearTranscript() {
   saveWords();
   S.t = 0;
   setPlaying(false);
+  initAudio('');
   renderBody();
   rebuildScene();
   setStatus('Transcript cleared.', 'ok');
@@ -1048,6 +1135,7 @@ async function transcribeSequence() {
   if (!inCEP() || S.busy) return;
   setBusy({ kind: 'transcribe', label: 'Reading the sequence audio…', progress: null });
   try {
+    await refreshSequence(false);
     const inOutBox = $('#cc-use-in-out');
     const useInOut = inOutBox ? inOutBox.checked : (S.seq && S.seq.hasInOut);
     S.useInOut = useInOut;
@@ -1068,6 +1156,9 @@ async function transcribeSequence() {
     const skipped = (res.skipped || []).length;
     S.sourceName = clips.name || 'Sequence';
     setWords(words, `${words.length} words from “${clips.name}”${rangeLabel} (${res.engine || 'whisper'})${skipped ? ` — ${skipped} offline clip(s) skipped` : ''}.`);
+    if (res.audio_url) {
+      initAudio(res.audio_url, res.range_in || 0);
+    }
     if (!S.bgImage) {
       try { captureSequenceFrame(); } catch (_) {}
     }
@@ -1095,6 +1186,9 @@ async function transcribeFile(file) {
     }
     S.sourceName = file.name;
     setWords(words, `${words.length} words from ${file.name} (${res.engine || 'whisper'}). Times count from the start of the sequence.`);
+    if (res.audio_url) {
+      initAudio(res.audio_url, 0);
+    }
   } catch (e) {
     transcribeError(e);
   } finally {
@@ -1668,6 +1762,11 @@ function onAction(act) {
       setStatus(inCEP() ? 'Sequence re-read.' : 'Preview mode — not connected to Premiere.');
       break;
     case 'play': setPlaying(!S.playing); break;
+    case 'toggle-audio':
+      S.audioMuted = !S.audioMuted;
+      if (S.audio) S.audio.muted = S.audioMuted;
+      updateAudioBtn();
+      break;
     case 'bg':
       if (S.bg === 'checker') {
         S.bg = 'dark';

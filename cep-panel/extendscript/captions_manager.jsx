@@ -129,12 +129,14 @@ captionsManager = (function() {
         try { playhead = Math.max(0, timeSec(seq.getPlayerPosition()) - zero); } catch (e1) {}
 
         var seqIn = 0, seqOut = duration, hasInOut = false;
+        var hasIn = false, hasOut = false;
         try {
             if (seq.getInPoint) {
                 var inTk = seq.getInPoint();
                 if (inTk !== undefined && inTk !== null && inTk !== "") {
                     var inSec = ticksToSec(inTk) - zero;
-                    if (inSec > 0.04) { seqIn = Math.max(0, inSec); hasInOut = true; }
+                    if (inSec > 0.04) { seqIn = Math.max(0, inSec); hasIn = true; }
+                    else if (inSec >= 0) { seqIn = inSec; }
                 }
             }
         } catch (eIn) {}
@@ -143,11 +145,16 @@ captionsManager = (function() {
                 var outTk = seq.getOutPoint();
                 if (outTk !== undefined && outTk !== null && outTk !== "") {
                     var outSec = ticksToSec(outTk) - zero;
-                    if (outSec > 0.04 && outSec < duration - 0.04) { seqOut = Math.max(seqIn + 0.1, outSec); hasInOut = true; }
-                    else if (outSec > 0) { seqOut = outSec; }
+                    if (outSec > 0.04 && outSec < duration - 0.04) {
+                        seqOut = Math.max(seqIn + 0.1, outSec);
+                        hasOut = true;
+                    } else if (outSec > 0) {
+                        seqOut = outSec;
+                    }
                 }
             }
         } catch (eOut) {}
+        hasInOut = hasIn || hasOut;
 
         var out = {
             success: true,
@@ -187,12 +194,14 @@ captionsManager = (function() {
         var duration = Math.max(0, ticksToSec(seq.end) - zero);
 
         var seqIn = 0, seqOut = duration, hasInOut = false;
+        var hasIn = false, hasOut = false;
         try {
             if (seq.getInPoint) {
                 var inTk = seq.getInPoint();
                 if (inTk !== undefined && inTk !== null && inTk !== "") {
                     var inSec = ticksToSec(inTk) - zero;
-                    if (inSec > 0.04) { seqIn = Math.max(0, inSec); hasInOut = true; }
+                    if (inSec > 0.04) { seqIn = Math.max(0, inSec); hasIn = true; }
+                    else if (inSec >= 0) { seqIn = inSec; }
                 }
             }
         } catch (eIn) {}
@@ -201,15 +210,20 @@ captionsManager = (function() {
                 var outTk = seq.getOutPoint();
                 if (outTk !== undefined && outTk !== null && outTk !== "") {
                     var outSec = ticksToSec(outTk) - zero;
-                    if (outSec > 0.04 && outSec < duration - 0.04) { seqOut = Math.max(seqIn + 0.1, outSec); hasInOut = true; }
-                    else if (outSec > 0) { seqOut = outSec; }
+                    if (outSec > 0.04 && outSec < duration - 0.04) {
+                        seqOut = Math.max(seqIn + 0.1, outSec);
+                        hasOut = true;
+                    } else if (outSec > 0) {
+                        seqOut = outSec;
+                    }
                 }
             }
         } catch (eOut) {}
+        hasInOut = hasIn || hasOut;
 
-        var useInOut = options.useInOut === true || (options.useInOut !== false && (options.inPoint != null || hasInOut));
-        var rangeIn = options.inPoint != null ? parseFloat(options.inPoint) : (useInOut && hasInOut ? seqIn : 0);
-        var rangeOut = options.outPoint != null ? parseFloat(options.outPoint) : (useInOut && hasInOut ? seqOut : duration);
+        var useInOut = options.useInOut === true || (options.useInOut !== false && hasInOut);
+        var rangeIn = options.inPoint != null ? parseFloat(options.inPoint) : (useInOut ? seqIn : 0);
+        var rangeOut = options.outPoint != null ? parseFloat(options.outPoint) : (useInOut ? seqOut : duration);
         if (rangeIn < 0) rangeIn = 0;
         if (rangeOut <= rangeIn) rangeOut = duration;
 

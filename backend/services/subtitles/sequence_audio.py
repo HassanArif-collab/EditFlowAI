@@ -112,7 +112,9 @@ def mix_sequence_audio(ffmpeg: str, clips: list[dict], out_wav: Path, duration: 
             buf[a * 2: b * 2] = pcm[: n * 2]
         written.append((a, b))
 
-    if not written:
+    if written:
+        _normalize_pcm(buf)
+    else:
         logger.warning("sequence audio: no audio could be extracted from clips, writing silence")
 
     out_wav.parent.mkdir(parents=True, exist_ok=True)
@@ -135,6 +137,20 @@ def mix_sequence_audio(ffmpeg: str, clips: list[dict], out_wav: Path, duration: 
         raise RuntimeError(clean_system_error(exc, target_path=out_wav)) from exc
 
     return {"duration": round(total, 3), "clips": len(clips), "overlaps": overlaps}
+
+
+def _normalize_pcm(buf: bytearray) -> None:
+    """Peak-normalize int16 PCM buffer to -1 dBFS (~26000 max amplitude) if speech is low volume."""
+    try:
+        import numpy as np
+        samples = np.frombuffer(buf, dtype="<i2")
+        peak = int(np.max(np.abs(samples)))
+        if 100 < peak < 20000:
+            scale = 26000.0 / peak
+            normalized = np.clip(samples.astype(np.float32) * scale, -32768, 32767).astype("<i2")
+            buf[:] = normalized.tobytes()
+    except Exception:
+        pass
 
 
 def _mix_into(buf: bytearray, start: int, pcm: bytes) -> None:

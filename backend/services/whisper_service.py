@@ -844,14 +844,22 @@ class WhisperService:
             # of it is the CPU-bound work. Both the call and the iteration must run
             # off the event loop.
             def _transcribe_call():
-                return self._model.transcribe(
-                    str(audio_path),
-                    task="transcribe",
-                    language=language,
-                    vad_filter=vad_filter,
-                    word_timestamps=word_timestamps,
-                    beam_size=5,
-                )
+                kwargs: Dict[str, Any] = {
+                    "task": "transcribe",
+                    "language": language,
+                    "vad_filter": vad_filter,
+                    "word_timestamps": word_timestamps,
+                    "beam_size": 5,
+                    "condition_on_previous_text": False,
+                }
+                if vad_filter:
+                    kwargs["vad_parameters"] = dict(
+                        threshold=0.35,              # sensitive to quiet speech
+                        min_speech_duration_ms=100,  # capture quick one-word phrases
+                        min_silence_duration_ms=500, # prevent cutting natural pauses
+                        speech_pad_ms=400,           # pad edges so words aren't cut off
+                    )
+                return self._model.transcribe(str(audio_path), **kwargs)
 
             segments_iter, info = await asyncio.to_thread(_transcribe_call)
 

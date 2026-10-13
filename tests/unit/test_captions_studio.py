@@ -399,3 +399,76 @@ def test_sequence_frame_direct_frame_converts_and_serves(client, tmp_path, monke
     assert len(get_resp.content) > 0
 
 
+def test_transcribe_sequence_returns_audio_url_and_serves_wav(client, monkeypatch, tmp_path):
+    from backend.routes import captions
+
+    async def fake_transcribe(wav_path, fingerprint, language, engine, force, client_id):
+        return {"words": [{"text": "sound", "start": 0.5, "end": 1.5}]}
+
+    monkeypatch.setattr(captions, "_transcribe_wav", fake_transcribe)
+
+    dummy_audio = tmp_path / "clip.wav"
+    dummy_audio.write_bytes(b"dummy audio data")
+
+    req = {
+        "clips": [{"path": str(dummy_audio), "start": 0, "end": 5, "in": 0}],
+        "duration": 5.0,
+        "range_in": 2.0,
+        "range_out": 7.0,
+    }
+    resp = client.post("/api/captions/transcribe-sequence", json=req)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "audio_url" in data
+    assert data["audio_url"].startswith("/api/captions/file/")
+    assert data["range_in"] == 2.0
+
+    # Ensure the served WAV endpoint returns 200
+    wav_name = data["audio_url"].replace("/api/captions/file/", "")
+    file_resp = client.get(f"/api/captions/file/{wav_name}")
+    assert file_resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_transcribe_wav_interpolates_unaligned_segments(monkeypatch, tmp_path):
+    from backend.routes import captions
+    from backend.services.whisper_service import whisper_service
+
+    # Simulate whisper result where forced alignment dropped words but segment text exists
+    class FakeSegment:
+        def __init__(self, text, start, end, words):
+            self.text = text
+            self.start = start
+            self.end = end
+            self.words = words
+
+    class FakeResult:
+        def __init__(self):
+            self.segments = [
+                FakeSegment("This whole sentence was quiet and skipped by aligner", 1.0, 4.0, [])
+            ]
+            self.duration = 5.0
+            self.model = "base"
+            self.engine = "whisper"
+
+    async def fake_tf(**kwargs):
+        return FakeResult()
+
+    monkeypatch.setattr(captions, "is_model_installed", lambda m: True)
+    monkeypatch.setattr(whisper_service, "peek_cached_transcript", lambda fp: None)
+    monkeypatch.setattr(whisper_service, "transcribe_fingerprinted", fake_tf)
+
+    dummy_wav = tmp_path / "test.wav"
+    dummy_wav.write_bytes(b"RIFFdummyWAVE")
+
+    res = await captions._transcribe_wav(dummy_wav, "fp123", "en", "whisper", True, None)
+    words = res["words"]
+    # All 9 words in the sentence should be preserved with interpolated timestamps
+    assert len(words) == 9
+    assert words[0]["word"] == "This"
+    assert words[-1]["word"] == "aligner"
+    assert words[0]["start"] >= 1.0
+    assert words[-1]["end"] <= 4.0
+
+
+
