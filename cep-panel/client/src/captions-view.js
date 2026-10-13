@@ -550,10 +550,23 @@ function drawPreview() {
     const bh = fs * (lay.lineHeight || 1.12) * Math.max(1, S.settings.grouping.maxLines || 1);
     const cx = S.seq.width * lay.posX / 100 * k, cy = S.seq.height * lay.posY / 100 * k;
     ctx.save();
+    if (S.drag && Math.abs(lay.posX - 50) < 0.25) {
+      ctx.beginPath();
+      ctx.setLineDash([4, 4]);
+      ctx.strokeStyle = 'rgba(255, 75, 120, 0.85)';
+      ctx.lineWidth = 1;
+      ctx.moveTo(W / 2 + 0.5, 0);
+      ctx.lineTo(W / 2 + 0.5, H);
+      ctx.stroke();
+    }
     ctx.setLineDash([5, 4]);
     ctx.strokeStyle = 'rgba(80,160,255,.9)';
     ctx.lineWidth = 1;
     ctx.strokeRect(cx - bw / 2 + 0.5, cy - bh / 2 + 0.5, bw, bh);
+    ctx.fillStyle = '#50a0ff';
+    const hw = 4, hh = Math.min(22, bh * 0.7);
+    ctx.fillRect(cx - bw / 2 - hw / 2, cy - hh / 2, hw, hh);
+    ctx.fillRect(cx + bw / 2 - hw / 2, cy - hh / 2, hw, hh);
     ctx.restore();
   }
   if (!S.words.length) {
@@ -1300,12 +1313,15 @@ function tabStyle() {
         ${ctlNum('style.bgPad', 'Padding', 0, 60, 1, '%', 100)}` : ''}`)}
     ${section('Position', `
       ${ctlNum('layout.posY', 'Height on screen', 5, 95, 0.5, '%')}
-      ${ctlNum('layout.posX', 'Left / right', 5, 95, 0.5, '%')}
-      ${ctlNum('layout.boxWidth', 'Caption width', 30, 100, 1, '%')}
+      <div style="display:flex;align-items:center;gap:6px">
+        <div style="flex:1">${ctlNum('layout.posX', 'Left / right', 5, 95, 0.5, '%')}</div>
+        <button class="cc-btn cc-small" data-act="center-x" title="Reset horizontal position to exact center (50%)" style="flex:none;height:24px;margin-top:2px">Center 50%</button>
+      </div>
+      ${ctlNum('layout.boxWidth', 'Caption width', 20, 100, 1, '%')}
       ${ctlSeg('grouping.maxLines', 'Lines', [[1, '1 line'], [2, '2 lines'], [3, '3 lines']])}
       ${S.settings.grouping.maxLines > 1 ? ctlNum('layout.lineHeight', 'Line spacing', 0.8, 1.8, 0.01, '×') : ''}
       ${ctlSeg('layout.align', 'Align', [['left', 'Left'], ['center', 'Centre'], ['right', 'Right']])}
-      <p class="cc-hint">Tip: drag the caption in the preview to move it, or drag its sides to change the width.</p>`)}`;
+      <p class="cc-hint">Tip: drag the caption to move it (snaps to center). Drag side handles to adjust width.</p>`)}`;
 }
 
 const SAMPLE = [['Make', 0.0, 0.3], ['every', 0.3, 0.6], ['word', 0.6, 0.9], ['count', 0.9, 1.4]];
@@ -1533,6 +1549,10 @@ function onSetting(path) {
     }
   }
   if (/^(style|motion)\./.test(path) && path !== 'style.fontSize') S.settings.preset = 'custom';
+  if (path === 'layout.align' && S.settings.layout.align === 'center') {
+    S.settings.layout.posX = 50;
+    $$('[data-bind="layout.posX"]').forEach((o) => { o.value = 50; });
+  }
   if (path === 'style.fontFamily') {
     const ws = weightsFor(S.settings.style.fontFamily);
     if (ws.indexOf(Number(S.settings.style.fontWeight)) === -1) {
@@ -1719,18 +1739,18 @@ function onCanvasDown(e) {
     if (!S.drag) return;
     const q = canvasPoint(ev);
     if (S.drag.mode === 'move') {
-      lay.posX = clamp(Math.round((S.drag.posX + q.x - S.drag.x) * 2) / 2, 5, 95);
-      lay.posY = clamp(Math.round((S.drag.posY + q.y - S.drag.y) * 2) / 2, 5, 95);
-    } else if (S.drag.mode === 'left') {
-      const rightEdge = S.drag.posX + S.drag.box / 2;
-      const newLeft = clamp(S.drag.posX - S.drag.box / 2 + (q.x - S.drag.x), 5, rightEdge - 20);
-      lay.boxWidth = clamp(Math.round(rightEdge - newLeft), 20, 100);
-      lay.posX = clamp(Math.round((newLeft + rightEdge) / 2 * 2) / 2, 5, 95);
-    } else if (S.drag.mode === 'right') {
-      const leftEdge = S.drag.posX - S.drag.box / 2;
-      const newRight = clamp(S.drag.posX + S.drag.box / 2 + (q.x - S.drag.x), leftEdge + 20, 95);
-      lay.boxWidth = clamp(Math.round(newRight - leftEdge), 20, 100);
-      lay.posX = clamp(Math.round((leftEdge + newRight) / 2 * 2) / 2, 5, 95);
+      let nx = S.drag.posX + (q.x - S.drag.x);
+      let ny = S.drag.posY + (q.y - S.drag.y);
+      if (Math.abs(nx - 50) < 2.5) nx = 50;
+      if (Math.abs(ny - 72) < 2.0) ny = 72;
+      else if (Math.abs(ny - 50) < 2.0) ny = 50;
+      else if (Math.abs(ny - 20) < 2.0) ny = 20;
+      lay.posX = clamp(Math.round(nx * 2) / 2, 5, 95);
+      lay.posY = clamp(Math.round(ny * 2) / 2, 5, 95);
+    } else if (S.drag.mode === 'left' || S.drag.mode === 'right') {
+      const distFromCenter = Math.abs(q.x - S.drag.posX);
+      lay.boxWidth = clamp(Math.round(distFromCenter * 2), 20, 100);
+      lay.posX = S.drag.posX;
     }
     $$('[data-bind="layout.posX"]').forEach((el) => { el.value = lay.posX; });
     $$('[data-bind="layout.posY"]').forEach((el) => { el.value = lay.posY; });
@@ -1760,6 +1780,12 @@ function onAction(act) {
     case 'refresh-seq':
       refreshSequence(false);
       setStatus(inCEP() ? 'Sequence re-read.' : 'Preview mode — not connected to Premiere.');
+      break;
+    case 'center-x':
+      S.settings.layout.posX = 50;
+      $$('[data-bind="layout.posX"]').forEach((el) => { el.value = 50; });
+      onSetting('layout.posX');
+      setStatus('Caption centered horizontally (50%).', 'ok');
       break;
     case 'play': setPlaying(!S.playing); break;
     case 'toggle-audio':
