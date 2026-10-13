@@ -13,12 +13,14 @@ import asyncio
 import logging
 import os
 from pathlib import Path
+import shutil
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from ..services.whisper_service import whisper_service
+from ..utils.error_helpers import clean_system_error
 from ..utils.progress import manager as ws_manager
 
 logger = logging.getLogger(__name__)
@@ -289,19 +291,37 @@ async def set_whisper_model(request: SetModelRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
     if request.preload:
-        # Delegate to whisper_service which handles BOTH the polling-progress
-        # broadcast AND the actual load atomically. Same code path is now used
-        # by transcribe() so the user sees the progress bar regardless of
-        # which surface triggered the load. Don't duplicate the polling here.
+        # Pre-check disk space if model is not yet installed
+        cache_dir = _hf_cache_dir()
+        meta = next((m for m in _MODEL_CATALOG if m["name"] == request.model), None)
+        if meta and not _is_model_installed(request.model, meta.get("hf_repo_fragments", [])):
+            req_mb = int(meta.get("size_mb", 1000) * 1.1)
+            try:
+                check_path = cache_dir if cache_dir.exists() else cache_dir.parent
+                free_bytes = shutil.disk_usage(check_path).free
+                if free_bytes < req_mb * 1024 * 1024:
+                    free_mb = round(free_bytes / (1024 * 1024), 1)
+                    drive = check_path.drive or "disk"
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Not enough disk space to download '{request.model}'. It requires ~{req_mb} MB, but only {free_mb} MB is free on {drive}. Please free up disk space.",
+                    )
+            except HTTPException:
+                raise
+            except Exception:
+                pass
+
         try:
             await whisper_service._load_model_with_progress()
             result["preloaded"] = True
             result["model_loaded"] = whisper_service._model is not None
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Whisper preload failed for {request.model}: {e}")
             raise HTTPException(
                 status_code=500,
-                detail=f"Model switch succeeded but preload failed: {e}",
+                detail=clean_system_error(e),
             )
 
     return result

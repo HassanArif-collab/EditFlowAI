@@ -590,8 +590,11 @@ async def render_overlay(cues: list[dict], duration: float, style: OverlayStyle,
     alphaextract; the ass-filter path flattened it). Also writes the .ass
     sidecar next to the .mov for NLEs that prefer it.
     """
+    from ...utils.error_helpers import check_and_prune_disk_space, clean_system_error
+
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    check_and_prune_disk_space(out_path.parent, min_mb=250, auto_prune=True, prune_pattern="*.mov", keep_count=5)
     staged = _stage_font(out_path.parent, _resolve_font_file(style.font_family, style.font_bold))
     # Filtergraph-safe font reference: relative to the backend CWD (no
     # drive colon) and single-quoted (the repo path contains spaces —
@@ -639,7 +642,7 @@ async def render_overlay(cues: list[dict], duration: float, style: OverlayStyle,
         # Full stderr goes to the backend log (the 500 detail is truncated);
         # without this, production failures are undiagnosable.
         logger.error("overlay ffmpeg full stderr:\n%s", err)
-        raise RuntimeError(f"ffmpeg overlay render failed: {err[-2000:]}")
+        raise RuntimeError(clean_system_error(err, target_path=out_path))
     ass_path = out_path.with_suffix(".ass")
     try:
         ass_path.write_text(build_ass(cues, style), encoding="utf-8")

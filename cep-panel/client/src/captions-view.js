@@ -497,7 +497,7 @@ async function captureSequenceFrame() {
       throw new Error('No frame image returned');
     }
   } catch (err) {
-    setStatus('Could not grab sequence frame: ' + ((err && err.message) || err), 'error');
+    setStatus('Could not grab sequence frame: ' + formatUserError(err), 'error');
   }
 }
 
@@ -621,6 +621,51 @@ function highlightPlayingWord() {
 }
 
 /* ── status + footer ──────────────────────────────────────────── */
+
+function formatUserError(err) {
+  if (!err) return 'An unknown error occurred.';
+  let msg = '';
+  if (typeof err === 'string') {
+    msg = err;
+  } else if (err.message) {
+    msg = err.message;
+  } else if (err.detail) {
+    msg = typeof err.detail === 'string' ? err.detail : (err.detail.message || JSON.stringify(err.detail));
+  } else if (err.error) {
+    msg = typeof err.error === 'string' ? err.error : JSON.stringify(err.error);
+  } else {
+    try { msg = JSON.stringify(err); } catch (_) { msg = String(err); }
+  }
+
+  // Strip JSON detail wrapper if message has it (e.g. '{"detail":"..."}')
+  const detailMatch = msg.match(/\{"detail"\s*:\s*"([^"]+)"\}/);
+  if (detailMatch) {
+    msg = detailMatch[1];
+  }
+
+  // Strip HTTP method and status prefix if present (e.g. 'POST /api/... → 404: ...')
+  msg = msg.replace(/^(?:GET|POST|PUT|DELETE)\s+\S+\s+→\s+\d+:\s*/i, '');
+
+  // Strip raw FFmpeg hex pointers and bracketed stream tags
+  msg = msg.replace(/\[[a-zA-Z0-9_#:\/\.\s\-]+@\s*(?:0x)?[0-9a-fA-F]+\]/g, '');
+  msg = msg.replace(/@\s*(?:0x)?[0-9a-fA-F]{6,}/g, '');
+
+  // Connection refused / backend offline
+  if (/Failed to fetch|NetworkError|ECONNREFUSED|Connection refused/i.test(msg)) {
+    return 'Cannot connect to EditFlow backend. Please make sure the backend is running.';
+  }
+
+  // GPU memory full
+  if (/CUDA out of memory|GPU memory is full/i.test(msg)) {
+    return 'GPU memory is full. Please switch to CPU in Whisper settings or close other GPU apps.';
+  }
+
+  // Clean redundant whitespace and linebreaks
+  msg = msg.replace(/\s+/g, ' ').trim();
+
+  if (!msg) return 'Operation failed.';
+  return msg.length > 260 ? msg.slice(0, 257) + '…' : msg;
+}
 
 let statusTimer = 0;
 function setStatus(text, kind) {
@@ -991,11 +1036,11 @@ function onWsMessage(ev) {
 }
 
 function transcribeError(e) {
-  const msg = String((e && e.message) || e);
+  const msg = formatUserError(e);
   if (/409|no_model/i.test(msg)) {
     setStatus('No Whisper model installed yet — open Settings (gear icon) to download one, then try again.', 'error');
   } else {
-    setStatus('Transcription failed: ' + msg.slice(0, 220), 'error');
+    setStatus('Transcription failed: ' + msg, 'error');
   }
 }
 
@@ -1320,6 +1365,9 @@ async function exportCaptions() {
     if (inCEP()) {
       setBusy({ kind: 'render', label: 'Placing on the timeline…', progress: null });
       const placed = await callCM('placeOverlay', { path: res.path, start: 0, duration: res.seconds });
+      if (!placed || !placed.success) {
+        throw new Error((placed && placed.error) || 'Failed to place caption overlay on timeline.');
+      }
       res.placed = placed;
       setStatus(`Captions are on ${placed.trackName} (${fmtTime(res.seconds)}).` +
         (placed.removed ? ` Replaced ${placed.removed} earlier caption clip${placed.removed === 1 ? '' : 's'}.` : ''), 'ok');
@@ -1328,7 +1376,7 @@ async function exportCaptions() {
     }
   } catch (e) {
     if (e && e.name === 'AbortError') setStatus('Render cancelled.');
-    else setStatus('Could not add captions: ' + String((e && e.message) || e).slice(0, 260), 'error');
+    else setStatus('Could not add captions: ' + formatUserError(e), 'error');
   } finally {
     setBusy(null);
     if (S.tab === 'export') renderBody();
@@ -1351,7 +1399,7 @@ async function exportSrt(placeTrack) {
       setStatus('SRT saved: ' + S.srtPath, 'ok');
     }
   } catch (e) {
-    setStatus('SRT export failed: ' + String((e && e.message) || e).slice(0, 200), 'error');
+    setStatus('SRT export failed: ' + formatUserError(e), 'error');
   }
   if (S.tab === 'export') renderBody();
 }
@@ -1677,4 +1725,4 @@ try {
   };
 } catch (_) { /* no window (Node harness) */ }
 
-export { openCaptions, closeCaptions };
+export { openCaptions, closeCaptions, formatUserError };

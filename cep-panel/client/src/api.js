@@ -13,6 +13,20 @@ function setBaseUrl(url) {
   localStorage.editflow_backend_url = url;
 }
 
+function extractErrorDetail(text, status, path, method) {
+  if (!text) return `${method} ${path} failed (${status})`;
+  try {
+    const j = JSON.parse(text);
+    if (j && j.detail) {
+      return typeof j.detail === 'string' ? j.detail : (j.detail.message || j.detail.error || JSON.stringify(j.detail));
+    }
+    if (j && (j.error || j.message)) {
+      return j.message || j.error;
+    }
+  } catch (_) {}
+  return text.length > 200 ? text.slice(0, 200) + '…' : text;
+}
+
 /**
  * GET request with timeout.
  */
@@ -30,7 +44,12 @@ async function apiGet(path, { timeoutMs = 5000 } = {}) {
     clearTimeout(timer);
     if (!res.ok) {
       const body = await res.text().catch(() => '');
-      throw new Error(`GET ${path} → ${res.status}: ${body}`);
+      const detail = extractErrorDetail(body, res.status, path, 'GET');
+      const err = new Error(detail);
+      err.status = res.status;
+      err.path = path;
+      err.raw = body;
+      throw err;
     }
     return await res.json();
   } catch (e) {
@@ -60,7 +79,12 @@ async function apiPost(path, body, { timeoutMs = 30000 } = {}) {
     clearTimeout(timer);
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      throw new Error(`POST ${path} → ${res.status}: ${text}`);
+      const detail = extractErrorDetail(text, res.status, path, 'POST');
+      const err = new Error(detail);
+      err.status = res.status;
+      err.path = path;
+      err.raw = text;
+      throw err;
     }
     return await res.json();
   } catch (e) {
@@ -89,7 +113,12 @@ async function apiPut(path, body, { timeoutMs = 30000 } = {}) {
     clearTimeout(timer);
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      throw new Error(`PUT ${path} → ${res.status}: ${text}`);
+      const detail = extractErrorDetail(text, res.status, path, 'PUT');
+      const err = new Error(detail);
+      err.status = res.status;
+      err.path = path;
+      err.raw = text;
+      throw err;
     }
     return await res.json();
   } catch (e) {
@@ -114,7 +143,12 @@ async function apiDelete(path, { timeoutMs = 10000 } = {}) {
     clearTimeout(timer);
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      throw new Error(`DELETE ${path} → ${res.status}: ${text}`);
+      const detail = extractErrorDetail(text, res.status, path, 'DELETE');
+      const err = new Error(detail);
+      err.status = res.status;
+      err.path = path;
+      err.raw = text;
+      throw err;
     }
     return res.status === 204 ? {} : await res.json();
   } catch (e) {
@@ -146,7 +180,12 @@ async function apiUpload(path, file, fields = {}, { timeoutMs = 60000 } = {}) {
     clearTimeout(timer);
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      throw new Error(`UPLOAD ${path} → ${res.status}: ${text}`);
+      const detail = extractErrorDetail(text, res.status, path, 'UPLOAD');
+      const err = new Error(detail);
+      err.status = res.status;
+      err.path = path;
+      err.raw = text;
+      throw err;
     }
     return await res.json();
   } catch (e) {

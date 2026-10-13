@@ -37,6 +37,7 @@ from ..services.subtitles.presets import load_presets
 from ..services.subtitles.srt_export import cues_to_srt
 from ..services.subtitles.word_sanitizer import sanitize_words
 from ..services.whisper_service import whisper_service
+from ..utils.error_helpers import check_and_prune_disk_space, clean_system_error
 from ..utils.progress import ProgressReporter
 from .whisper_admin import is_model_installed
 
@@ -158,6 +159,7 @@ async def transcribe_mixdown(
         # 3. Persist the uploaded media under data/media_cache/mixdowns/ with its true extension.
         mixdowns_dir = get_settings().DATA_DIR / "media_cache" / "mixdowns"
         mixdowns_dir.mkdir(parents=True, exist_ok=True)
+        check_and_prune_disk_space(mixdowns_dir, min_mb=50, auto_prune=True, prune_pattern="*.wav", keep_count=10)
         ext = (file.filename or "").rsplit(".", 1)[-1].lower() if "." in (file.filename or "") else ""
         file_ext = f".{ext}" if ext else ".wav"
         wav_path = mixdowns_dir / f"{fingerprint}{file_ext}"
@@ -203,7 +205,10 @@ async def transcribe_mixdown(
         raise
     except Exception as exc:  # noqa: BLE001
         logger.exception("captions.transcribe_mixdown failed")
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=500,
+            detail=clean_system_error(exc, target_path=wav_path if "wav_path" in locals() else None),
+        ) from exc
 
 
 async def _transcribe_wav(wav_path, fingerprint: str, language: Optional[str], engine: str,
@@ -343,7 +348,10 @@ async def transcribe_sequence(req: SequenceTranscribeReq):
         raise
     except Exception as exc:  # noqa: BLE001
         logger.exception("captions.transcribe_sequence failed")
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=500,
+            detail=clean_system_error(exc, target_path=wav_path if "wav_path" in locals() else None),
+        ) from exc
 
 
 class SequenceFrameReq(BaseModel):
@@ -363,6 +371,7 @@ async def get_sequence_frame(req: SequenceFrameReq):
 
     out_dir = get_settings().DATA_DIR / "output" / "captions"
     out_dir.mkdir(parents=True, exist_ok=True)
+    check_and_prune_disk_space(out_dir, min_mb=20, auto_prune=False)
     out_file = out_dir / "preview_frame.jpg"
 
     # Option A: Frame exported directly by Premiere Pro (exportFramePNG)
@@ -393,7 +402,7 @@ async def get_sequence_frame(req: SequenceFrameReq):
                 return {"url": f"/api/captions/file/{out_file.name}?v={int(_time.time() * 1000)}"}
         except Exception as e:
             logger.warning("sequence_frame clip extract failed: %s", e)
-            raise HTTPException(status_code=400, detail=str(e)) from e
+            raise HTTPException(status_code=400, detail=clean_system_error(e, target_path=out_file)) from e
 
     raise HTTPException(status_code=400, detail="No valid frame path or source clip provided")
 
@@ -436,7 +445,7 @@ async def encode_start(req: EncodeStartReq):
             encoder.start, _ffmpeg_path(), out, req.width, req.height, req.band_y,
             req.band_h if req.band_h is not None else req.height, req.fps_num, req.fps_den, req.codec)
     except (ValueError, RuntimeError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=clean_system_error(exc, target_path=out)) from exc
     return {"job_id": job.id, "path": str(job.path), "frame_bytes": job.frame_bytes}
 
 
@@ -458,7 +467,7 @@ async def encode_frames(job_id: str, request: Request):
         frames = await asyncio.to_thread(encoder.feed, job, body)
     except (ValueError, RuntimeError) as exc:
         encoder.cancel(job_id)
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=clean_system_error(exc, target_path=job.path)) from exc
     return {"frames": frames}
 
 
@@ -470,7 +479,7 @@ async def encode_finish(job_id: str):
         return await asyncio.to_thread(encoder.finish, job)
     except Exception as exc:  # noqa: BLE001
         encoder.cancel(job_id)
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(status_code=500, detail=clean_system_error(exc, target_path=job.path)) from exc
 
 
 @router.post("/encode/{job_id}/cancel")
@@ -752,7 +761,7 @@ async def preview(req: PreviewReq):
         raise
     except Exception as exc:  # noqa: BLE001
         logger.exception("captions.preview failed")
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(status_code=500, detail=clean_system_error(exc)) from exc
 
 
 @router.get("/file/{name}")

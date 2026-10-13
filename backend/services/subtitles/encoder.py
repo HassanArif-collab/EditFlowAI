@@ -103,40 +103,15 @@ def _drain(job: EncodeJob) -> None:
         del job.stderr_tail[:-8192]
 
 
+from ...utils.error_helpers import check_and_prune_disk_space, clean_system_error
+
+
 def _reap_stale() -> None:
     now = time.time()
     with _jobs_lock:
         stale = [j for j in _jobs.values() if now - j.touched > STALE_SECONDS]
     for j in stale:
         cancel(j.id)
-
-
-def _ensure_disk_space(out_dir: Path, min_bytes: int = 250 * 1024 * 1024) -> None:
-    """Ensure out_dir has enough free space; prune older caption files if low."""
-    try:
-        usage = shutil.disk_usage(out_dir)
-        if usage.free < 1024 * 1024 * 1024:  # less than 1 GB free
-            # Auto-prune older .mov files in out_dir, keeping at least 5 newest
-            mov_files = sorted(out_dir.glob("*.mov"), key=lambda p: p.stat().st_mtime)
-            if len(mov_files) > 5:
-                for p in mov_files[:-5]:
-                    try:
-                        p.unlink(missing_ok=True)
-                    except OSError:
-                        pass
-            usage = shutil.disk_usage(out_dir)
-        if usage.free < min_bytes:
-            free_mb = round(usage.free / (1024 * 1024), 1)
-            drive_label = f"drive {out_dir.drive}" if out_dir.drive else "disk"
-            raise RuntimeError(
-                f"Out of disk space: {drive_label} only has {free_mb} MB free space. "
-                f"ProRes caption rendering requires at least {min_bytes // (1024 * 1024)} MB free. "
-                f"Please free up space on {drive_label}."
-            )
-    except RuntimeError:
-        raise
-    except Exception as e:
-        logger.debug("disk space check failed: %s", e)
 
 
 def start(ffmpeg: str, out_path: Path, width: int, height: int, band_y: int, band_h: int,
@@ -154,7 +129,7 @@ def start(ffmpeg: str, out_path: Path, width: int, height: int, band_y: int, ban
         if len(_jobs) >= MAX_JOBS:
             raise RuntimeError("Too many caption renders running — cancel one first.")
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    _ensure_disk_space(out_path.parent)
+    check_and_prune_disk_space(out_path.parent, min_mb=250, auto_prune=True, prune_pattern="*.mov", keep_count=5)
     cmd = build_command(ffmpeg, width, height, band_y, band_h, fps_num, fps_den, out_path, codec)
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
                             stderr=subprocess.PIPE, bufsize=0)
@@ -178,10 +153,7 @@ def get(job_id: str) -> EncodeJob:
 
 def _error(job: EncodeJob) -> str:
     raw = bytes(job.stderr_tail).decode("utf-8", errors="replace").strip()
-    if "No space left on device" in raw:
-        drive_str = f" on drive {job.path.drive}" if job.path.drive else ""
-        return f"Out of disk space{drive_str}. Please free up disk space to save captions."
-    return raw[-600:] or "ffmpeg exited"
+    return clean_system_error(raw or "ffmpeg exited unexpectedly", target_path=job.path)
 
 
 def _write_loop(job: EncodeJob) -> None:

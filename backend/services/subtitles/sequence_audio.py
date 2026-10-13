@@ -86,6 +86,9 @@ def mix_sequence_audio(ffmpeg: str, clips: list[dict], out_wav: Path, duration: 
     """Write the mixed 16 kHz mono WAV. Returns {duration, clips, overlaps}."""
     if not clips:
         raise ValueError("No usable audio clips on unmuted tracks.")
+    from ...utils.error_helpers import check_and_prune_disk_space, clean_system_error
+    check_and_prune_disk_space(out_wav.parent, min_mb=50, auto_prune=True, prune_pattern="*.wav", keep_count=10)
+
     total = max(duration or 0.0, max(c["end"] for c in clips))
     buf = bytearray(int(total * RATE + RATE) * 2)
     written: list[tuple[int, int]] = []        # sample ranges already filled
@@ -108,12 +111,29 @@ def mix_sequence_audio(ffmpeg: str, clips: list[dict], out_wav: Path, duration: 
         else:
             buf[a * 2: b * 2] = pcm[: n * 2]
         written.append((a, b))
+
+    if not written:
+        logger.warning("sequence audio: no audio could be extracted from clips, writing silence")
+
     out_wav.parent.mkdir(parents=True, exist_ok=True)
-    with wave.open(str(out_wav), "wb") as w:
-        w.setnchannels(1)
-        w.setsampwidth(2)
-        w.setframerate(RATE)
-        w.writeframes(bytes(buf))
+    tmp_wav = out_wav.with_suffix(".tmp.wav")
+    try:
+        with wave.open(str(tmp_wav), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(RATE)
+            w.writeframes(bytes(buf))
+        if out_wav.exists():
+            out_wav.unlink(missing_ok=True)
+        tmp_wav.rename(out_wav)
+    except Exception as exc:
+        if tmp_wav.exists():
+            try:
+                tmp_wav.unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise RuntimeError(clean_system_error(exc, target_path=out_wav)) from exc
+
     return {"duration": round(total, 3), "clips": len(clips), "overlaps": overlaps}
 
 
