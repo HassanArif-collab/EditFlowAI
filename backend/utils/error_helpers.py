@@ -90,7 +90,7 @@ def check_and_prune_disk_space(
     target_dir: Path | str,
     min_mb: int = 250,
     auto_prune: bool = True,
-    prune_pattern: str = "*.mov",
+    prune_pattern: str = "*.wav",
     keep_count: int = 5,
 ) -> None:
     """Verify target directory has adequate disk space, auto-pruning old cache if low."""

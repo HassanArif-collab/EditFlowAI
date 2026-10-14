@@ -675,30 +675,56 @@ captionsManager = (function() {
         }
         if (!item) return err("Imported the caption file but could not find it in the project: " + path);
 
-        if (app.beginUndoGroup) app.beginUndoGroup("EditFlow Place Captions");
-        var removed = 0, prefer = -1;
-        for (var v = 0; v < seq.videoTracks.numTracks; v++) {
-            var tr = seq.videoTracks[v];
-            for (var k = tr.clips.numItems - 1; k >= 0; k--) {
-                var clip = tr.clips[k];
-                if (clip.projectItem && isOverlayItem(clip.projectItem)) {
-                    if (prefer < 0) prefer = v;
-                    try { clip.remove(false, false); removed++; } catch (e3) {}
+        function inspectTrackForRange(tr, s, e) {
+            try { if (tr.isLocked && tr.isLocked()) return { blocked: true, overlayClips: [], hasAnyOverlay: false }; } catch (_) {}
+            var overlays = [];
+            var anyOverlay = false;
+            for (var i = 0; i < tr.clips.numItems; i++) {
+                var c = tr.clips[i];
+                var isOv = c.projectItem && isOverlayItem(c.projectItem);
+                if (isOv) anyOverlay = true;
+                var cStart = timeSec(c.start);
+                var cEnd = timeSec(c.end);
+                if (cStart < e - 0.001 && cEnd > s + 0.001) {
+                    if (isOv) {
+                        overlays.push(c);
+                    } else {
+                        return { blocked: true, overlayClips: [], hasAnyOverlay: anyOverlay };
+                    }
+                }
+            }
+            return { blocked: false, overlayClips: overlays, hasAnyOverlay: anyOverlay };
+        }
+
+        var prefer = -1, preferCandidate = null;
+        var firstFree = -1, firstFreeCandidate = null;
+
+        for (var t = 1; t < seq.videoTracks.numTracks; t++) {
+            var insp = inspectTrackForRange(seq.videoTracks[t], start, end);
+            if (!insp.blocked) {
+                if (insp.hasAnyOverlay && prefer < 0) {
+                    prefer = t;
+                    preferCandidate = insp;
+                }
+                if (firstFree < 0) {
+                    firstFree = t;
+                    firstFreeCandidate = insp;
                 }
             }
         }
 
-        var target = -1;
-        if (prefer > 0 && prefer < seq.videoTracks.numTracks && trackFree(seq.videoTracks[prefer], start, end)) {
-            target = prefer;
-        }
-        for (var t = 1; target < 0 && t < seq.videoTracks.numTracks; t++) {
-            if (trackFree(seq.videoTracks[t], start, end)) target = t;
-        }
-        if (target < 0) {
-            if (app.endUndoGroup) app.endUndoGroup();
+        var target = prefer >= 0 ? prefer : firstFree;
+        var chosenCandidate = prefer >= 0 ? preferCandidate : firstFreeCandidate;
+
+        if (target < 0 || !chosenCandidate) {
             return err("No empty, unlocked video track above V1 for the captions. " +
                        "Add one (Sequence > Add Tracks) and run it again.");
+        }
+
+        if (app.beginUndoGroup) app.beginUndoGroup("EditFlow Place Captions");
+        var removed = 0;
+        for (var r = chosenCandidate.overlayClips.length - 1; r >= 0; r--) {
+            try { chosenCandidate.overlayClips[r].remove(false, false); removed++; } catch (e3) {}
         }
 
         var zeroTicks = 0;

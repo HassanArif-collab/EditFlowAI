@@ -46,7 +46,9 @@ export async function renderOverlay(scene, settings, opts) {
   const fps = scene.fps;
   const W = scene.width, H = scene.height;
   const band = captionBand(scene, settings);
-  const total = Math.max(1, frameCount(scene.duration, fps));
+  const tStart = Math.max(0, Number(o.tStart) || 0);
+  const duration = Math.max(0.1, Number(o.duration != null ? o.duration : (scene.duration - tStart)));
+  const total = Math.max(1, frameCount(duration, fps));
   const base = o.baseUrl || '';
   let job = null;
   job = await post(base, '/api/captions/encode/start', {
@@ -73,7 +75,7 @@ export async function renderOverlay(scene, settings, opts) {
   try {
     for (let k = 0; k < total; k++) {
       if (o.signal && o.signal.aborted) throw new DOMException('Cancelled', 'AbortError');
-      const t = frameTime(k, fps);
+      const t = tStart + frameTime(k, fps);
       const key = frameKey(scene, t, settings.motion);
       if (key === lastKey) {
         repeat++;
@@ -97,7 +99,7 @@ export async function renderOverlay(scene, settings, opts) {
     await send();
     if (o.onProgress) o.onProgress(total, total, 0);
     const fin = await post(base, `/api/captions/encode/${job.job_id}/finish`, {}, o.signal);
-    return Object.assign({ band, renderSeconds: (performance.now() - t0) / 1000 }, fin);
+    return Object.assign({ band, renderSeconds: (performance.now() - t0) / 1000, tStart, duration }, fin);
   } catch (e) {
     if (job && job.job_id) {
       try { await fetch(`${base}/api/captions/encode/${job.job_id}/cancel`, { method: 'POST' }); } catch (_) { /* ignore */ }

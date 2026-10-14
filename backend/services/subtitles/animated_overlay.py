@@ -594,7 +594,7 @@ async def render_overlay(cues: list[dict], duration: float, style: OverlayStyle,
 
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    check_and_prune_disk_space(out_path.parent, min_mb=250, auto_prune=True, prune_pattern="*.mov", keep_count=5)
+    check_and_prune_disk_space(out_path.parent, min_mb=250, auto_prune=False)
     staged = _stage_font(out_path.parent, _resolve_font_file(style.font_family, style.font_bold))
     # Filtergraph-safe font reference: relative to the backend CWD (no
     # drive colon) and single-quoted (the repo path contains spaces —

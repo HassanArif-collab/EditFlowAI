@@ -1564,11 +1564,26 @@ async function exportCaptions() {
   const ctrl = new AbortController();
   const scene = S.scene;
   const eff = effSettings();
+  // Determine tStart and duration based on In/Out scope or sequence timeline
+  let tStart = 0;
+  if (S.scope === 'inout' && S.seq && S.seq.hasInOut) {
+    tStart = Math.max(0, Number(S.seq.inPoint) || 0);
+  } else if (S.audioRangeIn > 0) {
+    tStart = S.audioRangeIn;
+  }
+  let duration = scene.duration - tStart;
+  if (S.scope === 'inout' && S.seq && S.seq.hasInOut && S.seq.outPoint > tStart) {
+    duration = Math.max(0.1, S.seq.outPoint - tStart);
+  } else {
+    duration = Math.max(0.1, duration);
+  }
+
   setBusy({ kind: 'render', label: 'Preparing…', progress: 0, cancel: () => ctrl.abort() });
   try {
     await ensureFont(eff.style.fontFamily, eff.style.fontWeight);
     const res = await renderOverlay(scene, eff, {
       baseUrl: getBaseUrl(), name: S.seq.name, codec: S.settings.output.codec, signal: ctrl.signal,
+      tStart: tStart, duration: duration,
       onProgress: (done, total, eta) => {
         if (!S.busy) return;
         S.busy.progress = done / total;
@@ -1579,12 +1594,12 @@ async function exportCaptions() {
     S.lastRender = res;
     if (inCEP()) {
       setBusy({ kind: 'render', label: 'Placing on the timeline…', progress: null });
-      const placed = await callCM('placeOverlay', { path: res.path, start: 0, duration: res.seconds });
+      const placed = await callCM('placeOverlay', { path: res.path, start: tStart, duration: res.seconds });
       if (!placed || !placed.success) {
         throw new Error((placed && placed.error) || 'Failed to place caption overlay on timeline.');
       }
       res.placed = placed;
-      setStatus(`Captions are on ${placed.trackName} (${fmtTime(res.seconds)}).` +
+      setStatus(`Captions are on ${placed.trackName} at ${fmtTime(tStart)} (${fmtTime(res.seconds)}).` +
         (placed.removed ? ` Replaced ${placed.removed} earlier caption clip${placed.removed === 1 ? '' : 's'}.` : ''), 'ok');
     } else {
       setStatus(`Rendered ${res.frames} frames → ${res.path}`, 'ok');

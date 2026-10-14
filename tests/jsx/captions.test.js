@@ -342,6 +342,44 @@ test('placeOverlay refuses (with a clear message) when no video track is free', 
   assert.match(res.error, /Add one \(Sequence > Add Tracks\)/);
 });
 
+test('placeOverlay preserves non-overlapping captions on the same track', () => {
+  const host = makeHost();
+  const tl = makeTimeline(host, { video: [
+    [{ path: 'G:\\footage.mov', start: 0, end: 60 }],
+    [{ path: 'G:\\EditFlowAI\\data\\output\\captions\\overlay-part1.mov', start: 0, end: 15 }],
+    [],
+  ] });
+  const sb = loadWithTime(host);
+  const newPath = 'G:\\EditFlowAI\\data\\output\\captions\\EditFlow Captions - Short 01 - part2.mov';
+  stubBins(host, 'EditFlow Captions - Short 01 - part2.mov', newPath);
+  const res = callCM(sb, 'placeOverlay', { path: newPath, start: 20, duration: 15 });
+  assert.equal(res.success, true, res.error);
+  assert.equal(res.removed, 0, 'part1 is not overlapping, so it must NOT be removed');
+  assert.equal(res.track, 1, 'prefers existing caption track V2');
+  assert.equal(tl.placed[0].ticks, String(Math.round(20 * TICKS)));
+  assert.equal(tl.removed.length, 0);
+});
+
+test('placeOverlay replaces only overlapping caption on the target track', () => {
+  const host = makeHost();
+  const tl = makeTimeline(host, { video: [
+    [{ path: 'G:\\footage.mov', start: 0, end: 60 }],
+    [
+      { path: 'G:\\EditFlowAI\\data\\output\\captions\\overlay-part1.mov', start: 0, end: 15 },
+      { path: 'G:\\EditFlowAI\\data\\output\\captions\\overlay-part2-old.mov', start: 20, end: 35 },
+    ],
+  ] });
+  const sb = loadWithTime(host);
+  const newPath = 'G:\\EditFlowAI\\data\\output\\captions\\EditFlow Captions - Short 01 - part2-new.mov';
+  stubBins(host, 'EditFlow Captions - Short 01 - part2-new.mov', newPath);
+  const res = callCM(sb, 'placeOverlay', { path: newPath, start: 20, duration: 15 });
+  assert.equal(res.success, true, res.error);
+  assert.equal(res.removed, 1, 'only overlapping part2-old is removed');
+  assert.deepEqual(tl.removed, [{ name: 'overlay-part2-old.mov', ripple: false, align: false }]);
+  assert.equal(res.track, 1, 'reuses V2');
+  assert.equal(tl.placed[0].ticks, String(Math.round(20 * TICKS)));
+});
+
 test('sequenceAudioClips trims and filters to In/Out range when specified', () => {
   const host = makeHost();
   makeTimeline(host, { video: [[]], audio: [

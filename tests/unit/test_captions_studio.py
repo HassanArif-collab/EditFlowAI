@@ -504,3 +504,24 @@ def test_extract_command_applies_volume_filter():
     assert "-af" in cmd_both
     af_idx = cmd_both.index("-af")
     assert "atempo=1.500000,volume=0.2500" in cmd_both[af_idx + 1]
+
+
+@needs_ffmpeg
+def test_encoder_does_not_prune_mov_files(tmp_path, monkeypatch):
+    calls = []
+    def mock_prune(target_dir, min_mb=250, auto_prune=True, **kwargs):
+        calls.append({"target_dir": target_dir, "min_mb": min_mb, "auto_prune": auto_prune})
+
+    monkeypatch.setattr(encoder, "check_and_prune_disk_space", mock_prune)
+    out_mov = tmp_path / "test.mov"
+    (tmp_path / "old1.mov").write_bytes(b"mov1")
+    (tmp_path / "old2.mov").write_bytes(b"mov2")
+    job = encoder.start(FFMPEG, out_mov, 64, 64, 0, 64, 30, 1)
+    try:
+        assert len(calls) == 1
+        assert calls[0]["auto_prune"] is False, "encoder must NEVER auto_prune .mov files"
+        assert (tmp_path / "old1.mov").exists()
+        assert (tmp_path / "old2.mov").exists()
+    finally:
+        encoder.cancel(job.id)
+

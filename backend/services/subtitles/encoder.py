@@ -129,7 +129,7 @@ def start(ffmpeg: str, out_path: Path, width: int, height: int, band_y: int, ban
         if len(_jobs) >= MAX_JOBS:
             raise RuntimeError("Too many caption renders running — cancel one first.")
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    check_and_prune_disk_space(out_path.parent, min_mb=250, auto_prune=True, prune_pattern="*.mov", keep_count=5)
+    check_and_prune_disk_space(out_path.parent, min_mb=250, auto_prune=False)
     cmd = build_command(ffmpeg, width, height, band_y, band_h, fps_num, fps_den, out_path, codec)
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
                             stderr=subprocess.PIPE, bufsize=0)
