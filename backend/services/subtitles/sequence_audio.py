@@ -34,6 +34,7 @@ def clean_clips(clips: list[dict]) -> tuple[list[dict], list[dict]]:
             start, end = float(c.get("start", 0)), float(c.get("end", 0))
             src_in = float(c.get("in", 0))
             src_out = float(c.get("out", src_in + (end - start)))
+            vol = float(c.get("volume", 1.0))
         except (TypeError, ValueError):
             skipped.append({"path": path, "reason": "bad times"})
             continue
@@ -43,8 +44,11 @@ def clean_clips(clips: list[dict]) -> tuple[list[dict], list[dict]]:
         if end - start < 0.02 or src_out <= src_in:
             skipped.append({"path": path, "reason": "empty or reversed clip"})
             continue
+        if vol <= 0.005:
+            skipped.append({"path": path, "reason": "muted in sequence"})
+            continue
         ok.append({"path": path, "start": max(0.0, start), "end": end, "in": max(0.0, src_in),
-                   "out": src_out, "speed": (src_out - src_in) / (end - start)})
+                   "out": src_out, "speed": (src_out - src_in) / (end - start), "volume": vol})
     ok.sort(key=lambda c: c["start"])
     return ok, skipped
 
@@ -58,7 +62,9 @@ def fingerprint(clips: list[dict], extra: str = "") -> str:
             stamp = f"{st.st_size}:{int(st.st_mtime)}"
         except OSError:
             stamp = "?"
-        items.append([c["path"], stamp, round(c["start"], 3), round(c["end"], 3), round(c["in"], 3), round(c.get("out", 0), 3)])
+        items.append([c["path"], stamp, round(c["start"], 3), round(c["end"], 3),
+                      round(c["in"], 3), round(c.get("out", 0), 3),
+                      round(float(c.get("volume", 1.0)), 3)])
     return hashlib.sha256((json.dumps(items) + "|" + extra).encode("utf-8")).hexdigest()[:16]
 
 
@@ -77,8 +83,14 @@ def extract_command(ffmpeg: str, clip: dict) -> list[str]:
     cmd = [ffmpeg, "-v", "error", "-nostdin", "-ss", f"{clip['in']:.3f}",
            "-accurate_seek", "-i", clip["path"],
            "-t", f"{clip['out'] - clip['in']:.3f}", "-vn"]
-    if abs(clip["speed"] - 1.0) > 0.01:
-        cmd += ["-af", _atempo(clip["speed"])]
+    filters = []
+    if abs(clip.get("speed", 1.0) - 1.0) > 0.01:
+        filters.append(_atempo(clip["speed"]))
+    vol = float(clip.get("volume", 1.0))
+    if abs(vol - 1.0) > 0.01:
+        filters.append(f"volume={vol:.4f}")
+    if filters:
+        cmd += ["-af", ",".join(filters)]
     return cmd + ["-ac", "1", "-ar", str(RATE), "-f", "s16le", "-"]
 
 
@@ -140,15 +152,15 @@ def mix_sequence_audio(ffmpeg: str, clips: list[dict], out_wav: Path, duration: 
 
 
 def _normalize_pcm(buf: bytearray) -> None:
-    """Peak-normalize int16 PCM buffer to -1 dBFS (~26000 max amplitude) if speech is low volume."""
+    """Soft-limit int16 PCM buffer only if overlapping tracks exceed digital ceiling (clipping protection)."""
     try:
         import numpy as np
         samples = np.frombuffer(buf, dtype="<i2")
         peak = int(np.max(np.abs(samples)))
-        if 100 < peak < 20000:
-            scale = 26000.0 / peak
-            normalized = np.clip(samples.astype(np.float32) * scale, -32768, 32767).astype("<i2")
-            buf[:] = normalized.tobytes()
+        if peak > 32000:
+            scale = 31500.0 / peak
+            limited = np.clip(samples.astype(np.float32) * scale, -32768, 32767).astype("<i2")
+            buf[:] = limited.tobytes()
     except Exception:
         pass
 

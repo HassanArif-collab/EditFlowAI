@@ -37,6 +37,7 @@ export const STYLE_DEFAULTS = {
   bgOpacity: 0.6,
   bgRadius: 0.35,           // 0 square … 1 full pill
   bgPad: 0.22,              // em
+  bgPadY: 0.165,            // em (vertical padding)
   hlBoxColor: '#6d4aff',    // highlight: box
 };
 
@@ -141,7 +142,7 @@ function drawCaption(ctx, c, scene, st, motion, t, sc) {
   const mode = highlightMode(motion);
   const asc = c.ascent, desc = c.descent;
   const pad = (st.bgPad != null ? st.bgPad : 0.22) * fs;
-  const padY = pad * 0.75;
+  const padY = st.bgPadY != null ? st.bgPadY * fs : pad * 0.75;
   ctx.save();
   if (c.fit < 1) { ctx.translate(c.cx, c.cy); ctx.scale(c.fit, c.fit); ctx.translate(-c.cx, -c.cy); }
   const devScale = sc * c.fit;

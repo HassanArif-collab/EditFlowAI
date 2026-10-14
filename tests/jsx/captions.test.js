@@ -417,3 +417,64 @@ test('captureSequenceFrame exports frame using exportFramePNG with timecode and 
   assert.match(exportedTimecode, /^\d{2}:\d{2}:\d{2}:\d{2}$/);
 });
 
+test('sequenceInfo correctly detects sequence In/Out points in seconds and Time objects', () => {
+  const host = makeHost();
+  makeTimeline(host, { video: [[]], audio: [{ clips: [] }] });
+  const seq = host.app.project.activeSequence;
+  seq.getInPoint = () => '4.25';
+  seq.getOutPoint = () => '17.80';
+  const sb = loadWithTime(host);
+  const info = callCM(sb, 'sequenceInfo');
+  assert.equal(info.success, true);
+  assert.equal(info.inPoint, 4.25);
+  assert.equal(info.outPoint, 17.80);
+  assert.equal(info.hasInOut, true);
+});
+
+test('sequenceInfo handles unset In/Out markers cleanly', () => {
+  const host = makeHost();
+  makeTimeline(host, { video: [[]], audio: [{ clips: [] }] });
+  const seq = host.app.project.activeSequence;
+  seq.getInPoint = () => '0';
+  seq.getOutPoint = () => '0';
+  const sb = loadWithTime(host);
+  const info = callCM(sb, 'sequenceInfo');
+  assert.equal(info.success, true);
+  assert.equal(info.inPoint, 0);
+  assert.equal(info.outPoint, 60);
+  assert.equal(info.hasInOut, false);
+});
+
+test('sequenceAudioClips reads clip volume level and applies it', () => {
+  const host = makeHost();
+  makeTimeline(host, { video: [[]], audio: [
+    { clips: [
+      { path: 'G:\\loud.mov', start: 0, end: 5, in: 0 },
+      { path: 'G:\\quiet_sfx.mov', start: 5, end: 10, in: 0 },
+    ] }
+  ] });
+  const seq = host.app.project.activeSequence;
+  // Mock Volume component on the second clip (quiet_sfx: -20 dB -> ~0.0177828)
+  const track = seq.audioTracks[0];
+  const c1 = track.clips[0];
+  const c2 = track.clips[1];
+  c2.components = [
+    {
+      displayName: 'Volume',
+      properties: [
+        { displayName: 'Bypass', getValue: () => 0 },
+        { displayName: 'Level', getValue: () => 0.01778279 } // -20 dB
+      ]
+    }
+  ];
+  c2.components.numItems = 1;
+  c2.components[0].properties.numItems = 2;
+
+  const sb = loadWithTime(host);
+  const res = callCM(sb, 'sequenceAudioClips');
+  assert.equal(res.success, true);
+  assert.equal(res.clips.length, 2);
+  assert.equal(res.clips[0].volume, 1.0);
+  assert.ok(Math.abs(res.clips[1].volume - 0.10) < 0.01, `quiet_sfx volume should be ~0.10, got ${res.clips[1].volume}`);
+});
+

@@ -117,6 +117,121 @@ captionsManager = (function() {
 
     function normPath(p) { return String(p || "").replace(/\\/g, "/").toLowerCase(); }
 
+    function parseSequencePoint(val, seqZero) {
+        if (val === undefined || val === null || val === "") return null;
+        var sec = null;
+        if (typeof val === "object") {
+            if (val.seconds !== undefined) {
+                sec = parseFloat(val.seconds);
+            } else if (val.ticks !== undefined) {
+                sec = parseFloat(val.ticks) / TICKS;
+            }
+        } else {
+            var num = parseFloat(val);
+            if (!isNaN(num)) {
+                if (num > 100000000) {
+                    sec = num / TICKS;
+                } else {
+                    sec = num;
+                }
+            }
+        }
+        if (sec === null || isNaN(sec)) return null;
+        if (seqZero > 0 && sec >= seqZero) {
+            sec = sec - seqZero;
+        }
+        return Math.max(0, sec);
+    }
+
+    function getSequenceInOut(seq, zero, duration) {
+        var seqIn = 0, seqOut = duration;
+        var rawIn = null, rawOut = null;
+        try {
+            if (seq.getInPointAsTime) rawIn = seq.getInPointAsTime();
+            else if (seq.getInPoint) rawIn = seq.getInPoint();
+        } catch (_) {}
+        try {
+            if (seq.getOutPointAsTime) rawOut = seq.getOutPointAsTime();
+            else if (seq.getOutPoint) rawOut = seq.getOutPoint();
+        } catch (_) {}
+
+        var inSec = parseSequencePoint(rawIn, zero);
+        var outSec = parseSequencePoint(rawOut, zero);
+
+        var hasIn = false;
+        if (inSec !== null) {
+            if (inSec > 0.04) {
+                seqIn = inSec;
+                hasIn = true;
+            } else {
+                seqIn = Math.max(0, inSec);
+            }
+        }
+
+        var hasOut = false;
+        if (outSec !== null && outSec > 0.04) {
+            if (duration > 0 && outSec < duration - 0.04) {
+                seqOut = outSec;
+                hasOut = true;
+            } else if (duration > 0 && outSec >= duration - 0.04) {
+                seqOut = duration;
+            } else {
+                seqOut = outSec;
+                hasOut = true;
+            }
+        } else {
+            seqOut = duration;
+        }
+
+        if (seqOut <= seqIn) {
+            seqOut = duration;
+            hasOut = false;
+        }
+
+        return {
+            inPoint: seqIn,
+            outPoint: seqOut,
+            hasInOut: hasIn || hasOut,
+            hasIn: hasIn,
+            hasOut: hasOut
+        };
+    }
+
+    function getClipVolume(clip) {
+        try {
+            if (!clip || !clip.components) return 1.0;
+            for (var i = 0; i < clip.components.numItems; i++) {
+                var comp = clip.components[i];
+                var mName = "", dName = "";
+                try { mName = String(comp.matchName || ""); } catch (_) {}
+                try { dName = String(comp.displayName || ""); } catch (_) {}
+                if (mName === "AE.ADBE Audio Volume" || dName === "Volume" || mName.indexOf("Volume") !== -1 || dName.indexOf("Volume") !== -1) {
+                    if (comp.properties) {
+                        for (var j = 0; j < comp.properties.numItems; j++) {
+                            var prop = comp.properties[j];
+                            var pName = "";
+                            try { pName = String(prop.displayName || prop.name || ""); } catch (_) {}
+                            if (pName === "Level" || pName === "Volume" || pName.indexOf("Level") !== -1) {
+                                var val = prop.getValue();
+                                if (val !== undefined && val !== null) {
+                                    var num = parseFloat(val);
+                                    if (!isNaN(num)) {
+                                        if (num <= -50) return 0.0;
+                                        if (num < 0) return Math.pow(10, num / 20);
+                                        if (num <= 0.0001) return 0.0;
+                                        var mult = num / 0.17782794;
+                                        return Math.max(0.0, mult);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (_) {}
+        return 1.0;
+    }
+
     /** Facts about the active sequence — cheap (no clip walk). */
     function sequenceInfo(options) {
         var seq = app.project ? app.project.activeSequence : null;
@@ -128,33 +243,7 @@ captionsManager = (function() {
         var playhead = 0;
         try { playhead = Math.max(0, timeSec(seq.getPlayerPosition()) - zero); } catch (e1) {}
 
-        var seqIn = 0, seqOut = duration, hasInOut = false;
-        var hasIn = false, hasOut = false;
-        try {
-            if (seq.getInPoint) {
-                var inTk = seq.getInPoint();
-                if (inTk !== undefined && inTk !== null && inTk !== "") {
-                    var inSec = ticksToSec(inTk) - zero;
-                    if (inSec > 0.04) { seqIn = Math.max(0, inSec); hasIn = true; }
-                    else if (inSec >= 0) { seqIn = inSec; }
-                }
-            }
-        } catch (eIn) {}
-        try {
-            if (seq.getOutPoint) {
-                var outTk = seq.getOutPoint();
-                if (outTk !== undefined && outTk !== null && outTk !== "") {
-                    var outSec = ticksToSec(outTk) - zero;
-                    if (outSec > 0.04 && outSec < duration - 0.04) {
-                        seqOut = Math.max(seqIn + 0.1, outSec);
-                        hasOut = true;
-                    } else if (outSec > 0) {
-                        seqOut = outSec;
-                    }
-                }
-            }
-        } catch (eOut) {}
-        hasInOut = hasIn || hasOut;
+        var inOut = getSequenceInOut(seq, zero, duration);
 
         var out = {
             success: true,
@@ -167,9 +256,9 @@ captionsManager = (function() {
             duration: duration,
             zeroPoint: zero,
             playhead: playhead,
-            inPoint: seqIn,
-            outPoint: seqOut,
-            hasInOut: hasInOut,
+            inPoint: inOut.inPoint,
+            outPoint: inOut.outPoint,
+            hasInOut: inOut.hasInOut,
             videoTracks: seq.videoTracks.numTracks,
             audioTracks: []
         };
@@ -193,43 +282,26 @@ captionsManager = (function() {
         try { if (seq.zeroPoint) zero = ticksToSec(seq.zeroPoint); } catch (ez) {}
         var duration = Math.max(0, ticksToSec(seq.end) - zero);
 
-        var seqIn = 0, seqOut = duration, hasInOut = false;
-        var hasIn = false, hasOut = false;
-        try {
-            if (seq.getInPoint) {
-                var inTk = seq.getInPoint();
-                if (inTk !== undefined && inTk !== null && inTk !== "") {
-                    var inSec = ticksToSec(inTk) - zero;
-                    if (inSec > 0.04) { seqIn = Math.max(0, inSec); hasIn = true; }
-                    else if (inSec >= 0) { seqIn = inSec; }
-                }
-            }
-        } catch (eIn) {}
-        try {
-            if (seq.getOutPoint) {
-                var outTk = seq.getOutPoint();
-                if (outTk !== undefined && outTk !== null && outTk !== "") {
-                    var outSec = ticksToSec(outTk) - zero;
-                    if (outSec > 0.04 && outSec < duration - 0.04) {
-                        seqOut = Math.max(seqIn + 0.1, outSec);
-                        hasOut = true;
-                    } else if (outSec > 0) {
-                        seqOut = outSec;
-                    }
-                }
-            }
-        } catch (eOut) {}
-        hasInOut = hasIn || hasOut;
+        var inOut = getSequenceInOut(seq, zero, duration);
 
-        var useInOut = options.useInOut === true || (options.useInOut !== false && hasInOut);
-        var rangeIn = options.inPoint != null ? parseFloat(options.inPoint) : (useInOut ? seqIn : 0);
-        var rangeOut = options.outPoint != null ? parseFloat(options.outPoint) : (useInOut ? seqOut : duration);
+        var useInOut = options.useInOut === true || (options.useInOut !== false && inOut.hasInOut);
+        var rangeIn = options.inPoint != null ? parseFloat(options.inPoint) : (useInOut ? inOut.inPoint : 0);
+        var rangeOut = options.outPoint != null ? parseFloat(options.outPoint) : (useInOut ? inOut.outPoint : duration);
         if (rangeIn < 0) rangeIn = 0;
         if (rangeOut <= rangeIn) rangeOut = duration;
+
+        var trackFilter = null;
+        if (options.tracks && options.tracks.length) {
+            trackFilter = {};
+            for (var ti = 0; ti < options.tracks.length; ti++) {
+                trackFilter[String(options.tracks[ti])] = true;
+            }
+        }
 
         var clips = [], nested = 0;
         var seenIntervals = {};
         for (var i = 0; i < seq.audioTracks.numTracks; i++) {
+            if (trackFilter && !trackFilter[String(i)]) continue;
             var tr = seq.audioTracks[i];
             var muted = false;
             try { muted = tr.isMuted(); } catch (e1) {}
@@ -254,6 +326,9 @@ captionsManager = (function() {
                 var segEnd = Math.min(cEnd, rangeOut);
                 if (segEnd - segStart < 0.015) continue;
 
+                var clipVol = getClipVolume(c);
+                if (clipVol <= 0.005) continue; // effectively muted/silent in Premiere
+
                 var durOriginal = Math.max(0.001, cEnd - cStart);
                 var speed = (cOut - cIn) / durOriginal;
                 var srcIn = cIn + trimStart * speed;
@@ -271,13 +346,14 @@ captionsManager = (function() {
                              start: segStart - rangeIn,
                              end: segEnd - rangeIn,
                              "in": srcIn, out: srcOut,
+                             volume: Math.round(clipVol * 10000) / 10000,
                              timelineStart: segStart, timelineEnd: segEnd });
             }
         }
         var effectiveDur = Math.max(0, rangeOut - rangeIn);
         return { success: true, name: seq.name, clips: clips, nested: nested,
                  duration: effectiveDur, totalDuration: duration,
-                 rangeIn: rangeIn, rangeOut: rangeOut, hasInOut: hasInOut,
+                 rangeIn: rangeIn, rangeOut: rangeOut, hasInOut: inOut.hasInOut,
                  zeroPoint: zero };
     }
 

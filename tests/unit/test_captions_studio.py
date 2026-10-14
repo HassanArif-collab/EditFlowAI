@@ -471,4 +471,36 @@ async def test_transcribe_wav_interpolates_unaligned_segments(monkeypatch, tmp_p
     assert words[-1]["end"] <= 4.0
 
 
+def test_clean_clips_handles_clip_volume(tmp_path):
+    f = tmp_path / "audio.wav"
+    f.write_bytes(b"dummy")
 
+    clips = [
+        {"path": str(f), "start": 0, "end": 5, "in": 0, "volume": 1.0},
+        {"path": str(f), "start": 5, "end": 10, "in": 0, "volume": 0.15},
+        {"path": str(f), "start": 10, "end": 15, "in": 0, "volume": 0.001},  # muted
+    ]
+    ok, skipped = sequence_audio.clean_clips(clips)
+    assert len(ok) == 2
+    assert ok[0]["volume"] == 1.0
+    assert ok[1]["volume"] == 0.15
+    assert len(skipped) == 1
+    assert "muted" in skipped[0]["reason"]
+
+
+def test_extract_command_applies_volume_filter():
+    clip_normal = {"path": "test.wav", "in": 0, "out": 5, "speed": 1.0, "volume": 1.0}
+    cmd_normal = sequence_audio.extract_command("ffmpeg", clip_normal)
+    assert "-af" not in cmd_normal
+
+    clip_quiet = {"path": "test.wav", "in": 0, "out": 5, "speed": 1.0, "volume": 0.10}
+    cmd_quiet = sequence_audio.extract_command("ffmpeg", clip_quiet)
+    assert "-af" in cmd_quiet
+    af_idx = cmd_quiet.index("-af")
+    assert "volume=0.1000" in cmd_quiet[af_idx + 1]
+
+    clip_both = {"path": "test.wav", "in": 0, "out": 5, "speed": 1.5, "volume": 0.25}
+    cmd_both = sequence_audio.extract_command("ffmpeg", clip_both)
+    assert "-af" in cmd_both
+    af_idx = cmd_both.index("-af")
+    assert "atempo=1.500000,volume=0.2500" in cmd_both[af_idx + 1]
