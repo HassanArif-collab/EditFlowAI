@@ -197,6 +197,34 @@ if (-not (Test-Path $pyExe)) {
     Write-OK "Python environment already set up"
 }
 
+# Check for NVIDIA GPU and ensure CUDA libraries are installed for maximum efficiency
+$nvidiaInstalled = Test-Path (Join-Path $VenvDir "Lib\site-packages\nvidia\cublas")
+if (-not $nvidiaInstalled) {
+    $hasNvidiaGpu = $false
+    try {
+        $videoControllers = Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name
+        if ($videoControllers -and ($videoControllers -match "NVIDIA").Count -gt 0) {
+            $hasNvidiaGpu = $true
+        }
+    } catch {
+        try {
+            $wmiControllers = Get-WmiObject Win32_VideoController -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name
+            if ($wmiControllers -and ($wmiControllers -match "NVIDIA").Count -gt 0) {
+                $hasNvidiaGpu = $true
+            }
+        } catch {}
+    }
+    if ($hasNvidiaGpu) {
+        Write-Step "NVIDIA GPU detected! Enabling 10x faster CUDA acceleration..."
+        & $pipExe install "nvidia-cublas-cu12" --no-warn-script-location --quiet
+        if ($LASTEXITCODE -eq 0) {
+            Write-OK "CUDA GPU acceleration enabled"
+        } else {
+            Write-Warn "Could not install nvidia-cublas-cu12; Whisper will use CPU fallback."
+        }
+    }
+}
+
 # -- Step 4: Connect the panel to Premiere Pro (idempotent) ----------------
 # -- FFmpeg (bundled, no admin rights needed) ------------------------------
 $ffmpegOk = $false
@@ -316,6 +344,15 @@ Write-Host "    1. Open Premiere Pro" -ForegroundColor White
 Write-Host "    2. Window > Extensions > EditFlow AI" -ForegroundColor White
 Write-Host "    3. KEEP THIS WINDOW OPEN while you work" -ForegroundColor Yellow
 Write-Host ""
+
+# Add bundled NVIDIA CUDA/cuBLAS DLL directories from .venv to PATH
+$nvidiaDir = Join-Path $VenvDir "Lib\site-packages\nvidia"
+if (Test-Path $nvidiaDir) {
+    Get-ChildItem $nvidiaDir -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+        $binDir = Join-Path $_.FullName "bin"
+        if (Test-Path $binDir) { $env:PATH = "$binDir;$env:PATH" }
+    }
+}
 
 Set-Location $InstallDir
 & $pyExe run.py --prod

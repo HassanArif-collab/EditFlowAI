@@ -34,6 +34,41 @@ from ..utils.progress import ProgressReporter, manager as _ws_manager
 logger = logging.getLogger(__name__)
 
 
+def _setup_windows_cuda_dll_paths() -> None:
+    """Ensure Windows can locate NVIDIA CUDA/cuBLAS/cuDNN DLLs installed via pip."""
+    if os.name != "nt":
+        return
+    import sys
+    try:
+        import ctypes
+        for p in sys.path:
+            if "site-packages" in p:
+                nvidia_dir = Path(p) / "nvidia"
+                if nvidia_dir.is_dir():
+                    for sub in nvidia_dir.iterdir():
+                        for bin_name in ("bin", "lib"):
+                            bin_dir = sub / bin_name
+                            if bin_dir.is_dir():
+                                bin_str = str(bin_dir)
+                                if bin_str not in os.environ.get("PATH", ""):
+                                    os.environ["PATH"] = bin_str + os.pathsep + os.environ.get("PATH", "")
+                                try:
+                                    os.add_dll_directory(bin_str)
+                                except Exception:
+                                    pass
+                                # Pre-load cuBLAS, cuDNN, and other NVIDIA DLLs directly into process space
+                                for dll_file in bin_dir.glob("*.dll"):
+                                    try:
+                                        ctypes.WinDLL(str(dll_file))
+                                    except Exception:
+                                        pass
+    except Exception as e:
+        logger.debug(f"_setup_windows_cuda_dll_paths error: {e}")
+
+
+_setup_windows_cuda_dll_paths()
+
+
 def _set_process_priority_below_normal() -> bool:
     """Lower process priority on Windows during CPU-heavy transcription so Premiere Pro and the OS stay 100% fluid."""
     if os.name == "nt":
@@ -148,8 +183,9 @@ class WhisperService:
         # download — none of them finished because they competed for
         # bandwidth.  With the lock, the first caller does the download;
         # everyone else waits, then finds self._model already set and returns.
-        # asyncio.Lock (not threading.Lock) because callers are async coroutines.
-        self._model_load_lock: Optional[Any] = None  # initialized lazily — see _get_model_lock
+        self._model_load_lock: Optional[Any] = None
+        self._model_load_lock_loop: Optional[Any] = None
+        self._active_transcriptions: int = 0
 
         # Engine selection cascade — resolved lazily on first use
         self._engine_name: Optional[str] = None
@@ -578,6 +614,16 @@ class WhisperService:
                             and Path(self.settings.WHISPER_LOCAL_DIR).exists()
                         ),
                     )
+                    if device == "cuda":
+                        # Validate that CUDA libraries actually work before declaring success
+                        try:
+                            import numpy as np
+                            dummy = np.zeros((1, 80, 300), dtype=np.float32)
+                            self._model.model.encode(dummy)
+                        except Exception as val_err:
+                            logger.warning(f"CUDA forward validation failed for {model_spec}: {val_err}")
+                            raise val_err
+
                     self._model_info = {
                         "model": str(model_spec),
                         "device": device,
@@ -608,6 +654,17 @@ class WhisperService:
         except ImportError:
             raise RuntimeError("faster-whisper not installed. Run: pip install faster-whisper")
 
+    def _get_model_load_lock(self) -> asyncio.Lock:
+        """Return an asyncio.Lock bound to the currently running event loop."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if self._model_load_lock is None or getattr(self, "_model_load_lock_loop", None) is not loop:
+            self._model_load_lock = asyncio.Lock()
+            self._model_load_lock_loop = loop
+        return self._model_load_lock
+
     def _touch_model_usage(self) -> None:
         """Update last used timestamp and ensure idle watchdog is active."""
         self._last_used = time.time()
@@ -627,6 +684,9 @@ class WhisperService:
             await asyncio.sleep(30.0)
             if self._model is None:
                 return
+            if getattr(self, "_active_transcriptions", 0) > 0:
+                self._touch_model_usage()
+                continue
             if time.time() - self._last_used >= timeout:
                 logger.info(f"Whisper model inactive for >{timeout}s. Evicting from memory.")
                 self.unload_model()
@@ -635,6 +695,9 @@ class WhisperService:
     def unload_model(self) -> bool:
         """Evict the loaded Whisper model from RAM and VRAM."""
         if self._model is None:
+            return False
+        if getattr(self, "_active_transcriptions", 0) > 0:
+            logger.info("Cannot unload Whisper model: transcription actively in progress.")
             return False
         self._model = None
         self._model_info = {}
@@ -966,13 +1029,10 @@ class WhisperService:
         if progress:
             await progress.start("Loading Whisper model...")
 
+        self._active_transcriptions = getattr(self, "_active_transcriptions", 0) + 1
         # Load model in a worker thread — first call downloads weights, slow.
         # Lock serializes concurrent callers so only ONE big HF download happens.
-        # Lazy-init the lock here (not in __init__) so it binds to whichever
-        # event loop is actually running.
-        if self._model_load_lock is None:
-            self._model_load_lock = asyncio.Lock()
-        async with self._model_load_lock:
+        async with self._get_model_load_lock():
             await self._load_model_with_progress()
 
         if progress:
@@ -1105,6 +1165,9 @@ class WhisperService:
                 except Exception:
                     pass
             raise
+        finally:
+            self._active_transcriptions = max(0, getattr(self, "_active_transcriptions", 1) - 1)
+
 
     # ── Phase B: Transcribe-once-per-source-file ──
 
