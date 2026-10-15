@@ -42,18 +42,14 @@ capabilityProbe = (function () {
 
     function checkQERazor() {
         // Does qe.sequence razor() exist?
+        // NOTE: We do NOT call qe.project.getActiveSequence(0) passively here because
+        // instantiating QE sequence objects hooks Premiere's internal debug harness,
+        // which disables playback performance optimizations.
         if (!hasGlobal("qe")) return false;
         var r = safeCall(function () {
-            return typeof qe.project.getActiveSequence !== "undefined";
+            return typeof qe.project !== "undefined" && typeof qe.project.getActiveSequence !== "undefined";
         });
-        if (!r.ok) return false;
-        var seqResult = safeCall(function () {
-            return qe.project.getActiveSequence(0);
-        });
-        if (!seqResult.ok || !seqResult.value) return false;
-        return safeCall(function () {
-            return typeof seqResult.value.razor === "function";
-        }).value || false;
+        return (r.ok && !!r.value) || false;
     }
 
     function checkMarkerSeconds() {

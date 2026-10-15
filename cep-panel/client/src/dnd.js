@@ -173,19 +173,12 @@ function setupSelectionChip(chipEl, onUseSelected, getStateFn) {
     }
   }
 
-  // Trigger check on focus and visibility instead of hammering ExtendScript on a timer
-  window.addEventListener('focus', checkSelection);
-  document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) checkSelection();
-    else chipEl.classList.add('hidden');
-  });
-
-  // Gentle poll ONLY when user has focus on the panel
-  _selectionPollTimer = setInterval(() => {
-    if (document.hasFocus() && !document.hidden) {
-      checkSelection();
-    }
-  }, 6000);
+  // Check selection on user interaction (hover near footer/chip), never via background interval polling
+  if (chipEl.parentElement) {
+    chipEl.parentElement.addEventListener('mouseenter', () => {
+      if (!document.hidden && isExtendScriptAvailable()) checkSelection();
+    });
+  }
 
   // Click handler
   chipEl.addEventListener('click', async () => {

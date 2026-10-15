@@ -104,8 +104,8 @@ class Settings(BaseSettings):
     WHISPER_DEVICE: str = "auto"
     WHISPER_COMPUTE_TYPE: str = "auto"
     WHISPER_LOCAL_DIR: Optional[str] = None
-    # Auto-unload model from RAM/VRAM after 5 minutes of inactivity
-    WHISPER_IDLE_TIMEOUT_SECONDS: int = 300
+    # Auto-unload model from RAM/VRAM after 30 seconds of inactivity to free VRAM for Premiere's Mercury Playback Engine
+    WHISPER_IDLE_TIMEOUT_SECONDS: int = 30
 
     # ── HuggingFace cache ──
     # Exposed for diagnostics + UI. The env var was already set at module top.

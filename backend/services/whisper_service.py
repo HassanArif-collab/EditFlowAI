@@ -40,7 +40,6 @@ def _setup_windows_cuda_dll_paths() -> None:
         return
     import sys
     try:
-        import ctypes
         for p in sys.path:
             if "site-packages" in p:
                 nvidia_dir = Path(p) / "nvidia"
@@ -56,12 +55,6 @@ def _setup_windows_cuda_dll_paths() -> None:
                                     os.add_dll_directory(bin_str)
                                 except Exception:
                                     pass
-                                # Pre-load cuBLAS, cuDNN, and other NVIDIA DLLs directly into process space
-                                for dll_file in bin_dir.glob("*.dll"):
-                                    try:
-                                        ctypes.WinDLL(str(dll_file))
-                                    except Exception:
-                                        pass
     except Exception as e:
         logger.debug(f"_setup_windows_cuda_dll_paths error: {e}")
 
@@ -181,6 +174,7 @@ class WhisperService:
         self._detected_gpu: Optional[str] = None
         self._last_used: float = 0.0
         self._idle_watchdog_task: Optional[asyncio.Task] = None
+        self._main_loop: Optional[Any] = None
         self._transcript_cache: Dict[str, TranscriptResult] = {}  # file_fp -> result (in-memory)
 
         # Serializes concurrent _load_model() calls.  Without this, every
@@ -676,26 +670,45 @@ class WhisperService:
         """Update last used timestamp and ensure idle watchdog is active."""
         self._last_used = time.time()
         try:
-            loop = asyncio.get_running_loop()
-            if self._idle_watchdog_task is None or self._idle_watchdog_task.done():
-                self._idle_watchdog_task = loop.create_task(self._idle_watchdog())
-        except RuntimeError:
-            pass
+            loop = None
+            try:
+                loop = asyncio.get_running_loop()
+                self._main_loop = loop
+            except RuntimeError:
+                loop = getattr(self, "_main_loop", None)
+
+            if loop and loop.is_running():
+                if self._idle_watchdog_task is None or self._idle_watchdog_task.done():
+                    try:
+                        running = asyncio.get_running_loop()
+                        if running is loop:
+                            self._idle_watchdog_task = loop.create_task(self._idle_watchdog())
+                        else:
+                            loop.call_soon_threadsafe(self._ensure_watchdog_task, loop)
+                    except RuntimeError:
+                        loop.call_soon_threadsafe(self._ensure_watchdog_task, loop)
+        except Exception as e:
+            logger.debug(f"Could not schedule idle watchdog: {e}")
+
+    def _ensure_watchdog_task(self, loop: asyncio.AbstractEventLoop) -> None:
+        if self._idle_watchdog_task is None or self._idle_watchdog_task.done():
+            self._idle_watchdog_task = loop.create_task(self._idle_watchdog())
 
     async def _idle_watchdog(self) -> None:
         """Periodic background task that unloads the model after inactivity."""
-        timeout = getattr(self.settings, "WHISPER_IDLE_TIMEOUT_SECONDS", 300)
+        timeout = getattr(self.settings, "WHISPER_IDLE_TIMEOUT_SECONDS", 30)
         if timeout <= 0:
             return
+        check_interval = max(3.0, min(10.0, float(timeout) / 3))
         while True:
-            await asyncio.sleep(30.0)
+            await asyncio.sleep(check_interval)
             if self._model is None:
                 return
             if getattr(self, "_active_transcriptions", 0) > 0:
                 self._touch_model_usage()
                 continue
             if time.time() - self._last_used >= timeout:
-                logger.info(f"Whisper model inactive for >{timeout}s. Evicting from memory.")
+                logger.info(f"Whisper model inactive for >{timeout}s. Evicting from memory to reclaim GPU VRAM for Premiere Pro.")
                 self.unload_model()
                 return
 
@@ -714,6 +727,8 @@ class WhisperService:
             import torch
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+                if hasattr(torch.cuda, "ipc_collect"):
+                    torch.cuda.ipc_collect()
         except Exception:
             pass
         logger.info("Whisper model evicted from memory.")
@@ -1174,6 +1189,7 @@ class WhisperService:
             raise
         finally:
             self._active_transcriptions = max(0, getattr(self, "_active_transcriptions", 1) - 1)
+            self._touch_model_usage()
 
 
     # ── Phase B: Transcribe-once-per-source-file ──

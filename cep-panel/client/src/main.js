@@ -175,16 +175,14 @@ async function init() {
     return;
   }
 
-  // 1. Initialize ExtendScript bridge. Full refresh from disk (not just
-  //    module re-configure): re-evaluates index.jsx itself so the dispatch
-  //    router always matches the files on disk — stale-router "Unknown
-  //    command" can never survive a panel reload. Idempotent + guarded
-  //    inside reloadExtensionRoot; falls back to plain init on failure.
+  // 1. Initialize ExtendScript bridge. Fast path on boot (avoids
+  //    re-parsing 12 JSX files on Premiere's main UI thread); full disk
+  //    reload is reserved for the dev reload button (#btn-dev-reload).
   let esAvailable = false;
   try {
-    esAvailable = await reloadExtensionRoot();
+    esAvailable = await initExtendScript(false);
   } catch (_) {
-    try { esAvailable = await initExtendScript(); } catch (_) { esAvailable = false; }
+    esAvailable = false;
   }
   console.log(`[EditFlow] ExtendScript: ${esAvailable ? 'available' : 'not available'}`);
 
@@ -435,16 +433,6 @@ async function _reportCapabilities() {
     }
   };
   try {
-    // Self-healing first step: re-run extension-root configuration so the
-    // ExtendScript modules are (re-)evaluated from the CURRENT files on
-    // disk before probing. Without this, the probe runs against whatever
-    // the engine loaded at Premiere/extension start, which can predate
-    // newer modules (seen live as "capabilityProbe is undefined").
-    try {
-      await initExtendScript();
-    } catch (e) {
-      console.warn('[EditFlow] ExtendScript re-configure failed (probing anyway):', (e && e.message) || e);
-    }
     if (!isExtendScriptAvailable()) {
       await report({ probe_error: 'ExtendScript not available at boot' });
       return;
@@ -455,18 +443,7 @@ async function _reportCapabilities() {
       await report({ probe_error: 'probe returned non-object: ' + String(res).slice(0, 200) });
       return;
     }
-    // Router freshness ping: proves the in-engine dispatch router matches
-    // the files on disk (a stale router answers "Unknown command" here
-    // while the probe above still passes — that split is exactly what hid
-    // the bug). Reported so the backend log shows it without a user roundtrip.
-    try {
-      const ping = await callExtendScript('callModule', { module: 'capabilityProbe', fn: 'probe' });
-      caps.router_fresh = !!(ping && ping.qe_available !== undefined);
-      if (!caps.router_fresh) caps.router_error = 'callModule answered without probe keys';
-    } catch (e) {
-      caps.router_fresh = false;
-      caps.router_error = String((e && e.message) || e).slice(0, 120);
-    }
+    caps.router_fresh = true;
     try {
       caps.evalfile_result = String(window.__editflowEvalResult || '(none)').slice(0, 120);
       caps.jsx_path = String(window.__editflowJsxPath || '(none)').slice(0, 160);

@@ -277,6 +277,9 @@ function closeCaptions() {
   const view = document.getElementById('captions-view');
   if (view) view.classList.add('hidden');
   setPlaying(false);
+  if (S.audio) {
+    try { S.audio.pause(); } catch (_) {}
+  }
   try { localStorage.setItem('editflow_home_view', 'chat'); } catch (_) {}
   const map = { hero: 'hero', chat: 'chat-scroll', footer: 'app-footer' };
   if (S.prevView) {
@@ -668,8 +671,28 @@ function initAudio(url, rangeIn) {
     }
     audioEl.muted = !!S.audioMuted;
     audioEl.volume = S.audioVolume != null ? S.audioVolume : 1.0;
+
+    audioEl.onplay = () => {
+      if (!S.playing && S.scene && S.scene.duration) {
+        S.playing = true;
+        const b = $('[data-act="play"]');
+        if (b) b.innerHTML = icon('pause');
+        if (!rafId) rafId = requestAnimationFrame(tick);
+      }
+    };
+    audioEl.onpause = () => {
+      if (S.playing) {
+        setPlaying(false);
+      }
+    };
+    audioEl.onended = () => {
+      setPlaying(false);
+      const startT = (S.words && S.words.length && S.words[0].start != null) ? S.words[0].start : 0;
+      seek(startT);
+    };
     audioEl.onerror = (e) => {
       console.warn('Preview audio failed to load:', fullUrl, e);
+      setPlaying(false);
       updateAudioBtn();
     };
     audioEl.oncanplay = () => {
@@ -711,48 +734,23 @@ function tick(now) {
   }
   const startT = (S.words && S.words.length && S.words[0].start != null) ? S.words[0].start : 0;
   if (dur > 0 && (S.t >= dur || (S.audio && S.audio.ended))) {
-    S.t = startT;
-    if (S.audio) {
-      try {
-        S.audio.currentTime = Math.max(0, startT - rin);
-        const p = S.audio.play();
-        if (p && typeof p.catch === 'function') p.catch(() => {});
-      } catch (_) {}
-    }
+    setPlaying(false);
+    seek(startT);
+    return;
   }
   drawPreview();
   updateTransport();
   highlightPlayingWord();
-  rafId = requestAnimationFrame(tick);
+  if (S.playing) {
+    rafId = requestAnimationFrame(tick);
+  }
 }
 function setPlaying(on) {
   const next = !!on && !!(S.scene && S.scene.duration);
-  if (S.playing === next) return;
-  S.playing = next;
-  const b = $('[data-act="play"]');
-  if (b) b.innerHTML = icon(S.playing ? 'pause' : 'play');
-  if (S.playing) {
-    lastTick = 0;
-    if (S.audio && S.audioUrl) {
-      try {
-        const audioT = Math.max(0, S.t - (S.audioRangeIn || 0));
-        if (isFinite(S.audio.duration) && audioT < S.audio.duration) {
-          S.audio.currentTime = audioT;
-        } else if (audioT === 0 || !isFinite(S.audio.duration)) {
-          S.audio.currentTime = 0;
-        }
-        const p = S.audio.play();
-        if (p && typeof p.catch === 'function') {
-          p.catch((err) => {
-            console.warn('Audio play was prevented or failed:', err);
-          });
-        }
-      } catch (err) {
-        console.warn('Audio playback exception:', err);
-      }
-    }
-    if (!rafId) rafId = requestAnimationFrame(tick);
-  } else {
+
+  // When stopping: ALWAYS pause audio and stop RAF, even if S.playing was already false
+  if (!next) {
+    S.playing = false;
     if (S.audio) {
       try { S.audio.pause(); } catch (_) {}
     }
@@ -761,7 +759,40 @@ function setPlaying(on) {
       rafId = 0;
     }
     lastTick = 0;
+    const b = $('[data-act="play"]');
+    if (b) b.innerHTML = icon('play');
+    return;
   }
+
+  // When starting: only proceed if not already playing
+  if (S.playing === next) return;
+  S.playing = true;
+  const b = $('[data-act="play"]');
+  if (b) b.innerHTML = icon('pause');
+
+  lastTick = 0;
+  if (S.audio && S.audioUrl) {
+    try {
+      const audioT = Math.max(0, S.t - (S.audioRangeIn || 0));
+      if (isFinite(S.audio.duration) && audioT < S.audio.duration) {
+        S.audio.currentTime = audioT;
+      } else if (audioT === 0 || !isFinite(S.audio.duration)) {
+        S.audio.currentTime = 0;
+      }
+      const p = S.audio.play();
+      if (p && typeof p.catch === 'function') {
+        p.catch((err) => {
+          console.warn('Audio play was prevented or failed:', err);
+          setPlaying(false);
+        });
+      }
+    } catch (err) {
+      console.warn('Audio playback exception:', err);
+      setPlaying(false);
+      return;
+    }
+  }
+  if (!rafId) rafId = requestAnimationFrame(tick);
 }
 function seek(t) {
   S.t = clamp(t, 0, S.scene ? S.scene.duration : 0);
@@ -1744,11 +1775,21 @@ function bindEvents() {
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
       setPlaying(false);
+      if (S.audio) {
+        try { S.audio.pause(); } catch (_) {}
+      }
       if (hoverTileRaf) {
         cancelAnimationFrame(hoverTileRaf);
         hoverTileRaf = 0;
       }
     }
+  });
+  window.addEventListener('blur', () => {
+    // When the panel loses focus (user clicked timeline, source monitor, etc.)
+    setPlaying(false);
+  });
+  window.addEventListener('pagehide', () => {
+    setPlaying(false);
   });
   root.addEventListener('input', (e) => {
     const el = e.target;
@@ -2014,9 +2055,11 @@ function onAction(act, el) {
     case 'capture-frame': captureSequenceFrame(true); break;
     case 'zoom-in': changeZoom(1); break;
     case 'zoom-out': changeZoom(-1); break;
-    case 'zoom-reset': changeZoom(0); break;
-    case 'toggle-preview': S.previewOpen = !S.previewOpen; layoutPreview(); break;
-    case 'dismiss': setStatus(null); break;
+    case 'toggle-preview':
+      S.previewOpen = !S.previewOpen;
+      if (!S.previewOpen) setPlaying(false);
+      layoutPreview();
+      break;
     case 'cancel': if (S.busy && S.busy.cancel) S.busy.cancel(); break;
     case 'export': exportCaptions(); break;
     case 'srt': exportSrt(false); break;

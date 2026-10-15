@@ -72,6 +72,27 @@ class TestWhisperResilience:
 
         assert len({fp1, fp2, fp3, fp4}) == 4, "All fingerprints must be distinct"
 
+    def test_idle_timeout_configuration(self):
+        """Idle timeout must be configured to 30s to quickly reclaim VRAM for Premiere Pro."""
+        from backend.config import get_settings
+        settings = get_settings()
+        assert settings.WHISPER_IDLE_TIMEOUT_SECONDS == 30
+
+    @pytest.mark.asyncio
+    async def test_idle_watchdog_thread_safe_scheduling(self):
+        """Watchdog must be scheduled and callable across thread contexts."""
+        whisper_service._main_loop = asyncio.get_running_loop()
+        whisper_service._touch_model_usage()
+        assert whisper_service._idle_watchdog_task is not None
+        assert not whisper_service._idle_watchdog_task.cancelled()
+        # Clean up task
+        whisper_service._idle_watchdog_task.cancel()
+        try:
+            await whisper_service._idle_watchdog_task
+        except asyncio.CancelledError:
+            pass
+        whisper_service._idle_watchdog_task = None
+
 
 # ============================================================================
 # 2. Encoder Streaming Stress & Orphan Process Prevention
