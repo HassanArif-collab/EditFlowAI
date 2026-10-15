@@ -1206,6 +1206,22 @@ class WhisperService:
                 logger.warning(f"Failed to load cached transcript for {file_fingerprint[:16]}...: {e}")
         return None
 
+    @staticmethod
+    def compute_fingerprint(
+        content_or_hash: bytes | str,
+        sequence_key: str = "",
+        model_name: str = "",
+        language: str = "auto",
+        engine: str = "auto",
+    ) -> str:
+        """Deterministic, content-addressed 16-hex fingerprint for transcript caching."""
+        if isinstance(content_or_hash, bytes):
+            content_hash = hashlib.sha256(content_or_hash).hexdigest()[:16]
+        else:
+            content_hash = str(content_or_hash)[:16]
+        raw_key = f"{content_hash}|{sequence_key}|{model_name}|{(language or 'auto').strip().lower()}|{engine}"
+        return hashlib.sha256(raw_key.encode("utf-8")).hexdigest()[:16]
+
     def peek_cached_transcript(self, file_fingerprint: str) -> Optional[TranscriptResult]:
         """Return a cached transcript for ``file_fingerprint`` without
         transcribing (memory → on-disk JSON). Any engine accepted — a

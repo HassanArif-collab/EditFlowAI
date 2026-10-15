@@ -1,44 +1,44 @@
 {
-  "benchmark_timestamp": "2026-10-15T16:23:00Z",
+  "benchmark_timestamp": "2026-10-15T18:42:43Z",
   "hardware": {
     "name": "NVIDIA GeForce RTX 2070 SUPER",
-    "memory_used_mb": 6225.0,
+    "memory_used_mb": 4892.0,
     "memory_total_mb": 8192.0,
-    "utilization_pct": 40.0
+    "utilization_pct": 18.0
   },
   "transcription": {
     "old_cpu": {
       "device": "cpu",
       "compute": "int8",
-      "time_seconds": 9.541,
+      "time_seconds": 9.406,
       "audio_duration_seconds": 25.59,
-      "realtime_factor": 2.68,
+      "realtime_factor": 2.72,
       "wer_pct": 7.59
     },
     "new_gpu_cuda": {
       "device": "cuda",
       "compute": "float16",
-      "time_seconds": 2.384,
+      "time_seconds": 2.237,
       "audio_duration_seconds": 25.59,
-      "realtime_factor": 10.73,
+      "realtime_factor": 11.44,
       "wer_pct": 7.59,
-      "speedup_vs_old_cpu": "4.0x"
+      "speedup_vs_old_cpu": "4.2x"
     },
     "new_cache_hit": {
-      "time_seconds": 0.0012,
-      "time_ms": 1.19,
-      "realtime_factor": "21423.2x",
-      "speedup_vs_old_cpu": "7987.6x"
+      "time_seconds": 0.0014,
+      "time_ms": 1.36,
+      "realtime_factor": "18825.9x",
+      "speedup_vs_old_cpu": "6919.5x"
     }
   },
   "memory": {
-    "ram_initial_mb": 680.1,
-    "ram_with_model_loaded_mb": 690.78,
-    "ram_after_idle_eviction_mb": 683.49,
-    "ram_reclaimed_mb": 7.29,
-    "gpu_initial_mb": 6218.0,
-    "gpu_with_model_loaded_mb": 6865.0,
-    "gpu_after_idle_eviction_mb": 6225.0,
+    "ram_initial_mb": 679.75,
+    "ram_with_model_loaded_mb": 690.51,
+    "ram_after_idle_eviction_mb": 682.23,
+    "ram_reclaimed_mb": 8.28,
+    "gpu_initial_mb": 4888.0,
+    "gpu_with_model_loaded_mb": 5532.0,
+    "gpu_after_idle_eviction_mb": 4892.0,
     "gpu_reclaimed_mb": 640.0
   },
   "cpu_throttling": {
@@ -52,11 +52,11 @@
     "priority_restored": "NORMAL (0x20)"
   },
   "disk_io": {
-    "old_scanned_files_per_tick": 453,
-    "old_scan_duration_ms": 11.76,
-    "new_scanned_files_per_tick": 220,
-    "new_scan_duration_ms": 2.77,
-    "disk_io_reduction_pct": 51.4,
+    "old_scanned_files_per_tick": 481,
+    "old_scan_duration_ms": 14.35,
+    "new_scanned_files_per_tick": 221,
+    "new_scan_duration_ms": 3.77,
+    "disk_io_reduction_pct": 54.1,
     "production_mode_idle_scans": "0 scans/sec (dev_watch disabled in --prod)"
   },
   "ui_and_bridge": {

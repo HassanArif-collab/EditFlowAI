@@ -283,7 +283,11 @@ if (Test-Path $targetDir) {
     }
 }
 if ($needLink) {
-    cmd.exe /c "mklink /J `"$targetDir`" `"$panelDir`"" | Out-Null
+    try {
+        New-Item -ItemType Junction -Path $targetDir -Target $panelDir -Force -ErrorAction Stop | Out-Null
+    } catch {
+        cmd.exe /c "mklink /J `"$targetDir`" `"$panelDir`"" | Out-Null
+    }
 }
 if (Test-Path $targetDir) { Write-OK "Panel linked (Window > Extensions > EditFlow AI)" }
 else { Write-Err "Could not link the panel into $cepDir"; exit 1 }

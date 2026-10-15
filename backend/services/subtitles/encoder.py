@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 OP_FRAME = 1
 OP_REPEAT = 2
 MAX_JOBS = 4
-STALE_SECONDS = 15 * 60
+STALE_SECONDS = 120
 
 
 @dataclass
@@ -126,6 +126,11 @@ def start(ffmpeg: str, out_path: Path, width: int, height: int, band_y: int, ban
         raise ValueError(f"unknown codec {codec!r}")
     _reap_stale()
     with _jobs_lock:
+        stale_ids = [j.id for j in _jobs.values() if time.time() - j.touched > 60] if len(_jobs) >= MAX_JOBS else []
+    for sid in stale_ids:
+        cancel(sid)
+
+    with _jobs_lock:
         if len(_jobs) >= MAX_JOBS:
             raise RuntimeError("Too many caption renders running — cancel one first.")
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -218,14 +223,30 @@ def finish(job: EncodeJob, timeout: float = 600) -> dict:
     if job.writer is not None:
         job.q.put(None)
         job.writer.join(timeout)
-    with job.lock:
+    code = -1
+    try:
+        with job.lock:
+            try:
+                job.proc.stdin.close()
+            except OSError:
+                pass
+            code = job.proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
         try:
-            job.proc.stdin.close()
+            job.proc.kill()
+            job.proc.wait(timeout=5)
+        except Exception:
+            pass
+        job.error = f"encode timed out after {timeout}s"
+        try:
+            job.path.unlink(missing_ok=True)
         except OSError:
             pass
-        code = job.proc.wait(timeout=timeout)
-    with _jobs_lock:
-        _jobs.pop(job.id, None)
+        raise RuntimeError(job.error) from exc
+    finally:
+        with _jobs_lock:
+            _jobs.pop(job.id, None)
+
     if job.error or code != 0 or not job.path.exists():
         try:
             job.path.unlink(missing_ok=True)

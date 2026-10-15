@@ -62,7 +62,14 @@ def build_cues(words: list[dict], opts: CueOpts) -> list[dict]:
     (word count, wrapped line count, cue duration, inter-word gap) or after
     sentence-final punctuation.
     """
-    words = [w for w in words if (w.get("text") or "").strip()]
+    normalized = []
+    for w in words or []:
+        txt = (w.get("text") or w.get("word") or "").strip()
+        if txt:
+            w_copy = dict(w)
+            w_copy["text"] = txt
+            normalized.append(w_copy)
+    words = normalized
     if not words:
         return []
 

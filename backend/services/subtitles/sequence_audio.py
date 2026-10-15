@@ -137,9 +137,7 @@ def mix_sequence_audio(ffmpeg: str, clips: list[dict], out_wav: Path, duration: 
             w.setsampwidth(2)
             w.setframerate(RATE)
             w.writeframes(bytes(buf))
-        if out_wav.exists():
-            out_wav.unlink(missing_ok=True)
-        tmp_wav.rename(out_wav)
+        os.replace(tmp_wav, out_wav)
     except Exception as exc:
         if tmp_wav.exists():
             try:

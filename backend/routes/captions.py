@@ -140,6 +140,8 @@ async def transcribe_mixdown(
         # 1. Read the uploaded file bytes and compute a content-addressed hash.
         content = await file.read()
         await file.close()
+        if not content:
+            raise HTTPException(status_code=400, detail="Uploaded audio file is empty (0 bytes).")
         file_content_hash = hashlib.sha256(content).hexdigest()[:16]
 
         # 2. Resolve the active model + compute a deterministic fingerprint
@@ -152,9 +154,13 @@ async def transcribe_mixdown(
             if sequence_name
             else (file.filename or "upload").strip()
         )
-        fingerprint = hashlib.sha256(
-            f"{file_content_hash}|{seq_key}|{active_model}|{lang_key}|{engine}".encode("utf-8")
-        ).hexdigest()[:16]
+        fingerprint = whisper_service.compute_fingerprint(
+            content_or_hash=file_content_hash,
+            sequence_key=seq_key,
+            model_name=active_model,
+            language=lang_key,
+            engine=engine,
+        )
 
         # 3. Persist the uploaded media under data/media_cache/mixdowns/ with its true extension.
         mixdowns_dir = get_settings().DATA_DIR / "media_cache" / "mixdowns"

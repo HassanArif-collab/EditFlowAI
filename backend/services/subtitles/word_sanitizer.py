@@ -53,7 +53,7 @@ def sanitize_words(words: list[dict]) -> list[dict]:
         s, e = starts[i], ends[i]
         if s is None or e is None:
             missing[i] = True
-        elif s <= 0 and e <= 0 and max_seen_end > 0:
+        elif (s <= 0 and e <= 0) or s < 0 or e < 0:
             missing[i] = True
         else:
             max_seen_end = max(max_seen_end, e)
@@ -82,22 +82,24 @@ def sanitize_words(words: list[dict]) -> list[dict]:
                 t += dur
         elif right_start is not None:
             # Leading run: snap to just before the first good start.
-            t = right_start
+            t = max(float(len(run)) * MIN_DUR, right_start)
             for k in reversed(run):
                 starts[k] = max(0.0, t - MIN_DUR)
-                ends[k] = t
+                ends[k] = max(starts[k] + MIN_DUR, t)
                 t = starts[k]
         else:
             # Trailing run (or no anchors at all): sequential after left.
-            t = left_end if left_end is not None else 0.0
+            t = max(0.0, left_end) if left_end is not None else 0.0
             for k in run:
                 starts[k], ends[k] = t, t + MIN_DUR
                 t += MIN_DUR
         i = j + 1
 
-    # ── Pass B: non-decreasing starts ──
-    for k in range(1, n):
-        if starts[k] < starts[k - 1]:
+    # ── Pass B: non-decreasing starts (must be >= 0.0) ──
+    for k in range(n):
+        if starts[k] < 0.0:
+            starts[k] = 0.0
+        if k > 0 and starts[k] < starts[k - 1]:
             starts[k] = starts[k - 1]
 
     # ── Pass C: overlap clamp + minimum duration (end moves, start never) ──
