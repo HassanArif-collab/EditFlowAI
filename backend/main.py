@@ -76,6 +76,18 @@ async def lifespan(app: FastAPI):
                 pass
 
     try:
+        from .services.subtitles import encoder
+        encoder.cancel_all()
+    except Exception as e:
+        logger.debug(f"Encoder shutdown cleanup: {e}")
+
+    try:
+        from .services.whisper_service import whisper_service
+        whisper_service.unload_model()
+    except Exception as e:
+        logger.debug(f"Whisper shutdown cleanup: {e}")
+
+    try:
         await provider_service.shutdown()
     except Exception as e:
         logger.warning(f"Provider service shutdown error: {e}")
@@ -202,6 +214,7 @@ async def status():
         }
 
     whisper_loaded = whisper_service._model is not None
+    hw = whisper_service.get_hardware_status()
 
     return {
         "server": "running",
@@ -211,6 +224,7 @@ async def status():
         "active_chat": active_chat,
         "active_vision": active_vision,
         "whisper_loaded": whisper_loaded,
+        "whisper_hardware": hw,
     }
 
 

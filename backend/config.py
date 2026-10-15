@@ -97,13 +97,15 @@ class Settings(BaseSettings):
     DEFAULT_VISION_MODEL: str = "nemotron-3-nano:4b"
 
     # ── Whisper ──
-    # Default: medium — best speed/quality balance on CPU for multilingual.
-    # The actual active model is overridable at runtime via the panel UI
-    # (POST /api/whisper/set-model) and persists in data/whisper_config.json.
-    WHISPER_MODEL: str = "medium"
-    WHISPER_DEVICE: str = "cpu"
-    WHISPER_COMPUTE_TYPE: str = "int8"
+    # Default: small — fast, lightweight, and low-memory. Supports one-click upgrade
+    # to medium or large-v3 in Settings.
+    WHISPER_MODEL: str = "small"
+    # Device: "auto" probes for CUDA GPU (e.g. RTX 2070+), falling back to "cpu".
+    WHISPER_DEVICE: str = "auto"
+    WHISPER_COMPUTE_TYPE: str = "auto"
     WHISPER_LOCAL_DIR: Optional[str] = None
+    # Auto-unload model from RAM/VRAM after 5 minutes of inactivity
+    WHISPER_IDLE_TIMEOUT_SECONDS: int = 300
 
     # ── HuggingFace cache ──
     # Exposed for diagnostics + UI. The env var was already set at module top.

@@ -131,8 +131,13 @@ if (-not (Test-Path (Join-Path $InstallDir "backend\main.py"))) {
 if (-not (Test-Path $pyExe)) {
     Write-Step "Setting up Python (first time only)..."
     $python = $null
-    foreach ($cmd in @("python", "python3", "py")) {
-        if (Test-Command $cmd) {
+    $candidatePythons = @("python", "python3", "py")
+    foreach ($pv in @("313", "312", "311", "310")) {
+        $candidatePythons += (Join-Path $env:LOCALAPPDATA "Programs\Python\Python$pv\python.exe")
+        $candidatePythons += (Join-Path $env:ProgramFiles "Python$pv\python.exe")
+    }
+    foreach ($cmd in $candidatePythons) {
+        if ((Test-Path $cmd) -or (Test-Command $cmd)) {
             try {
                 $ver = & $cmd --version 2>&1
                 if ($ver -match "Python (\d+)\.(\d+)") {
@@ -142,13 +147,30 @@ if (-not (Test-Path $pyExe)) {
         }
     }
     if (-not $python) {
-        Write-Warn "Python 3.10+ not found. Installing it for you (winget)..."
+        Write-Warn "Python 3.10+ not found in PATH or standard folders. Attempting automatic installation..."
         if (Test-Command "winget") {
             try {
+                Write-Info "Trying winget install Python.Python.3.12..."
                 & winget install Python.Python.3.12 --accept-source-agreements --accept-package-agreements --silent
                 $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
-                if (Test-Command "python") { $python = "python"; Write-OK "Python installed" }
-            } catch { Write-Err "Automatic Python install failed: $_" }
+                if (Test-Command "python") { $python = "python"; Write-OK "Python installed via winget" }
+            } catch { Write-Warn "Winget install failed: $_" }
+        }
+        if (-not $python) {
+            try {
+                Write-Info "Downloading official Python 3.11 installer from python.org..."
+                $pyInstaller = Join-Path $env:TEMP "python-installer.exe"
+                Invoke-WebRequest -Uri "https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe" -OutFile $pyInstaller -UseBasicParsing
+                Write-Info "Running silent installation..."
+                Start-Process -FilePath $pyInstaller -ArgumentList "/quiet InstallAllUsers=0 PrependPath=1 Include_pip=1" -Wait
+                Remove-Item $pyInstaller -Force -ErrorAction SilentlyContinue
+                $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+                $pyCheck = Join-Path $env:LOCALAPPDATA "Programs\Python\Python311\python.exe"
+                if (Test-Path $pyCheck) { $python = $pyCheck; Write-OK "Python installed successfully" }
+                elseif (Test-Command "python") { $python = "python"; Write-OK "Python installed successfully" }
+            } catch {
+                Write-Warn "Direct installer fallback failed: $_"
+            }
         }
         if (-not $python) {
             Write-Err "Please install Python 3.10+ from https://www.python.org/downloads/"
@@ -157,13 +179,16 @@ if (-not (Test-Path $pyExe)) {
         }
     }
     Write-OK "Python found ($python)"
-    Write-Info "Creating environment + installing dependencies (2-5 minutes, one time)..."
+    Write-Info "Creating virtual environment ($VenvDir)..."
     & $python -m venv $VenvDir
     $prevEAP = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+    Write-Info "Upgrading pip..."
     & $pyExe -m pip install --upgrade pip --quiet 2>&1 | Out-Null
-    & $pipExe install -r (Join-Path $InstallDir "requirements.txt") --quiet 2>&1 | Out-Null
+    Write-Info "Installing dependencies (showing download progress)..."
+    & $pipExe install -r (Join-Path $InstallDir "requirements.txt") --no-warn-script-location
     if ($LASTEXITCODE -ne 0) {
-        & $pipExe install -r (Join-Path $InstallDir "requirements.txt") 2>&1 | Out-Null
+        Write-Warn "Retrying dependency install..."
+        & $pipExe install -r (Join-Path $InstallDir "requirements.txt")
         if ($LASTEXITCODE -ne 0) { $ErrorActionPreference = $prevEAP; Write-Err "Dependency install failed."; exit 1 }
     }
     $ErrorActionPreference = $prevEAP
@@ -174,10 +199,6 @@ if (-not (Test-Path $pyExe)) {
 
 # -- Step 4: Connect the panel to Premiere Pro (idempotent) ----------------
 # -- FFmpeg (bundled, no admin rights needed) ------------------------------
-# Transcription needs ffmpeg to read audio. It lives under data/ which is
-# never committed to git, so a fresh clone has none - fetch it once, into the
-# project (data/tools/ffmpeg-bundled/bin, matched by backend/config.py's
-# data/tools/ffmpeg-*/bin glob), without touching the system PATH.
 $ffmpegOk = $false
 try { if (Get-Command ffmpeg -ErrorAction Stop) { $ffmpegOk = $true } } catch {}
 $bundledFfmpeg = Get-ChildItem (Join-Path $InstallDir "data\tools") -Filter "ffmpeg.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -214,17 +235,33 @@ $cepDir = Join-Path $env:APPDATA "Adobe\CEP\extensions"
 $targetDir = Join-Path $cepDir $ExtensionId
 $panelDir = Join-Path $InstallDir "cep-panel"
 if (-not (Test-Path $cepDir)) { New-Item -ItemType Directory -Path $cepDir -Force | Out-Null }
+
+$needLink = $true
 if (Test-Path $targetDir) {
-    $item = Get-Item $targetDir
-    if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { $item.Delete() }
-    else { Remove-Item -Recurse -Force $targetDir }
+    try {
+        $item = Get-Item $targetDir
+        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            $existingTarget = (Get-Item $targetDir).Target
+            if ($existingTarget -and ($existingTarget -eq $panelDir -or $existingTarget -eq ($panelDir + "\"))) {
+                $needLink = $false
+            } else {
+                $item.Delete()
+            }
+        } else {
+            Remove-Item -Recurse -Force $targetDir
+        }
+    } catch {
+        Remove-Item -Recurse -Force $targetDir -ErrorAction SilentlyContinue
+    }
 }
-cmd.exe /c "mklink /J `"$targetDir`" `"$panelDir`"" | Out-Null
+if ($needLink) {
+    cmd.exe /c "mklink /J `"$targetDir`" `"$panelDir`"" | Out-Null
+}
 if (Test-Path $targetDir) { Write-OK "Panel linked (Window > Extensions > EditFlow AI)" }
 else { Write-Err "Could not link the panel into $cepDir"; exit 1 }
 
-# Allow the unsigned panel in every Premiere Pro CEP runtime (CSXS 9 -> future).
-foreach ($v in 9..15) {
+# Allow the unsigned panel in Premiere Pro CEP runtimes (CSXS 9 -> 20).
+foreach ($v in 9..20) {
     $regPath = "HKCU:\SOFTWARE\Adobe\CSXS.$v"
     if (-not (Test-Path $regPath)) { New-Item -Path $regPath -Force | Out-Null }
     Set-ItemProperty -Path $regPath -Name "PlayerDebugMode" -Value 1 -Type String -Force
@@ -255,6 +292,17 @@ try {
         ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
 } catch {}
 
+try {
+    $gpuName = (& nvidia-smi --query-gpu=name --format=csv,noheader 2>&1)
+    if ($LASTEXITCODE -eq 0 -and $gpuName) {
+        Write-OK "Hardware Acceleration: $gpuName (CUDA enabled)"
+    } else {
+        Write-Info "Hardware Acceleration: CPU mode (throttled to 50% cores, UI responsive)"
+    }
+} catch {
+    Write-Info "Hardware Acceleration: CPU mode (throttled to 50% cores, UI responsive)"
+}
+
 if (-not (Test-Path (Join-Path $InstallDir "data\hf-cache"))) {
     Write-Warn "First time: open the panel's Settings and download a Whisper model"
     Write-Warn "before your first transcription."
@@ -269,9 +317,5 @@ Write-Host "    2. Window > Extensions > EditFlow AI" -ForegroundColor White
 Write-Host "    3. KEEP THIS WINDOW OPEN while you work" -ForegroundColor Yellow
 Write-Host ""
 
-# Dev watcher: the backend polls cep-panel/ for edits and pushes dev_reload
-# over the panel WebSocket, so code changes appear in the panel ~2s later
-# (localhost only - not reachable from the internet).
-$env:EDITFLOW_DEV_WATCH = "1"
 Set-Location $InstallDir
 & $pyExe run.py --prod

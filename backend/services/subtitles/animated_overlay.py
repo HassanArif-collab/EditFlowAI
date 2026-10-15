@@ -605,47 +605,54 @@ async def render_overlay(cues: list[dict], duration: float, style: OverlayStyle,
         rel = Path(staged).resolve().relative_to(Path.cwd().resolve()).as_posix()
     except (OSError, ValueError):
         rel = Path(staged).as_posix()
-    filt, _pills = build_drawtext(cues, style, filter_font=f"'{rel}'",
-                                   words_dir=out_path.parent / (out_path.stem + "_words"))
-    if not filt:
-        raise RuntimeError("no words to render")
-    # Canvas: nullsrc has no alpha plane, and the color source's @0 alpha
-    # is lost in yuv420p — so promote to yuva and zero all channels with
-    # geq (verified via alphaextract: transparent bg, opaque glyphs).
-    # drawtext then draws only glyphs, preserving that transparency.
-    filt = ("format=yuva444p10le,geq=r='0':g='0':b='0':a='0'," + filt)
-    # -t caps total length: pill movies loop forever by design, so the
-    # muxer needs an explicit stop (else the render never terminates).
-    total = max(0.5, duration + 0.5)
-    cmd = [
-        _ffmpeg_path(), "-y",
-        "-f", "lavfi",
-        "-i", (f"nullsrc=s={style.width}x{style.height}"
-               f":r={style.fps}:d={total}"),
-        "-vf", filt,
-        "-t", str(total),
-        "-c:v", "prores_ks", "-profile:v", "4444",
-        "-pix_fmt", "yuva444p10le",
-        "-r", str(style.fps),
-        str(out_path),
-    ]
-    logger.info("overlay render: %ss at %dx%d (%d drawtext)",
-                round(duration, 2), style.width, style.height, filt.count("drawtext="))
-    # NOTE bytes (not text=True): ffmpeg echoes the filtergraph — including
-    # Urdu words — to stderr, and the Windows console codec (cp1252) cannot
-    # decode it. Decode as UTF-8 with replacement instead.
-    proc = await asyncio.to_thread(
-        subprocess.run, cmd, capture_output=True, text=False, timeout=900,
-    )
-    err = (proc.stderr or b"").decode("utf-8", errors="replace")
-    if proc.returncode != 0 or not out_path.exists():
-        # Full stderr goes to the backend log (the 500 detail is truncated);
-        # without this, production failures are undiagnosable.
-        logger.error("overlay ffmpeg full stderr:\n%s", err)
-        raise RuntimeError(clean_system_error(err, target_path=out_path))
-    ass_path = out_path.with_suffix(".ass")
+    words_dir = out_path.parent / (out_path.stem + "_words")
     try:
-        ass_path.write_text(build_ass(cues, style), encoding="utf-8")
-    except Exception as exc:  # noqa: BLE001 — sidecar is bonus, mov is the product
-        logger.debug("overlay .ass sidecar failed: %s", exc)
-    return out_path
+        filt, _pills = build_drawtext(cues, style, filter_font=f"'{rel}'",
+                                       words_dir=words_dir)
+        if not filt:
+            raise RuntimeError("no words to render")
+        # Canvas: nullsrc has no alpha plane, and the color source's @0 alpha
+        # is lost in yuv420p — so promote to yuva and zero all channels with
+        # geq (verified via alphaextract: transparent bg, opaque glyphs).
+        # drawtext then draws only glyphs, preserving that transparency.
+        filt = ("format=yuva444p10le,geq=r='0':g='0':b='0':a='0'," + filt)
+        # -t caps total length: pill movies loop forever by design, so the
+        # muxer needs an explicit stop (else the render never terminates).
+        total = max(0.5, duration + 0.5)
+        cmd = [
+            _ffmpeg_path(), "-y",
+            "-f", "lavfi",
+            "-i", (f"nullsrc=s={style.width}x{style.height}"
+                   f":r={style.fps}:d={total}"),
+            "-vf", filt,
+            "-t", str(total),
+            "-c:v", "prores_ks", "-profile:v", "4444",
+            "-pix_fmt", "yuva444p10le",
+            "-r", str(style.fps),
+            str(out_path),
+        ]
+        logger.info("overlay render: %ss at %dx%d (%d drawtext)",
+                    round(duration, 2), style.width, style.height, filt.count("drawtext="))
+        # NOTE bytes (not text=True): ffmpeg echoes the filtergraph — including
+        # Urdu words — to stderr, and the Windows console codec (cp1252) cannot
+        # decode it. Decode as UTF-8 with replacement instead.
+        proc = await asyncio.to_thread(
+            subprocess.run, cmd, capture_output=True, text=False, timeout=900,
+        )
+        err = (proc.stderr or b"").decode("utf-8", errors="replace")
+        if proc.returncode != 0 or not out_path.exists():
+            # Full stderr goes to the backend log (the 500 detail is truncated);
+            # without this, production failures are undiagnosable.
+            logger.error("overlay ffmpeg full stderr:\n%s", err)
+            raise RuntimeError(clean_system_error(err, target_path=out_path))
+        ass_path = out_path.with_suffix(".ass")
+        try:
+            ass_path.write_text(build_ass(cues, style), encoding="utf-8")
+        except Exception as exc:  # noqa: BLE001 — sidecar is bonus, mov is the product
+            logger.debug("overlay .ass sidecar failed: %s", exc)
+        return out_path
+    finally:
+        if words_dir.exists():
+            import shutil
+            shutil.rmtree(words_dir, ignore_errors=True)
+

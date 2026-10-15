@@ -21,17 +21,23 @@ from ..utils.progress import manager
 logger = logging.getLogger(__name__)
 
 _WATCH_EXTS = {".js", ".jsx", ".html", ".css"}
+_IGNORED_DIRS = {".git", ".venv", "node_modules", "dist", "build", ".cache", "data"}
 _POLL_SECONDS = 2.0
 
 
 def _scan(root: Path) -> dict[str, float]:
     out: dict[str, float] = {}
-    for p in root.rglob("*"):
-        if p.suffix.lower() in _WATCH_EXTS:
-            try:
-                out[str(p)] = p.stat().st_mtime
-            except OSError:
+    try:
+        for p in root.rglob("*"):
+            if any(part in _IGNORED_DIRS for part in p.parts):
                 continue
+            if p.suffix.lower() in _WATCH_EXTS:
+                try:
+                    out[str(p)] = p.stat().st_mtime
+                except OSError:
+                    continue
+    except Exception as e:
+        logger.debug("dev_watch _scan exception: %s", e)
     return out
 
 
@@ -42,11 +48,11 @@ async def watch_panel_files(repo_root: Path) -> None:
         logger.warning("dev_watch: %s missing, watcher disabled", root)
         return
     logger.info("dev_watch: watching %s (poll %.1fs)", root, _POLL_SECONDS)
-    known = _scan(root)
+    known = await asyncio.to_thread(_scan, root)
     while True:
         await asyncio.sleep(_POLL_SECONDS)
         try:
-            now = _scan(root)
+            now = await asyncio.to_thread(_scan, root)
         except Exception as exc:  # noqa: BLE001 — a scan hiccup must not kill the loop
             logger.debug("dev_watch scan failed: %s", exc)
             continue

@@ -166,7 +166,7 @@ def is_model_installed(model_name: str) -> bool:
 
 @router.get("/status")
 async def whisper_status():
-    """Return the active model + per-model installed state + cache location."""
+    """Return the active model + per-model installed state + cache location + hardware status."""
     cache_dir = _hf_cache_dir()
     supported = []
     for m in _MODEL_CATALOG:
@@ -177,12 +177,31 @@ async def whisper_status():
             "quality": m["quality"],
             "installed": _is_model_installed(m["name"], m["hf_repo_fragments"]),
         })
+    hw = whisper_service.get_hardware_status()
     return {
         "active_model": whisper_service.get_active_model_name(),
         "model_loaded": whisper_service._model is not None,
         "model_info": whisper_service._model_info,
         "cache_dir": str(cache_dir),
         "supported_models": supported,
+        "hardware": hw,
+        "active_device": hw["active_device"],
+        "compute_type": hw["compute_type"],
+        "gpu_name": hw["gpu_name"],
+        "gpu_available": hw["gpu_available"],
+        "idle_seconds": hw["idle_seconds"],
+    }
+
+
+@router.post("/unload")
+async def unload_whisper_model():
+    """Manually evict the Whisper model from RAM and VRAM."""
+    evicted = whisper_service.unload_model()
+    return {
+        "status": "ok",
+        "evicted": evicted,
+        "message": "Whisper model evicted from memory" if evicted else "Whisper model was not loaded",
+        "hardware": whisper_service.get_hardware_status(),
     }
 
 

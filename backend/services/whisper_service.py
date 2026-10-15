@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import re
+import time
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -31,6 +32,34 @@ from ..utils.ffmpeg_utils import extract_audio
 from ..utils.progress import ProgressReporter, manager as _ws_manager
 
 logger = logging.getLogger(__name__)
+
+
+def _set_process_priority_below_normal() -> bool:
+    """Lower process priority on Windows during CPU-heavy transcription so Premiere Pro and the OS stay 100% fluid."""
+    if os.name == "nt":
+        try:
+            import ctypes
+            # BELOW_NORMAL_PRIORITY_CLASS = 0x00004000
+            ctypes.windll.kernel32.SetPriorityClass(
+                ctypes.windll.kernel32.GetCurrentProcess(), 0x00004000
+            )
+            return True
+        except Exception:
+            return False
+    return False
+
+
+def _restore_process_priority_normal() -> None:
+    """Restore normal process priority."""
+    if os.name == "nt":
+        try:
+            import ctypes
+            # NORMAL_PRIORITY_CLASS = 0x00000020
+            ctypes.windll.kernel32.SetPriorityClass(
+                ctypes.windll.kernel32.GetCurrentProcess(), 0x00000020
+            )
+        except Exception:
+            pass
 
 
 def _audio_cache_key(video_path: Path) -> str:
@@ -47,6 +76,7 @@ def _consume_segments(
     segments_iter,
     word_timestamps: bool,
     progress_state: Optional[Dict[str, Any]] = None,
+    throttle_cpu: bool = False,
 ) -> Tuple[List[TranscriptSegment], List[str]]:
     """Drain the faster-whisper segment generator. CPU-bound; call via to_thread.
 
@@ -54,36 +84,42 @@ def _consume_segments(
     so an async ticker can publish progress updates. The dict-write is safe
     under the GIL — no extra locking needed.
     """
-    result_segments: List[TranscriptSegment] = []
-    full_text_parts: List[str] = []
+    if throttle_cpu:
+        _set_process_priority_below_normal()
+    try:
+        result_segments: List[TranscriptSegment] = []
+        full_text_parts: List[str] = []
 
-    for segment in segments_iter:
-        words: List[TranscriptWord] = []
-        if word_timestamps and segment.words:
-            for w in segment.words:
-                words.append(TranscriptWord(
-                    word=w.word.strip(),
-                    start=round(w.start, 3),
-                    end=round(w.end, 3),
-                    probability=round(w.probability, 3),
-                ))
+        for segment in segments_iter:
+            words: List[TranscriptWord] = []
+            if word_timestamps and segment.words:
+                for w in segment.words:
+                    words.append(TranscriptWord(
+                        word=w.word.strip(),
+                        start=round(w.start, 3),
+                        end=round(w.end, 3),
+                        probability=round(w.probability, 3),
+                    ))
 
-        result_segments.append(TranscriptSegment(
-            start=round(segment.start, 3),
-            end=round(segment.end, 3),
-            text=segment.text.strip(),
-            words=words,
-            no_speech_prob=getattr(segment, 'no_speech_prob', 0.0) or 0.0,
-            compression_ratio=getattr(segment, 'compression_ratio', 1.0) or 1.0,
-            avg_logprob=getattr(segment, 'avg_logprob', 0.0) or 0.0,
-        ))
-        full_text_parts.append(segment.text.strip())
+            result_segments.append(TranscriptSegment(
+                start=round(segment.start, 3),
+                end=round(segment.end, 3),
+                text=segment.text.strip(),
+                words=words,
+                no_speech_prob=getattr(segment, 'no_speech_prob', 0.0) or 0.0,
+                compression_ratio=getattr(segment, 'compression_ratio', 1.0) or 1.0,
+                avg_logprob=getattr(segment, 'avg_logprob', 0.0) or 0.0,
+            ))
+            full_text_parts.append(segment.text.strip())
 
-        if progress_state is not None:
-            progress_state["count"] = len(result_segments)
-            progress_state["last_end"] = float(segment.end)
+            if progress_state is not None:
+                progress_state["count"] = len(result_segments)
+                progress_state["last_end"] = float(segment.end)
 
-    return result_segments, full_text_parts
+        return result_segments, full_text_parts
+    finally:
+        if throttle_cpu:
+            _restore_process_priority_normal()
 
 
 class WhisperService:
@@ -102,6 +138,9 @@ class WhisperService:
         self.settings = settings or get_settings()
         self._model = None
         self._model_info: Dict = {}
+        self._detected_gpu: Optional[str] = None
+        self._last_used: float = 0.0
+        self._idle_watchdog_task: Optional[asyncio.Task] = None
         self._transcript_cache: Dict[str, TranscriptResult] = {}  # file_fp -> result (in-memory)
 
         # Serializes concurrent _load_model() calls.  Without this, every
@@ -423,25 +462,94 @@ class WhisperService:
             except Exception:
                 pass
 
+    @staticmethod
+    def detect_device_and_compute(
+        requested_device: Optional[str] = "auto",
+        requested_compute_type: Optional[str] = "auto",
+    ) -> Tuple[str, str, Optional[str]]:
+        """Probe for GPU (CUDA) availability; returns (device, compute_type, gpu_name)."""
+        if requested_device and requested_device != "auto":
+            dev = requested_device
+            ct = (
+                requested_compute_type
+                if requested_compute_type and requested_compute_type != "auto"
+                else ("float16" if dev == "cuda" else "int8")
+            )
+            return dev, ct, ("GPU" if dev == "cuda" else None)
+
+        # 1. Probe ctranslate2 for CUDA devices
+        try:
+            import ctranslate2
+            if hasattr(ctranslate2, "get_cuda_device_count") and ctranslate2.get_cuda_device_count() > 0:
+                gpu_name = None
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        gpu_name = torch.cuda.get_device_name(0)
+                except Exception:
+                    pass
+                if not gpu_name:
+                    import subprocess
+                    try:
+                        p = subprocess.run(
+                            ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+                            capture_output=True, text=True, timeout=2,
+                        )
+                        if p.returncode == 0 and p.stdout.strip():
+                            gpu_name = p.stdout.strip().splitlines()[0]
+                    except Exception:
+                        pass
+                ct = "float16" if (not requested_compute_type or requested_compute_type == "auto") else requested_compute_type
+                logger.info("NVIDIA CUDA GPU detected (%s). Using GPU acceleration (%s).", gpu_name or "CUDA", ct)
+                return "cuda", ct, gpu_name or "NVIDIA CUDA GPU"
+        except Exception:
+            pass
+
+        # 2. Probe torch CUDA
+        try:
+            import torch
+            if torch.cuda.is_available():
+                gpu_name = torch.cuda.get_device_name(0)
+                ct = "float16" if (not requested_compute_type or requested_compute_type == "auto") else requested_compute_type
+                logger.info("NVIDIA CUDA GPU detected via Torch (%s). Using GPU acceleration (%s).", gpu_name, ct)
+                return "cuda", ct, gpu_name
+        except Exception:
+            pass
+
+        logger.info("No CUDA GPU detected or available. Using CPU (int8) with thread limits.")
+        return "cpu", "int8", None
+
     def _load_model(self):
         """Lazy-load the Whisper model. Sync, intended to run via to_thread."""
         if self._model is not None:
+            self._touch_model_usage()
             return
 
         try:
             from faster_whisper import WhisperModel
 
+            model_name = self.get_active_model_name()
+            target_device = getattr(self.settings, "WHISPER_DEVICE", "auto") or "auto"
+            target_compute = getattr(self.settings, "WHISPER_COMPUTE_TYPE", "auto") or "auto"
+
+            best_device, best_compute, detected_gpu = self.detect_device_and_compute(
+                target_device, target_compute
+            )
+            self._detected_gpu = detected_gpu
+
             attempts = []
             if self.settings.WHISPER_LOCAL_DIR:
                 attempts.append(
-                    (self.settings.WHISPER_LOCAL_DIR, self.settings.WHISPER_DEVICE, self.settings.WHISPER_COMPUTE_TYPE)
+                    (self.settings.WHISPER_LOCAL_DIR, best_device, best_compute)
                 )
 
-            model_name = self.get_active_model_name()
-            attempts.append((model_name, self.settings.WHISPER_DEVICE, self.settings.WHISPER_COMPUTE_TYPE))
+            attempts.append((model_name, best_device, best_compute))
 
-            # CPU int8 as a same-model fallback (handles missing CUDA, etc.)
-            if self.settings.WHISPER_DEVICE != "cpu" or self.settings.WHISPER_COMPUTE_TYPE != "int8":
+            if best_device == "cuda":
+                attempts.append((model_name, "cuda", "int8_float16"))
+                # Always fall back to CPU int8 if CUDA runs out of memory or lacks cuDNN
+                attempts.append((model_name, "cpu", "int8"))
+            elif best_device != "cpu" or best_compute != "int8":
                 attempts.append((model_name, "cpu", "int8"))
 
             # Smaller-model fallback is OFF by default — silent downgrade to "tiny"
@@ -456,10 +564,15 @@ class WhisperService:
             for model_spec, device, compute_type in attempts:
                 try:
                     logger.info(f"Loading Whisper model: {model_spec} ({device}/{compute_type})")
+                    is_cpu = (device == "cpu")
+                    # Cap CPU threads to cores//2 (max 4) so multicore CPUs do not freeze the OS
+                    cpu_threads = max(1, min(4, (os.cpu_count() or 4) // 2)) if is_cpu else 2
                     self._model = WhisperModel(
                         model_spec,
                         device=device,
                         compute_type=compute_type,
+                        cpu_threads=cpu_threads,
+                        num_workers=1,
                         local_files_only=bool(
                             self.settings.WHISPER_LOCAL_DIR
                             and Path(self.settings.WHISPER_LOCAL_DIR).exists()
@@ -469,6 +582,8 @@ class WhisperService:
                         "model": str(model_spec),
                         "device": device,
                         "compute_type": compute_type,
+                        "gpu_name": self._detected_gpu if device == "cuda" else None,
+                        "cpu_threads": cpu_threads,
                     }
                     if model_spec != model_name and str(model_spec) != self.settings.WHISPER_LOCAL_DIR:
                         logger.warning(
@@ -479,7 +594,7 @@ class WhisperService:
 
                     # Populate model_revision from model metadata
                     self._populate_model_revision()
-
+                    self._touch_model_usage()
                     return
                 except Exception as e:
                     last_error = e
@@ -492,6 +607,64 @@ class WhisperService:
 
         except ImportError:
             raise RuntimeError("faster-whisper not installed. Run: pip install faster-whisper")
+
+    def _touch_model_usage(self) -> None:
+        """Update last used timestamp and ensure idle watchdog is active."""
+        self._last_used = time.time()
+        try:
+            loop = asyncio.get_running_loop()
+            if self._idle_watchdog_task is None or self._idle_watchdog_task.done():
+                self._idle_watchdog_task = loop.create_task(self._idle_watchdog())
+        except RuntimeError:
+            pass
+
+    async def _idle_watchdog(self) -> None:
+        """Periodic background task that unloads the model after inactivity."""
+        timeout = getattr(self.settings, "WHISPER_IDLE_TIMEOUT_SECONDS", 300)
+        if timeout <= 0:
+            return
+        while True:
+            await asyncio.sleep(30.0)
+            if self._model is None:
+                return
+            if time.time() - self._last_used >= timeout:
+                logger.info(f"Whisper model inactive for >{timeout}s. Evicting from memory.")
+                self.unload_model()
+                return
+
+    def unload_model(self) -> bool:
+        """Evict the loaded Whisper model from RAM and VRAM."""
+        if self._model is None:
+            return False
+        self._model = None
+        self._model_info = {}
+        import gc
+        gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+        logger.info("Whisper model evicted from memory.")
+        return True
+
+    def get_hardware_status(self) -> Dict[str, Any]:
+        """Return current GPU and model memory status."""
+        loaded = (self._model is not None)
+        active_device = self._model_info.get("device", "cpu") if loaded else "none"
+        compute_type = self._model_info.get("compute_type", "int8") if loaded else "none"
+        gpu_name = self._model_info.get("gpu_name") or self._detected_gpu
+
+        return {
+            "model_loaded": loaded,
+            "active_model": self.get_active_model_name(),
+            "active_device": active_device,
+            "compute_type": compute_type,
+            "gpu_name": gpu_name,
+            "gpu_available": bool(self._detected_gpu or active_device == "cuda"),
+            "idle_seconds": round(time.time() - self._last_used, 1) if (loaded and self._last_used > 0) else 0.0,
+        }
 
     def _populate_model_revision(self) -> None:
         """Try to extract the model revision from the loaded model's metadata.
@@ -900,10 +1073,12 @@ class WhisperService:
                 asyncio.create_task(_ticker()) if progress else None
             )
             try:
+                is_cpu = bool(self._model_info.get("device", "cpu") == "cpu")
                 result_segments, full_text_parts = await asyncio.to_thread(
-                    _consume_segments, segments_iter, word_timestamps, progress_state
+                    _consume_segments, segments_iter, word_timestamps, progress_state, is_cpu
                 )
             finally:
+                self._touch_model_usage()
                 if ticker_task is not None:
                     ticker_task.cancel()
                     try:

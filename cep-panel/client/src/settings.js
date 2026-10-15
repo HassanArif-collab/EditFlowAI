@@ -64,6 +64,10 @@ function initSettings() {
               <option value="large-v3-turbo">large-v3-turbo (1.6 GB, best quality)</option>
               <option value="large-v3">large-v3 (3.1 GB, GPU recommended)</option>
             </select>
+            <div id="whisper-hw-status" style="margin: 6px 0; padding: 6px 10px; background: rgba(255,255,255,0.06); border-radius: 4px; font-size: 11px; display: flex; align-items: center; justify-content: space-between;">
+              <span id="whisper-hw-text">Checking hardware...</span>
+              <button id="whisper-unload-btn" class="btn btn-ghost btn-small hidden" style="padding: 2px 8px; font-size: 10px; height: 22px;">Free Memory</button>
+            </div>
             <div class="settings-help" id="whisper-help"></div>
             <div class="provider-form-actions" style="justify-content: flex-start;">
               <button id="whisper-apply-btn" class="btn btn-primary btn-small">Set &amp; install on next use</button>
@@ -334,12 +338,37 @@ async function _loadWhisperModel() {
       }
     }
 
-    // Adjust the Apply button label based on install state.
-    const applyBtn = $('#whisper-apply-btn');
-    if (applyBtn) {
-      applyBtn.textContent = selected && !selected.installed
-        ? 'Set & install on next use'
-        : 'Set as active';
+    // Hardware status & unload button
+    const hwText = $('#whisper-hw-text');
+    const unloadBtn = $('#whisper-unload-btn');
+    if (hwText && status?.hardware) {
+      const hw = status.hardware;
+      if (hw.gpu_available) {
+        const gpu = hw.gpu_name || 'NVIDIA GPU';
+        hwText.innerHTML = `⚡ <b style="color:var(--success,#4ec9b0)">GPU Accelerated:</b> ${_esc(gpu)} (${_esc(hw.compute_type || 'float16')})`;
+      } else {
+        hwText.innerHTML = `⚙ <b>CPU Mode:</b> Throttled to 50% cores (normal UI priority)`;
+      }
+      if (unloadBtn) {
+        if (status.model_loaded) {
+          unloadBtn.classList.remove('hidden');
+          unloadBtn.onclick = async () => {
+            unloadBtn.disabled = true;
+            unloadBtn.textContent = 'Freeing...';
+            try {
+              await apiPost('/api/whisper/unload');
+              await _loadWhisperModel();
+            } catch (err) {
+              console.warn('[settings] unload error:', err);
+            } finally {
+              unloadBtn.disabled = false;
+              unloadBtn.textContent = 'Free Memory';
+            }
+          };
+        } else {
+          unloadBtn.classList.add('hidden');
+        }
+      }
     }
   } catch (e) {
     console.warn('[settings] Failed to load whisper status:', e);

@@ -1466,19 +1466,48 @@ function drawPresetTiles() {
   });
 }
 
-// Motion tiles play their animation on a loop while the Motion tab is open.
-let tileRaf = 0;
+// Motion tiles: static preview by default, animate on hover for zero background CPU load.
+let activeHoverTile = null;
+let hoverTileRaf = 0;
+
+function setupTileHover(cv) {
+  const btn = cv.closest('button');
+  if (!btn || btn._hasHoverAnim) return;
+  btn._hasHoverAnim = true;
+
+  btn.addEventListener('mouseenter', () => {
+    activeHoverTile = cv;
+    if (hoverTileRaf) cancelAnimationFrame(hoverTileRaf);
+    const t0 = performance.now();
+    const loop = (now) => {
+      if (activeHoverTile !== cv || S.tab !== 'motion' || document.hidden) {
+        hoverTileRaf = 0;
+        return;
+      }
+      const t = ((now - t0) / 1000) % 2.2;
+      paintTile(cv, Math.min(t, 1.9));
+      hoverTileRaf = requestAnimationFrame(loop);
+    };
+    hoverTileRaf = requestAnimationFrame(loop);
+  });
+
+  btn.addEventListener('mouseleave', () => {
+    if (activeHoverTile === cv) {
+      activeHoverTile = null;
+      if (hoverTileRaf) {
+        cancelAnimationFrame(hoverTileRaf);
+        hoverTileRaf = 0;
+      }
+      paintTile(cv, 0.68);
+    }
+  });
+}
+
 function animateMotionTiles() {
-  if (tileRaf) return;
-  const t0 = performance.now();
-  const loop = (now) => {
-    tileRaf = 0;
-    if (S.tab !== 'motion' || !root || root.classList.contains('hidden')) return;
-    const t = ((now - t0) / 1000) % 2.4;         // 1.9 s of captions + a short rest
-    $$('[data-mtile]').forEach((cv) => paintTile(cv, Math.min(t, 1.9)));
-    tileRaf = requestAnimationFrame(loop);
-  };
-  tileRaf = requestAnimationFrame(loop);
+  $$('[data-mtile]').forEach((cv) => {
+    setupTileHover(cv);
+    paintTile(cv, 0.68);
+  });
 }
 
 /* ── Motion tab ───────────────────────────────────────────────── */
@@ -1527,8 +1556,8 @@ function drawMotionTiles() {
     $$('[data-mtile]').forEach((cv) => {
       const motion = Object.assign({}, S.settings.motion, { preset: cv.dataset.mtile });
       drawTileScene(cv, st, motion, 0.68);
+      setupTileHover(cv);
     });
-    animateMotionTiles();
   });
 }
 
@@ -1712,6 +1741,15 @@ function onBoundInput(el) {
 }
 
 function bindEvents() {
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      setPlaying(false);
+      if (hoverTileRaf) {
+        cancelAnimationFrame(hoverTileRaf);
+        hoverTileRaf = 0;
+      }
+    }
+  });
   root.addEventListener('input', (e) => {
     const el = e.target;
     if (el.id === 'cc-scrub') { setPlaying(false); seek(parseFloat(el.value) || 0); return; }

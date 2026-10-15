@@ -1,0 +1,5 @@
+# Optional extra dependencies for PDF/Word document extraction and visual mapping
+jinja2>=3.1.0
+python-docx>=0.8.11
+pdfplumber>=0.9.0
+pypdf>=4.0

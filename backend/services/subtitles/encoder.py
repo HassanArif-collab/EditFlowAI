@@ -272,3 +272,16 @@ def cancel(job_id: str) -> bool:
     except OSError:
         pass
     return True
+
+
+def cancel_all() -> int:
+    """Cancel all in-flight encode jobs and cleanup their processes and temp files."""
+    with _jobs_lock:
+        job_ids = list(_jobs.keys())
+    count = 0
+    for jid in job_ids:
+        if cancel(jid):
+            count += 1
+    if count > 0:
+        logger.info(f"Cancelled {count} active encoding job(s)")
+    return count

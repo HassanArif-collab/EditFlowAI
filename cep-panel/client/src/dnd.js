@@ -152,18 +152,10 @@ async function _handlePProDrop() {
 function setupSelectionChip(chipEl, onUseSelected, getStateFn) {
   if (!chipEl) return;
 
-  // Start polling
-  _selectionPollTimer = setInterval(async () => {
+  async function checkSelection() {
     const state = getStateFn();
-    // Only poll in idle or scanned state
-    // Plan says: hide when state moves past script_needed
     const hiddenStates = ['matching', 'plan_ready', 'applying', 'done', 'error'];
-    if (hiddenStates.includes(state.current)) {
-      chipEl.classList.add('hidden');
-      return;
-    }
-
-    if (!isExtendScriptAvailable()) {
+    if (hiddenStates.includes(state.current) || !isExtendScriptAvailable() || document.hidden) {
       chipEl.classList.add('hidden');
       return;
     }
@@ -179,7 +171,21 @@ function setupSelectionChip(chipEl, onUseSelected, getStateFn) {
     } catch (_) {
       chipEl.classList.add('hidden');
     }
-  }, 2000);
+  }
+
+  // Trigger check on focus and visibility instead of hammering ExtendScript on a timer
+  window.addEventListener('focus', checkSelection);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) checkSelection();
+    else chipEl.classList.add('hidden');
+  });
+
+  // Gentle poll ONLY when user has focus on the panel
+  _selectionPollTimer = setInterval(() => {
+    if (document.hasFocus() && !document.hidden) {
+      checkSelection();
+    }
+  }, 6000);
 
   // Click handler
   chipEl.addEventListener('click', async () => {

@@ -86,8 +86,10 @@ function _renderDiagnostics(data) {
     (data.any_provider_connected !== undefined ?
       `<div class="popover-row"><span class="popover-key">Provider</span><span class="popover-val" style="color:${data.any_provider_connected ? 'var(--success)' : 'var(--error)'}">${data.any_provider_connected ? 'Connected' : 'None'}</span></div>` : '') +
     (data.active_chat ? `<div class="popover-row"><span class="popover-key">Chat model</span><span class="popover-val">${data.active_chat || '-'}</span></div>` : '') +
+    (data.whisper_hardware ?
+      `<div class="popover-row"><span class="popover-key">Hardware</span><span class="popover-val" style="color:${data.whisper_hardware.gpu_available ? 'var(--success)' : 'var(--text-dim)'}">${data.whisper_hardware.gpu_name ? data.whisper_hardware.gpu_name + ' (CUDA)' : 'CPU throttled'}</span></div>` : '') +
     (data.whisper_loaded !== undefined ?
-      `<div class="popover-row"><span class="popover-key">Whisper</span><span class="popover-val" style="color:${data.whisper_loaded ? 'var(--success)' : 'var(--text-dim)'}">${data.whisper_loaded ? 'Loaded' : 'Not loaded'}</span></div>` : '') +
+      `<div class="popover-row"><span class="popover-key">Whisper</span><span class="popover-val" style="color:${data.whisper_loaded ? 'var(--success)' : 'var(--text-dim)'}">${data.whisper_loaded ? 'In memory (' + (data.whisper_hardware?.active_device || 'loaded') + ')' : 'Idle (evicted)'}</span></div>` : '') +
     (Object.keys(providers).length > 0 ?
       `<div style="margin-top:8px;font-size:11px;font-weight:600;color:var(--text-dim)">PROVIDERS</div>${providerRows}` : '');
 }
