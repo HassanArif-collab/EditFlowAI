@@ -98,7 +98,7 @@ async def _background_discover():
 app = FastAPI(
     title="EditFlow AI",
     description="AI-powered video editing: analyze, cut, and place visuals",
-    version="2.0.0",
+    version="3.0.0",
     lifespan=lifespan,
 )
 
@@ -175,7 +175,7 @@ async def ping():
     """Cheap liveness check."""
     return {
         "server": "running",
-        "version": "2.0.0",
+        "version": "3.0.0",
     }
 
 
@@ -205,7 +205,7 @@ async def status():
 
     return {
         "server": "running",
-        "version": "2.0.0",
+        "version": "3.0.0",
         "any_provider_connected": any_connected,
         "providers": providers_summary,
         "active_chat": active_chat,
