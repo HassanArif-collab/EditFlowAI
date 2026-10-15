@@ -74,11 +74,13 @@ def _set_process_priority_below_normal() -> bool:
     if os.name == "nt":
         try:
             import ctypes
+            from ctypes import wintypes
+            k32 = ctypes.windll.kernel32
+            k32.GetCurrentProcess.restype = wintypes.HANDLE
+            k32.SetPriorityClass.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+            k32.SetPriorityClass.restype = wintypes.BOOL
             # BELOW_NORMAL_PRIORITY_CLASS = 0x00004000
-            ctypes.windll.kernel32.SetPriorityClass(
-                ctypes.windll.kernel32.GetCurrentProcess(), 0x00004000
-            )
-            return True
+            return bool(k32.SetPriorityClass(k32.GetCurrentProcess(), 0x00004000))
         except Exception:
             return False
     return False
@@ -89,10 +91,13 @@ def _restore_process_priority_normal() -> None:
     if os.name == "nt":
         try:
             import ctypes
+            from ctypes import wintypes
+            k32 = ctypes.windll.kernel32
+            k32.GetCurrentProcess.restype = wintypes.HANDLE
+            k32.SetPriorityClass.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+            k32.SetPriorityClass.restype = wintypes.BOOL
             # NORMAL_PRIORITY_CLASS = 0x00000020
-            ctypes.windll.kernel32.SetPriorityClass(
-                ctypes.windll.kernel32.GetCurrentProcess(), 0x00000020
-            )
+            k32.SetPriorityClass(k32.GetCurrentProcess(), 0x00000020)
         except Exception:
             pass
 
@@ -617,9 +622,11 @@ class WhisperService:
                     if device == "cuda":
                         # Validate that CUDA libraries actually work before declaring success
                         try:
+                            import ctranslate2
                             import numpy as np
                             dummy = np.zeros((1, 80, 300), dtype=np.float32)
-                            self._model.model.encode(dummy)
+                            sv = ctranslate2.StorageView.from_array(dummy)
+                            self._model.model.encode(sv)
                         except Exception as val_err:
                             logger.warning(f"CUDA forward validation failed for {model_spec}: {val_err}")
                             raise val_err

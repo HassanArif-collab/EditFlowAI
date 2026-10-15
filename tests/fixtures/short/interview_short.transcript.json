@@ -12,25 +12,25 @@
           "word": "Hello,",
           "start": 1.87,
           "end": 2.45,
-          "probability": 0.91
+          "probability": 0.919
         },
         {
           "word": "and",
           "start": 2.73,
           "end": 2.83,
-          "probability": 0.975
+          "probability": 0.979
         },
         {
           "word": "welcome",
           "start": 2.83,
           "end": 3.09,
-          "probability": 0.982
+          "probability": 0.983
         },
         {
           "word": "back",
           "start": 3.09,
           "end": 3.41,
-          "probability": 0.996
+          "probability": 0.995
         },
         {
           "word": "to",
@@ -42,59 +42,59 @@
           "word": "my",
           "start": 3.57,
           "end": 3.69,
-          "probability": 0.998
+          "probability": 0.999
         },
         {
           "word": "channel.",
           "start": 3.69,
           "end": 4.05,
-          "probability": 0.983
+          "probability": 0.984
         }
       ],
-      "no_speech_prob": 0.026422474533319473,
-      "compression_ratio": 1.671641791044776,
-      "avg_logprob": -0.17495976953670897
+      "no_speech_prob": 0.024658203125,
+      "compression_ratio": 1.9483870967741936,
+      "avg_logprob": -0.17614582896232606
     },
     {
-      "start": 5.11,
+      "start": 5.09,
       "end": 8.17,
       "text": "Today I want to, uh, talk about something really cool.",
       "words": [
         {
           "word": "Today",
-          "start": 5.11,
+          "start": 5.09,
           "end": 5.33,
-          "probability": 0.984
+          "probability": 0.981
         },
         {
           "word": "I",
           "start": 5.33,
           "end": 5.57,
-          "probability": 0.982
+          "probability": 0.974
         },
         {
           "word": "want",
           "start": 5.57,
-          "end": 5.73,
-          "probability": 0.998
+          "end": 5.75,
+          "probability": 0.999
         },
         {
           "word": "to,",
-          "start": 5.73,
+          "start": 5.75,
           "end": 6.03,
           "probability": 0.999
         },
         {
           "word": "uh,",
-          "start": 6.27,
+          "start": 6.29,
           "end": 6.49,
-          "probability": 0.732
+          "probability": 0.724
         },
         {
           "word": "talk",
           "start": 6.79,
           "end": 6.93,
-          "probability": 0.99
+          "probability": 0.992
         },
         {
           "word": "about",
@@ -118,12 +118,12 @@
           "word": "cool.",
           "start": 7.83,
           "end": 8.17,
-          "probability": 0.998
+          "probability": 0.999
         }
       ],
-      "no_speech_prob": 0.026422474533319473,
-      "compression_ratio": 1.671641791044776,
-      "avg_logprob": -0.17495976953670897
+      "no_speech_prob": 0.024658203125,
+      "compression_ratio": 1.9483870967741936,
+      "avg_logprob": -0.17614582896232606
     },
     {
       "start": 11.32,
@@ -134,13 +134,13 @@
           "word": "Today",
           "start": 11.32,
           "end": 11.56,
-          "probability": 0.989
+          "probability": 0.991
         },
         {
           "word": "I",
           "start": 11.56,
           "end": 11.82,
-          "probability": 0.995
+          "probability": 0.992
         },
         {
           "word": "want",
@@ -164,7 +164,7 @@
           "word": "about",
           "start": 12.32,
           "end": 12.58,
-          "probability": 0.998
+          "probability": 0.999
         },
         {
           "word": "something",
@@ -176,25 +176,25 @@
           "word": "interesting,",
           "start": 12.88,
           "end": 13.42,
-          "probability": 0.994
+          "probability": 0.995
         },
         {
           "word": "uh,",
           "start": 13.9,
           "end": 14.12,
-          "probability": 0.817
+          "probability": 0.837
         },
         {
           "word": "something",
           "start": 14.46,
           "end": 14.72,
-          "probability": 0.992
+          "probability": 0.993
         },
         {
           "word": "that",
           "start": 14.72,
           "end": 15.0,
-          "probability": 0.998
+          "probability": 0.999
         },
         {
           "word": "I",
@@ -206,13 +206,13 @@
           "word": "think",
           "start": 15.1,
           "end": 15.28,
-          "probability": 0.999
+          "probability": 1.0
         },
         {
           "word": "you'll",
           "start": 15.28,
           "end": 15.5,
-          "probability": 0.994
+          "probability": 0.995
         },
         {
           "word": "find",
@@ -227,26 +227,26 @@
           "probability": 0.997
         }
       ],
-      "no_speech_prob": 0.026422474533319473,
-      "compression_ratio": 1.671641791044776,
-      "avg_logprob": -0.17495976953670897
+      "no_speech_prob": 0.024658203125,
+      "compression_ratio": 1.9483870967741936,
+      "avg_logprob": -0.17614582896232606
     },
     {
-      "start": 19.46,
+      "start": 19.4,
       "end": 20.74,
       "text": "Welcome back to the channel.",
       "words": [
         {
           "word": "Welcome",
-          "start": 19.46,
+          "start": 19.4,
           "end": 19.8,
-          "probability": 0.99
+          "probability": 0.991
         },
         {
           "word": "back",
           "start": 19.8,
           "end": 20.12,
-          "probability": 0.995
+          "probability": 0.996
         },
         {
           "word": "to",
@@ -264,106 +264,106 @@
           "word": "channel.",
           "start": 20.4,
           "end": 20.74,
-          "probability": 0.989
+          "probability": 0.991
         }
       ],
-      "no_speech_prob": 0.026422474533319473,
-      "compression_ratio": 1.671641791044776,
-      "avg_logprob": -0.17495976953670897
+      "no_speech_prob": 0.024658203125,
+      "compression_ratio": 1.9483870967741936,
+      "avg_logprob": -0.17614582896232606
     },
     {
-      "start": 21.47,
-      "end": 25.59,
+      "start": 21.75,
+      "end": 25.61,
       "text": "Today I want to discuss a fascinating topic that I think you'll really enjoy.",
       "words": [
         {
           "word": "Today",
-          "start": 21.47,
-          "end": 22.03,
-          "probability": 0.47
+          "start": 21.75,
+          "end": 22.07,
+          "probability": 0.996
         },
         {
           "word": "I",
-          "start": 22.03,
+          "start": 22.07,
           "end": 22.31,
-          "probability": 0.932
+          "probability": 0.995
         },
         {
           "word": "want",
           "start": 22.31,
-          "end": 22.49,
-          "probability": 0.997
+          "end": 22.47,
+          "probability": 0.999
         },
         {
           "word": "to",
-          "start": 22.49,
+          "start": 22.47,
           "end": 22.65,
           "probability": 1.0
         },
         {
           "word": "discuss",
           "start": 22.65,
-          "end": 22.93,
-          "probability": 0.997
+          "end": 22.91,
+          "probability": 0.998
         },
         {
           "word": "a",
-          "start": 22.93,
-          "end": 23.17,
-          "probability": 0.997
+          "start": 22.91,
+          "end": 23.15,
+          "probability": 0.999
         },
         {
           "word": "fascinating",
-          "start": 23.17,
-          "end": 23.61,
-          "probability": 0.997
+          "start": 23.15,
+          "end": 23.59,
+          "probability": 1.0
         },
         {
           "word": "topic",
-          "start": 23.61,
+          "start": 23.59,
           "end": 24.11,
-          "probability": 0.998
+          "probability": 0.999
         },
         {
           "word": "that",
           "start": 24.11,
           "end": 24.43,
-          "probability": 0.9
+          "probability": 0.869
         },
         {
           "word": "I",
           "start": 24.43,
           "end": 24.55,
-          "probability": 0.985
+          "probability": 0.997
         },
         {
           "word": "think",
           "start": 24.55,
           "end": 24.75,
-          "probability": 0.998
+          "probability": 0.999
         },
         {
           "word": "you'll",
           "start": 24.75,
-          "end": 24.99,
-          "probability": 0.982
+          "end": 24.97,
+          "probability": 0.998
         },
         {
           "word": "really",
-          "start": 24.99,
-          "end": 25.25,
-          "probability": 0.992
+          "start": 24.97,
+          "end": 25.23,
+          "probability": 0.998
         },
         {
           "word": "enjoy.",
-          "start": 25.25,
-          "end": 25.59,
-          "probability": 0.998
+          "start": 25.23,
+          "end": 25.61,
+          "probability": 0.999
         }
       ],
-      "no_speech_prob": 0.017103953287005424,
-      "compression_ratio": 1.013157894736842,
-      "avg_logprob": -0.2512377751500983
+      "no_speech_prob": 0.024658203125,
+      "compression_ratio": 1.9483870967741936,
+      "avg_logprob": -0.17614582896232606
     }
   ],
   "full_text": "Hello, and welcome back to my channel. Today I want to, uh, talk about something really cool. Today I want to talk about something interesting, uh, something that I think you'll find fascinating. Welcome back to the channel. Today I want to discuss a fascinating topic that I think you'll really enjoy.",
@@ -373,6 +373,6 @@
   "audio_offset": 0.0,
   "engine": "faster_whisper",
   "model": "small",
-  "model_revision": "cpu/int8",
+  "model_revision": "cuda/float16",
   "warnings": []
 }

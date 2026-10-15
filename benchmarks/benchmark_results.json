@@ -1,0 +1,84 @@
+{
+  "benchmark_timestamp": "2026-10-15T16:23:00Z",
+  "hardware": {
+    "name": "NVIDIA GeForce RTX 2070 SUPER",
+    "memory_used_mb": 6225.0,
+    "memory_total_mb": 8192.0,
+    "utilization_pct": 40.0
+  },
+  "transcription": {
+    "old_cpu": {
+      "device": "cpu",
+      "compute": "int8",
+      "time_seconds": 9.541,
+      "audio_duration_seconds": 25.59,
+      "realtime_factor": 2.68,
+      "wer_pct": 7.59
+    },
+    "new_gpu_cuda": {
+      "device": "cuda",
+      "compute": "float16",
+      "time_seconds": 2.384,
+      "audio_duration_seconds": 25.59,
+      "realtime_factor": 10.73,
+      "wer_pct": 7.59,
+      "speedup_vs_old_cpu": "4.0x"
+    },
+    "new_cache_hit": {
+      "time_seconds": 0.0012,
+      "time_ms": 1.19,
+      "realtime_factor": "21423.2x",
+      "speedup_vs_old_cpu": "7987.6x"
+    }
+  },
+  "memory": {
+    "ram_initial_mb": 680.1,
+    "ram_with_model_loaded_mb": 690.78,
+    "ram_after_idle_eviction_mb": 683.49,
+    "ram_reclaimed_mb": 7.29,
+    "gpu_initial_mb": 6218.0,
+    "gpu_with_model_loaded_mb": 6865.0,
+    "gpu_after_idle_eviction_mb": 6225.0,
+    "gpu_reclaimed_mb": 640.0
+  },
+  "cpu_throttling": {
+    "total_host_cpu_cores": 12,
+    "old_cpu_threads_allocated": 12,
+    "old_cpu_cores_left_for_premiere": 0,
+    "new_cpu_threads_allocated": 4,
+    "new_cpu_cores_left_for_premiere": 8,
+    "priority_before": "NORMAL (0x20)",
+    "priority_during_transcription": "BELOW_NORMAL (0x4000)",
+    "priority_restored": "NORMAL (0x20)"
+  },
+  "disk_io": {
+    "old_scanned_files_per_tick": 453,
+    "old_scan_duration_ms": 11.76,
+    "new_scanned_files_per_tick": 220,
+    "new_scan_duration_ms": 2.77,
+    "disk_io_reduction_pct": 51.4,
+    "production_mode_idle_scans": "0 scans/sec (dev_watch disabled in --prod)"
+  },
+  "ui_and_bridge": {
+    "old_extendscript_polling": {
+      "mechanism": "setInterval(checkActiveSequence, 2000)",
+      "bridge_calls_per_hour": 1800,
+      "premiere_ui_thread_interruptions": "Continuous every 2 seconds"
+    },
+    "new_extendscript_polling": {
+      "mechanism": "Event-driven (focus, mouseenter, dragenter, visibilitychange)",
+      "bridge_calls_per_hour_idle": 0,
+      "premiere_ui_thread_interruptions": "Zero when idle"
+    },
+    "old_motion_presets_canvas": {
+      "mechanism": "Continuous 60 FPS requestAnimationFrame across 8 canvases",
+      "canvas_redraws_per_second_idle": 480,
+      "background_cpu_usage": "Continuous GPU/CPU consumption"
+    },
+    "new_motion_presets_canvas": {
+      "mechanism": "Static snapshot rendering with CSS hover playback",
+      "canvas_redraws_per_second_idle": 0,
+      "background_cpu_usage": "0% when idle; auto-paused on visibility hidden"
+    }
+  }
+}
