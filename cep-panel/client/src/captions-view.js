@@ -1300,8 +1300,9 @@ async function transcribeSequence() {
     }, { timeoutMs: 60 * 60 * 1000 });
     const words = (res.words || []).map((w) => ({ text: w.word || w.text, start: w.start, end: w.end }));
     const skipped = (res.skipped || []).length;
+    const modelLabel = res.model ? `${res.model} · ${res.engine || 'faster_whisper'}` : (res.engine || 'whisper');
     S.sourceName = clips.name || 'Sequence';
-    setWords(words, `${words.length} words from “${clips.name}”${rangeLabel} (${res.engine || 'whisper'})${skipped ? ` — ${skipped} offline clip(s) skipped` : ''}.`);
+    setWords(words, `${words.length} words from “${clips.name}”${rangeLabel} (${modelLabel})${skipped ? ` — ${skipped} offline clip(s) skipped` : ''}.`);
     if (res.audio_url) {
       initAudio(res.audio_url, res.range_in || 0);
     }
@@ -1330,8 +1331,9 @@ async function transcribeFile(file) {
       im.src = getBaseUrl() + res.bg_url;
       S.bgImage = im;
     }
+    const modelLabel = res.model ? `${res.model} · ${res.engine || 'faster_whisper'}` : (res.engine || 'whisper');
     S.sourceName = file.name;
-    setWords(words, `${words.length} words from ${file.name} (${res.engine || 'whisper'}). Times count from the start of the sequence.`);
+    setWords(words, `${words.length} words from ${file.name} (${modelLabel}). Times count from the start of the sequence.`);
     if (res.audio_url) {
       initAudio(res.audio_url, 0);
     }

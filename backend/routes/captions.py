@@ -223,9 +223,7 @@ async def _transcribe_wav(wav_path, fingerprint: str, language: Optional[str], e
     """Shared transcription core for uploads and sequence mixdowns: cache
     peek → WhisperX (forced alignment) → Whisper fallback → sanitized words."""
     active_model = whisper_service.get_active_model_name()
-    # Model-availability short-circuit. 409 (not 422/500) so the frontend
-    # can distinguish "install a model first" from a real error.
-    if not is_model_installed(active_model):
+    if not active_model:
         raise HTTPException(
             status_code=409,
             detail={
@@ -234,6 +232,8 @@ async def _transcribe_wav(wav_path, fingerprint: str, language: Optional[str], e
                 "download_hint": "open_settings_whisper",
             },
         )
+    if not is_model_installed(active_model):
+        logger.info("captions: active model %s not yet in cache; will auto-download on transcribe", active_model)
 
     # range_in/range_out=0 → whole file (the caller already trimmed).
     reporter = ProgressReporter(task_type="transcribe", client_id=client_id)

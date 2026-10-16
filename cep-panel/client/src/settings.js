@@ -345,9 +345,10 @@ async function _loadWhisperModel() {
       const hw = status.hardware;
       if (hw.gpu_available) {
         const gpu = hw.gpu_name || 'NVIDIA GPU';
-        hwText.innerHTML = `⚡ <b style="color:var(--success,#4ec9b0)">GPU Accelerated:</b> ${_esc(gpu)} (${_esc(hw.compute_type || 'float16')})`;
+        const vramInfo = hw.free_vram_mb ? ` · ${hw.free_vram_mb} MB free VRAM` : '';
+        hwText.innerHTML = `⚡ <b style="color:var(--success,#4ec9b0)">GPU Accelerated:</b> ${_esc(gpu)} (${_esc(hw.compute_type || 'auto')}${vramInfo})`;
       } else {
-        hwText.innerHTML = `⚙ <b>CPU Mode:</b> Throttled to 50% cores (normal UI priority)`;
+        hwText.innerHTML = `⚙ <b>CPU Mode:</b> Safe thread limits (fluid UI priority)`;
       }
       if (unloadBtn) {
         if (status.model_loaded) {
@@ -375,16 +376,17 @@ async function _loadWhisperModel() {
   }
 }
 
-function _onWhisperChange(e) {
+async function _onWhisperChange(e) {
   _whisperModel = e.target.value;
-  // Update help text + button label LOCALLY only. Previously this called
-  // _loadWhisperModel() which re-fetched /api/whisper/status and used the
-  // response's still-unchanged active_model to set sel.value, snapping the
-  // dropdown back to whatever the server last persisted. That made it
-  // impossible to actually pick a new model — every selection reverted to
-  // 'medium' (or whatever was active) within milliseconds.
   _updateWhisperHelp();
   _updateWhisperApplyButton();
+  if (_whisperModel) {
+    try {
+      await apiPost('/api/whisper/set-model', { model: _whisperModel, preload: false });
+    } catch (err) {
+      console.warn('[settings] auto-save whisper model error:', err);
+    }
+  }
 }
 
 /**

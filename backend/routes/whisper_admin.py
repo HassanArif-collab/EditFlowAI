@@ -33,6 +33,11 @@ router = APIRouter(prefix="/whisper", tags=["whisper"])
 class SetModelRequest(BaseModel):
     model: str
     preload: bool = False
+    device: Optional[str] = None
+
+
+class SetDeviceRequest(BaseModel):
+    device: str  # "auto", "cpu", "cuda"
 
 
 # Catalog of supported Whisper models with size hints and HuggingFace repo
@@ -305,6 +310,8 @@ async def set_whisper_model(request: SetModelRequest):
     call triggers the load+download (no progress events).
     """
     try:
+        if request.device:
+            whisper_service.set_device_preference(request.device)
         result = whisper_service.set_active_model(request.model)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -343,4 +350,17 @@ async def set_whisper_model(request: SetModelRequest):
                 detail=clean_system_error(e),
             )
 
+    result["device_preference"] = whisper_service.get_device_preference()
+    result["hardware"] = whisper_service.get_hardware_status()
     return result
+
+
+@router.post("/set-device")
+async def set_whisper_device(request: SetDeviceRequest):
+    """Set compute device preference (auto, cpu, cuda). Persists to disk."""
+    whisper_service.set_device_preference(request.device)
+    return {
+        "status": "ok",
+        "device_preference": whisper_service.get_device_preference(),
+        "hardware": whisper_service.get_hardware_status(),
+    }

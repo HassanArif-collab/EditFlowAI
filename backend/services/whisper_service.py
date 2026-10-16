@@ -205,7 +205,8 @@ class WhisperService:
         return Path(self.settings.DATA_DIR) / "whisper_config.json"
 
     def _load_active_model_from_disk(self) -> None:
-        """Load the user's preferred Whisper model from disk, if any."""
+        """Load the user's preferred Whisper model and compute device from disk."""
+        self._device_preference: str = "auto"
         path = self._whisper_config_path()
         if not path.exists():
             return
@@ -215,20 +216,38 @@ class WhisperService:
             if isinstance(name, str) and name:
                 self._active_model_name = name
                 logger.info(f"Whisper active model loaded from disk: {name}")
+            dev_pref = data.get("device_preference")
+            if isinstance(dev_pref, str) and dev_pref in ("auto", "cpu", "cuda"):
+                self._device_preference = dev_pref
         except Exception as e:
             logger.warning(f"Failed to load whisper_config.json: {e}")
 
     def _save_active_model_to_disk(self) -> None:
-        """Persist the current active-model choice to disk."""
+        """Persist the current active-model choice and device preference to disk."""
         path = self._whisper_config_path()
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(
-                json.dumps({"active_model": self._active_model_name or ""}, indent=2),
+                json.dumps({
+                    "active_model": self._active_model_name or "",
+                    "device_preference": getattr(self, "_device_preference", "auto") or "auto",
+                }, indent=2),
                 encoding="utf-8",
             )
         except Exception as e:
             logger.warning(f"Failed to save whisper_config.json: {e}")
+
+    def get_device_preference(self) -> str:
+        return getattr(self, "_device_preference", "auto") or "auto"
+
+    def set_device_preference(self, pref: str) -> None:
+        pref = (pref or "auto").strip().lower()
+        if pref not in ("auto", "cpu", "cuda"):
+            pref = "auto"
+        self._device_preference = pref
+        self._save_active_model_to_disk()
+        if self._model is not None:
+            self.unload_model()
 
     def get_active_model_name(self) -> str:
         """The Whisper model that will actually be used for transcription.
@@ -361,6 +380,43 @@ class WhisperService:
         "tiny": 75, "base": 145, "small": 466,
         "medium": 1500, "large-v3-turbo": 1600, "large-v3": 3100,
     }
+
+    # Minimum FREE VRAM (in MiB) required before loading a model on CUDA.
+    # Includes safety headroom so Premiere Pro's DirectX swapchain and
+    # Mercury Playback Engine never hit WDDM PCIe memory paging or TDR 0x141 resets.
+    _MIN_FREE_VRAM_MB = {
+        "tiny": 900,
+        "base": 1100,
+        "small": 1500,
+        "medium": 2500,
+        "large-v3-turbo": 2400,
+        "large-v3": 4200,
+    }
+
+    @staticmethod
+    def _query_gpu_vram_mb() -> Tuple[int, int]:
+        """Return (free_vram_mb, total_vram_mb) for GPU 0, or (0, 0) if unavailable."""
+        try:
+            import torch
+            if torch.cuda.is_available():
+                free_b, total_b = torch.cuda.mem_get_info(0)
+                return int(free_b // (1024 * 1024)), int(total_b // (1024 * 1024))
+        except Exception:
+            pass
+        try:
+            import subprocess
+            p = subprocess.run(
+                ["nvidia-smi", "--query-gpu=memory.free,memory.total", "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=2,
+            )
+            if p.returncode == 0 and p.stdout.strip():
+                line = p.stdout.strip().splitlines()[0]
+                parts = [int(x.strip()) for x in line.split(",")]
+                if len(parts) >= 2:
+                    return parts[0], parts[1]
+        except Exception:
+            pass
+        return 0, 0
 
     @staticmethod
     def _largest_incomplete_blob_mb(cache_dir: Path, model_name: str) -> float:
@@ -564,13 +620,33 @@ class WhisperService:
             from faster_whisper import WhisperModel
 
             model_name = self.get_active_model_name()
+            dev_pref = getattr(self, "_device_preference", "auto") or "auto"
             target_device = getattr(self.settings, "WHISPER_DEVICE", "auto") or "auto"
+            if dev_pref in ("cpu", "cuda"):
+                target_device = dev_pref
             target_compute = getattr(self.settings, "WHISPER_COMPUTE_TYPE", "auto") or "auto"
 
             best_device, best_compute, detected_gpu = self.detect_device_and_compute(
                 target_device, target_compute
             )
             self._detected_gpu = detected_gpu
+
+            # Query available VRAM to guard against NVIDIA TDR (0x141) resets
+            free_vram_mb, total_vram_mb = self._query_gpu_vram_mb()
+            min_free_needed = self._MIN_FREE_VRAM_MB.get(model_name, 2400)
+
+            if best_device == "cuda" and free_vram_mb > 0 and free_vram_mb < min_free_needed:
+                logger.warning(
+                    "Insufficient free GPU VRAM for %s (%d MiB free < %d MiB required). "
+                    "Premiere Pro is utilizing GPU memory. Auto-falling back to CPU (int8) to prevent NVIDIA driver TDR crash.",
+                    model_name, free_vram_mb, min_free_needed,
+                )
+                best_device = "cpu"
+                best_compute = "int8"
+            elif best_device == "cuda" and 0 < total_vram_mb <= 8192 and model_name in ("medium", "large-v3-turbo", "large-v3"):
+                # On <= 8GB GPUs, int8_float16 cuts memory by 45% and eliminates WDDM PCIe paging stalls
+                if target_compute == "auto":
+                    best_compute = "int8_float16"
 
             attempts = []
             if self.settings.WHISPER_LOCAL_DIR:
@@ -581,7 +657,8 @@ class WhisperService:
             attempts.append((model_name, best_device, best_compute))
 
             if best_device == "cuda":
-                attempts.append((model_name, "cuda", "int8_float16"))
+                if best_compute != "int8_float16":
+                    attempts.append((model_name, "cuda", "int8_float16"))
                 # Always fall back to CPU int8 if CUDA runs out of memory or lacks cuDNN
                 attempts.append((model_name, "cpu", "int8"))
             elif best_device != "cpu" or best_compute != "int8":
@@ -631,6 +708,8 @@ class WhisperService:
                         "compute_type": compute_type,
                         "gpu_name": self._detected_gpu if device == "cuda" else None,
                         "cpu_threads": cpu_threads,
+                        "total_vram_mb": total_vram_mb if device == "cuda" else 0,
+                        "free_vram_mb": free_vram_mb if device == "cuda" else 0,
                     }
                     if model_spec != model_name and str(model_spec) != self.settings.WHISPER_LOCAL_DIR:
                         logger.warning(
@@ -739,6 +818,13 @@ class WhisperService:
         loaded = (self._model is not None)
         active_device = self._model_info.get("device", "cpu") if loaded else "none"
         compute_type = self._model_info.get("compute_type", "int8") if loaded else "none"
+        free_vram_mb, total_vram_mb = self._query_gpu_vram_mb()
+        if not self._detected_gpu and total_vram_mb > 0:
+            try:
+                _, _, det = self.detect_device_and_compute(self.get_device_preference(), "auto")
+                self._detected_gpu = det
+            except Exception:
+                pass
         gpu_name = self._model_info.get("gpu_name") or self._detected_gpu
 
         return {
@@ -746,8 +832,11 @@ class WhisperService:
             "active_model": self.get_active_model_name(),
             "active_device": active_device,
             "compute_type": compute_type,
+            "device_preference": self.get_device_preference(),
             "gpu_name": gpu_name,
             "gpu_available": bool(self._detected_gpu or active_device == "cuda"),
+            "free_vram_mb": free_vram_mb,
+            "total_vram_mb": total_vram_mb,
             "idle_seconds": round(time.time() - self._last_used, 1) if (loaded and self._last_used > 0) else 0.0,
         }
 
@@ -1099,12 +1188,18 @@ class WhisperService:
             # of it is the CPU-bound work. Both the call and the iteration must run
             # off the event loop.
             def _transcribe_call():
+                # On <=8GB GPUs or int8_float16, beam_size=2 avoids >2s single-kernel stalls
+                # that trigger Windows WDDM TDR 0x141 driver resets, while retaining high accuracy.
+                is_cuda = bool(self._model_info.get("device") == "cuda")
+                tot_vram = int(self._model_info.get("total_vram_mb", 0) or 0)
+                beam = 2 if (is_cuda and (tot_vram <= 8192 or self._model_info.get("compute_type") == "int8_float16")) else 5
+
                 kwargs: Dict[str, Any] = {
                     "task": "transcribe",
                     "language": language,
                     "vad_filter": vad_filter,
                     "word_timestamps": word_timestamps,
-                    "beam_size": 5,
+                    "beam_size": beam,
                     "condition_on_previous_text": False,
                 }
                 if vad_filter:
