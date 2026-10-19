@@ -13,7 +13,11 @@ from pathlib import Path
 # interpreter starts a crippled backend (missing deps, wrong behavior).
 # Re-exec into .venv before anything else — transparent to the caller.
 if sys.prefix == getattr(sys, "base_prefix", sys.prefix):
-    _VENV_PY = Path(__file__).resolve().parent / ".venv" / "Scripts" / "python.exe"
+    _is_w = "pythonw" in Path(sys.executable).stem.lower()
+    _target_bin = "pythonw.exe" if _is_w else "python.exe"
+    _VENV_PY = Path(__file__).resolve().parent / ".venv" / "Scripts" / _target_bin
+    if not _VENV_PY.exists():
+        _VENV_PY = Path(__file__).resolve().parent / ".venv" / "Scripts" / "python.exe"
     if _VENV_PY.exists() and Path(sys.executable).resolve() != _VENV_PY.resolve():
         os.execv(str(_VENV_PY), [str(_VENV_PY), __file__, *sys.argv[1:]])
 

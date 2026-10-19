@@ -96,18 +96,28 @@
       function findPython(req, root) {
         var fs = req('fs'), path = req('path');
         try { var ov = localStorage.getItem('editflow_python_path'); if (ov && fs.existsSync(ov)) return ov; } catch (e) {}
+        // On Windows, prefer pythonw.exe so Windows never allocates a CMD / Windows Terminal console window
+        var venvW = path.join(root, '.venv', 'Scripts', 'pythonw.exe');
+        if (fs.existsSync(venvW)) return venvW;
         var venv = path.join(root, '.venv', 'Scripts', 'python.exe');
         if (fs.existsSync(venv)) return venv;
         try {
-          var out = req('child_process').execSync('where python', { encoding: 'utf8' });
+          var out = req('child_process').execSync('where pythonw', { encoding: 'utf8', windowsHide: true });
           var lines = out.split(/\r?\n/);
           for (var i = 0; i < lines.length; i++) {
             var c = lines[i].trim();
-            // Skip the Windows Store python stub — it opens the Store, not python.
             if (c && c.toLowerCase().indexOf('windowsapps') === -1 && fs.existsSync(c)) return c;
           }
         } catch (e) {}
-        return 'python'; // last resort: rely on PATH
+        try {
+          var out = req('child_process').execSync('where python', { encoding: 'utf8', windowsHide: true });
+          var lines = out.split(/\r?\n/);
+          for (var i = 0; i < lines.length; i++) {
+            var c = lines[i].trim();
+            if (c && c.toLowerCase().indexOf('windowsapps') === -1 && fs.existsSync(c)) return c;
+          }
+        } catch (e) {}
+        return (typeof process !== 'undefined' && process.platform === 'win32') ? 'pythonw' : 'python';
       }
 
       function spawnBackend(req, root, python) {
