@@ -42,6 +42,8 @@ const S = {
   activeBrand: localStorage.getItem('editflow_active_brand') || 'Rahima Aziz Foundation',
   availableBrands: [],
   isTranscribingVl: false,
+  vlProgressMsg: '',
+  vlProgressPercent: 0,
   showAddVlModal: false,
   showMoreDrawer: false,
   activeTrimCutIndex: null,
@@ -363,7 +365,10 @@ async function switchMode(newMode) {
 
 async function analyzeTimelineVisuals() {
   stopAudioPreview();
-  setBusy(true, 'Extracting sequence audio cuts from Premiere Pro...', 1, 'Audio Clip Extraction');
+  // Clear any previous cuts so no stale "Place Visuals" button is shown while transcribing
+  S.plan = null;
+  S.edlOps = [];
+  setBusy(true, 'Extracting sequence audio cuts from active Premiere sequence...', 1, 'Extracting Sequence Audio');
   let stageTimer = null;
   try {
     const clipsRes = await callExtendScript('callModule', {
@@ -373,17 +378,18 @@ async function analyzeTimelineVisuals() {
     });
     if (!clipsRes || !clipsRes.clips || !clipsRes.clips.length) {
       setStatus('error', 'No unmuted audio clips found in the active Premiere Pro sequence.');
+      setBusy(false);
       return;
     }
 
-    setBusy(true, `Transcribing timeline audio (${clipsRes.clips.length} clips) with Whisper AI...`, 2, 'Speech-to-Text Transcription');
+    setBusy(true, `Transcribing timeline dialogue (${clipsRes.clips.length} clips) with GPU Whisper...`, 2, 'Transcribing Dialogue (Whisper AI)');
 
     stageTimer = setTimeout(() => {
       if (S.busy && S.busyStage === 2) {
         const bCount = (S.visualFolders || []).reduce((acc, f) => acc + (f.broll_count || 0), 0);
-        setBusy(true, `Matching micro-visuals from Visual Library (${bCount || 204} B-Rolls)...`, 3, 'Matching Micro-Visuals');
+        setBusy(true, `Matching micro-visuals from Visual Library (${bCount || 0} B-Rolls)...`, 3, 'Matching Micro-Visuals');
       }
-    }, 9000);
+    }, 7000);
 
     const payload = {
       clips: clipsRes.clips,
@@ -634,7 +640,11 @@ async function addVisualFolder(folderPath) {
 
 async function transcribeAndIndexVl(folderPath = null) {
   S.isTranscribingVl = true;
-  setBusy(true, 'Initiating transcription & visual indexing with Whisper...');
+  S.vlProgressMsg = 'Starting Whisper transcription...';
+  S.vlProgressPercent = 0;
+  setStatus('info', 'Visual Library indexing started in background...');
+  render();
+
   try {
     const res = await apiPost('/api/visual-library/transcribe-and-index', {
       folder_path: folderPath,
@@ -642,34 +652,40 @@ async function transcribeAndIndexVl(folderPath = null) {
       force: false
     });
     if (res && res.success) {
-      setStatus('info', 'Batch transcription & indexing in progress in background...');
       const pollTimer = setInterval(async () => {
         try {
           const st = await apiGet('/api/visual-library/status');
           if (st && st.status) {
             if (st.status.is_busy) {
-              setBusy(true, st.status.message || 'Transcribing footage...');
+              S.isTranscribingVl = true;
+              S.vlProgressMsg = st.status.message || 'Transcribing footage...';
+              S.vlProgressPercent = st.status.percent || 0;
+              render();
             } else {
               clearInterval(pollTimer);
               S.isTranscribingVl = false;
-              setBusy(false);
-              setStatus('success', 'Transcription & indexing completed!');
+              S.vlProgressMsg = '';
+              S.vlProgressPercent = 100;
+              setStatus('success', 'Visual Library transcription & indexing completed!');
               await loadVisualFolders();
+              render();
             }
           }
         } catch (_) {
           clearInterval(pollTimer);
           S.isTranscribingVl = false;
-          setBusy(false);
+          render();
         }
-      }, 2000);
+      }, 1500);
     } else {
-      setBusy(false);
+      S.isTranscribingVl = false;
       setStatus('error', (res && res.detail) || 'Failed to initiate transcription.');
+      render();
     }
   } catch (e) {
-    setBusy(false);
+    S.isTranscribingVl = false;
     setStatus('error', 'Transcription error: ' + e.message);
+    render();
   }
 }
 
@@ -1338,6 +1354,20 @@ function render() {
           </div>
         </div>
 
+        ${S.isTranscribingVl ? `
+          <div class="sc-drawer-row" style="background:rgba(20, 115, 230, 0.08); border:1px solid rgba(20, 115, 230, 0.25); border-radius:6px; padding:8px 12px; margin-bottom:8px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; width:100%; margin-bottom:4px;">
+              <span style="font-weight:600; font-size:11.5px; color:var(--sc-accent, #3b82f6); display:flex; align-items:center; gap:6px;">
+                ${svgIcon('spinner')} Indexing Visual Footage
+              </span>
+              <span style="font-size:11px; color:var(--sc-text-secondary);">${escapeHtml(S.vlProgressMsg || '')}</span>
+            </div>
+            <div style="width:100%; height:4px; background:#222; border-radius:2px; overflow:hidden;">
+              <div style="width:${S.vlProgressPercent || 0}%; height:100%; background:var(--sc-accent, #3b82f6); transition:width 0.3s ease;"></div>
+            </div>
+          </div>
+        ` : ''}
+
         <div class="sc-drawer-row">
           <span class="sc-drawer-lbl">Visual Library:</span>
           <div class="sc-drawer-content" style="flex-wrap:wrap; gap:6px;">
@@ -1471,7 +1501,7 @@ function render() {
     <!-- Dedicated Full-Width Status Strip (Zero Cutoff) -->
     <div id="sc-live-status-strip" class="sc-status-strip ${statusClass}">
       ${statusIcon}
-      <span class="sc-ellipsis" style="flex:1;">${escapeHtml(S.status ? S.status.message : (cuts.length ? `${cuts.length} cuts ready for assembly` : 'Active timeline ready to transcribe'))}</span>
+      <span class="sc-ellipsis" style="flex:1;">${escapeHtml(S.isTranscribingVl ? `🎙️ Visual Library: ${S.vlProgressMsg || 'Indexing...'}` : (S.status ? S.status.message : (cuts.length ? `${cuts.length} cuts ready for assembly` : 'Active timeline ready to transcribe')))}</span>
     </div>
 
     <!-- Context-Aware Bottom Dock (48px) -->
@@ -1483,11 +1513,13 @@ function render() {
       <div style="display:flex; align-items:center; gap:8px; flex:none; margin-left:auto;">
         ${S.mode === 'timeline_overlay' ? `
           <button id="sc-btn-transcribe-timeline" class="${cuts.length > 0 ? 'sc-btn-subtle' : 'sc-btn-primary'}" ${S.busy ? 'disabled' : ''} title="Transcribe timeline audio and match micro-visuals">
-            ${S.busy ? svgIcon('spinner') : svgIcon('refresh')} ${S.busy ? 'Transcribing...' : (cuts.length > 0 ? 'Re-Transcribe' : 'Transcribe &amp; Match Visuals')}
+            ${S.busy ? svgIcon('spinner') : svgIcon('refresh')} ${S.busy ? 'Processing Timeline...' : (cuts.length > 0 ? 'Re-Transcribe Timeline' : 'Transcribe &amp; Match Visuals')}
           </button>
-          <button id="sc-btn-apply-timeline" class="${cuts.length > 0 ? 'sc-btn-primary' : 'sc-btn-subtle'}" ${S.busy || !cuts.length ? 'disabled' : ''} title="Place visuals on target video track with single Ctrl+Z undo">
-            ${(S.busy && S.busyTitle && S.busyTitle.includes('Premiere')) ? svgIcon('spinner') : svgIcon('check')} ${(S.busy && S.busyTitle && S.busyTitle.includes('Premiere')) ? 'Placing Visuals...' : `Place Visuals on ${S.targetVideoTrack === -1 ? 'Auto Track' : `Track V${S.targetVideoTrack + 1}`}${cuts.length ? ` (${(S.plan && S.plan.broll_clips) ? S.plan.broll_clips.length : S.edlOps.filter((o) => o.action === 'add').length})` : ''}`}
-          </button>
+          ${(!S.busy && cuts.length > 0) ? `
+            <button id="sc-btn-apply-timeline" class="sc-btn-primary" title="Place visuals on target video track with single Ctrl+Z undo">
+              ${(S.busy && S.busyTitle && S.busyTitle.includes('Premiere')) ? svgIcon('spinner') : svgIcon('check')} Place Visuals on ${S.targetVideoTrack === -1 ? 'Auto Track' : `Track V${S.targetVideoTrack + 1}`} (${(S.plan && S.plan.broll_clips) ? S.plan.broll_clips.length : S.edlOps.filter((o) => o.action === 'add').length})
+            </button>
+          ` : ''}
         ` : `
           <button id="sc-btn-auto-broll" class="sc-btn-subtle" ${S.busy || !cuts.length ? 'disabled' : ''} title="Auto-match B-roll overlays on Track V2">
             ${svgIcon('broll')} Auto B-Roll

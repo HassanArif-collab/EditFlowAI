@@ -138,7 +138,9 @@ async def _background_transcribe_and_index(folder_path: Optional[str] = None, br
     async def on_prog(p: Dict[str, Any]):
         _indexing_status["processed"] = p.get("processed", 0)
         _indexing_status["total"] = p.get("total", 0)
+        _indexing_status["percent"] = p.get("percent", 0)
         _indexing_status["message"] = p.get("message", "Processing...")
+        await asyncio.sleep(0.02)
         
     try:
         if folder_path:
