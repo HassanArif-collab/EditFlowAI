@@ -462,21 +462,24 @@ function layoutPreview() {
   if (resizer) resizer.classList.toggle('hidden', !S.previewOpen);
   if (!S.previewOpen) return;
 
+  const rootH = (root && root.clientHeight > 0) ? root.clientHeight : (window.innerHeight || 600);
   const userH = S.previewHeight || (S.settings && S.settings.previewHeight);
-  const baseH = userH ? Math.max(90, Math.min((root.clientHeight || 600) * 0.78, userH))
-                      : Math.max(120, Math.min(560, (root.clientHeight || 600) * 0.34));
+  const baseH = userH ? Math.max(90, Math.min(rootH * 0.78, userH))
+                      : Math.max(120, Math.min(560, rootH * 0.34));
   stage.style.height = Math.round(baseH) + 'px';
 
-  const avW = Math.max(120, stage.clientWidth - 16);
+  const avW = Math.max(120, (stage.clientWidth || 300) - 16);
   const avH = Math.max(80, baseH - 16);
-  const ar = S.seq.width / S.seq.height;
+  const seqW = (S.seq && S.seq.width > 0) ? S.seq.width : 1080;
+  const seqH = (S.seq && S.seq.height > 0) ? S.seq.height : 1920;
+  const ar = seqW / seqH;
   let w = avW, h = w / ar;
   if (h > avH) { h = avH; w = h * ar; }
 
   const zoom = S.previewZoom || 1.0;
   const dpr = window.devicePixelRatio || 1;
-  const dispW = Math.round(w * zoom);
-  const dispH = Math.round(h * zoom);
+  const dispW = Math.max(1, Math.round(w * zoom));
+  const dispH = Math.max(1, Math.round(h * zoom));
 
   cv.style.width = dispW + 'px';
   cv.style.height = dispH + 'px';
@@ -623,7 +626,11 @@ function drawPreview() {
     ctx.fillStyle = checker;
     ctx.fillRect(0, 0, W, H);
   }
-  if (S.scene) drawFrame(ctx, S.scene, effSettings(), S.t, { scale: W / S.seq.width, clear: false });
+  try {
+    if (S.scene) drawFrame(ctx, S.scene, effSettings(), S.t, { scale: W / ((S.seq && S.seq.width) || 1080), clear: false });
+  } catch (err) {
+    console.error('[Captions] drawPreview drawFrame error:', err);
+  }
   if (S.safe !== 'off' && (S.safe === 'title' || S.seq.height > S.seq.width)) drawSafeZones(ctx, W, H, S.safe);
   if (S.drag || S.hoverBox) {
     const lay = S.settings.layout, k = W / S.seq.width;
@@ -1526,52 +1533,62 @@ function tabStyle() {
         ['none', 'None', 'Strip all punctuation'],
         ['custom', 'Custom', 'Choose specifically which punctuation to keep'],
       ])}
-      ${st.punctuation === 'custom' ? `
-        <div class="cc-sub-ctls" style="margin: 6px 0 6px 8px; padding-left: 10px; border-left: 2px solid rgba(255,255,255,0.12);">
-          ${ctlToggle('style.punctCommas', 'Keep commas & inner pauses', 'Preserves , ; : (and Urdu ، ؛)')}
-          ${ctlToggle('style.punctDots', 'Keep sentence-ending dots', 'Preserves . … (and Urdu ۔)')}
-          ${ctlToggle('style.punctExpressive', 'Keep ? and !', 'Preserves question marks and exclamations')}
-        </div>` : ''}`)}
+      <div class="cc-punct-sub cc-sub-ctls${st.punctuation === 'custom' ? '' : ' hidden'}" style="margin: 6px 0 6px 8px; padding-left: 10px; border-left: 2px solid rgba(255,255,255,0.12);">
+        ${ctlToggle('style.punctCommas', 'Keep commas & inner pauses', 'Preserves , ; : (and Urdu ، ؛)')}
+        ${ctlToggle('style.punctDots', 'Keep sentence-ending dots', 'Preserves . … (and Urdu ۔)')}
+        ${ctlToggle('style.punctExpressive', 'Keep ? and !', 'Preserves question marks and exclamations')}
+      </div>`)}
     ${section('Colour', `<div class="cc-swatches">
       ${ctlColor('style.color', 'Text')}
       ${M.highlightMode(S.settings.motion) === 'color' ? ctlColor('style.activeColor', 'Active word') : ''}
       ${ctlColor('style.emphasisColor', 'Emphasis')}</div>
       ${ctlToggle('style.gradient', 'Gradient fill', '2-colour vertical gradient')}
-      ${st.gradient ? `<div class="cc-swatches">${ctlColor('style.gradientColor', 'Bottom colour')}</div>` : ''}
+      <div class="cc-gradient-sub cc-sub-ctls${st.gradient ? '' : ' hidden'}">
+        <div class="cc-swatches">${ctlColor('style.gradientColor', 'Bottom colour')}</div>
+      </div>
       ${ctlToggle('style.activeGlow', 'Active word glow', 'Subtle luminance bloom around the spoken word')}
-      ${st.activeGlow ? `
+      <div class="cc-glow-sub cc-sub-ctls${st.activeGlow ? '' : ' hidden'}">
         <div class="cc-swatches">${ctlColor('style.activeGlowColor', 'Glow colour')}</div>
-        ${ctlNum('style.activeGlowBlur', 'Glow softness', 4, 40, 1, 'px')}` : ''}
+        ${ctlNum('style.activeGlowBlur', 'Glow softness', 4, 40, 1, 'px')}
+      </div>
       ${ctlToggle('style.speakerColoring', 'Multi-speaker coloring', 'Differentiate speakers with distinct colors')}
-      ${st.speakerColoring ? `
+      <div class="cc-speaker-sub cc-sub-ctls${st.speakerColoring ? '' : ' hidden'}">
         <div class="cc-swatches">
           ${ctlColor('style.speakerColors.0', 'Speaker 1')}
           ${ctlColor('style.speakerColors.1', 'Speaker 2')}
-        </div>` : ''}
+        </div>
+      </div>
       ${ctlSeg('style.emphasis', 'Emphasised words get', [['color', 'Colour'], ['pill', 'Pill'], ['both', 'Both']])}
-      ${st.emphasis !== 'color' ? `<div class="cc-swatches">${ctlColor('style.pillColor', 'Pill')}</div>${ctlNum('style.pillOpacity', 'Pill opacity', 0, 100, 1, '%', 100)}` : ''}`)}
+      <div class="cc-emphasis-sub cc-sub-ctls${st.emphasis !== 'color' ? '' : ' hidden'}">
+        <div class="cc-swatches">${ctlColor('style.pillColor', 'Pill')}</div>${ctlNum('style.pillOpacity', 'Pill opacity', 0, 100, 1, '%', 100)}
+      </div>`)}
     ${section('Outline', `${ctlNum('style.strokeWidth', 'Thickness', 0, 20, 0.5, 'px')}
       <div class="cc-swatches">${ctlColor('style.strokeColor', 'Outline colour')}</div>`)}
     ${section('Shadow', `${ctlToggle('style.shadow', 'Drop shadow')}
-      ${st.shadow ? `<div class="cc-swatches">${ctlColor('style.shadowColor', 'Shadow colour')}</div>
+      <div class="cc-shadow-sub cc-sub-ctls${st.shadow ? '' : ' hidden'}">
+        <div class="cc-swatches">${ctlColor('style.shadowColor', 'Shadow colour')}</div>
         ${ctlNum('style.shadowOpacity', 'Opacity', 0, 100, 1, '%', 100)}
         ${ctlNum('style.shadowBlur', 'Softness', 0, 60, 1, 'px')}
-        ${ctlNum('style.shadowDistance', 'Distance', 0, 40, 1, 'px')}` : ''}`)}
+        ${ctlNum('style.shadowDistance', 'Distance', 0, 40, 1, 'px')}
+      </div>`)}
     ${section('Background', `${ctlSeg('style.background', 'Behind the text', [['none', 'None'], ['box', 'Box', 'A rounded box per line'], ['block', 'Block', 'One box for the whole caption'], ['pills', 'Pills', 'A pill behind every word']])}
-      ${st.background !== 'none' ? `<div class="cc-swatches">${ctlColor('style.bgColor', 'Box colour')}</div>
+      <div class="cc-bg-sub cc-sub-ctls${st.background !== 'none' ? '' : ' hidden'}">
+        <div class="cc-swatches">${ctlColor('style.bgColor', 'Box colour')}</div>
         ${ctlNum('style.bgOpacity', 'Opacity', 0, 100, 1, '%', 100)}
         ${ctlNum('style.bgRadius', 'Roundness', 0, 100, 1, '%', 100)}
         <div style="display:flex;gap:6px">
           <div style="flex:1">${ctlNum('style.bgPad', 'Horizontal padding', 0, 60, 1, '%', 100)}</div>
           <div style="flex:1">${ctlNum('style.bgPadY', 'Vertical padding', 0, 60, 1, '%', 100)}</div>
-        </div>` : ''}`)}
+        </div>
+      </div>`)}
     ${section('Emojis', `
       ${ctlToggle('style.emojiEnabled', 'Dynamic Emojis', 'Display contextual emojis on spoken keywords')}
-      ${st.emojiEnabled ? `
+      <div class="cc-emoji-sub cc-sub-ctls${st.emojiEnabled ? '' : ' hidden'}">
         <div style="margin-top:6px">
           ${ctlSeg('style.emojiPlacement', 'Placement', [['above', 'Above word'], ['inline', 'Inline with text']])}
           ${ctlNum('style.emojiScale', 'Emoji size', 0.6, 2.0, 0.1, '×')}
-        </div>` : ''}`)}
+        </div>
+      </div>`)}
     ${section('Position', `
       ${ctlNum('layout.posY', 'Height on screen', 5, 95, 0.5, '%')}
       <div style="display:flex;align-items:center;gap:6px">
@@ -1630,9 +1647,15 @@ function paintTile(cv, t) {
 }
 function drawPresetTiles() {
   $$('[data-tile]').forEach((cv) => {
+    if (cv._painted && cv.width > 0) return;
     const p = findPreset(cv.dataset.tile);
     // every word on screen, the last one being spoken
-    if (p) ensureFont(p.style.fontFamily, p.style.fontWeight).then(() => drawTileScene(cv, p.style, p.motion, 1.15));
+    if (p) {
+      ensureFont(p.style.fontFamily, p.style.fontWeight).then(() => {
+        drawTileScene(cv, p.style, p.motion, 1.15);
+        cv._painted = true;
+      });
+    }
   });
 }
 
@@ -1705,8 +1728,12 @@ function tabMotion() {
       ${['pop', 'bounce'].indexOf(m.preset) !== -1 ? ctlNum('motion.intensity', 'Strength', 0.2, 2, 0.05, '×') : ''}
       ${['fade_up', 'slide_up', 'fade'].indexOf(m.preset) !== -1 ? ctlSelect('motion.easing', 'Easing', [['expo_out', 'Snappy (expo out)'], ['back_out', 'Overshoot (back out)'], ['ease_out', 'Smooth (ease out)'], ['ease_in_out', 'Ease in-out'], ['linear', 'Linear']]) : ''}`)}
     ${section('Active word', `${ctlSeg('motion.highlight', 'Highlight the word being spoken', [['none', 'Off'], ['color', 'Colour'], ['box', 'Box'], ['scale', 'Grow']])}
-      ${m.highlight === 'box' ? `<div class="cc-swatches">${ctlColor('style.hlBoxColor', 'Box colour')}</div>` : ''}
-      ${M.highlightMode(m) === 'color' ? `<div class="cc-swatches">${ctlColor('style.activeColor', 'Active colour')}</div>` : ''}
+      <div class="cc-hl-box-sub cc-sub-ctls${m.highlight === 'box' ? '' : ' hidden'}">
+        <div class="cc-swatches">${ctlColor('style.hlBoxColor', 'Box colour')}</div>
+      </div>
+      <div class="cc-hl-color-sub cc-sub-ctls${M.highlightMode(m) === 'color' ? '' : ' hidden'}">
+        <div class="cc-swatches">${ctlColor('style.activeColor', 'Active colour')}</div>
+      </div>
       ${M.WORD_LEVEL[m.preset] ? '' : ctlToggle('motion.spokenDim', 'Dim words not spoken yet', 'Karaoke-style fill')}`)}
     ${section('Caption breaks', `
       ${ctlNum('grouping.maxWords', 'Words per caption', 1, 10, 1, '')}
@@ -1718,7 +1745,9 @@ function tabMotion() {
       ${ctlNum('timing.minDuration', 'Minimum time on screen', 0.2, 2, 0.05, 's')}
       ${ctlNum('timing.maxHold', 'Hold after speech stops', 0, 3, 0.05, 's')}
       ${ctlSeg('timing.exit', 'Hand-off between captions', [['fade', 'Crossfade'], ['cut', 'Cut']])}
-      ${S.settings.timing.exit === 'fade' ? ctlNum('timing.exitDuration', 'Crossfade length', 0.04, 0.4, 0.01, 's') : ''}`)}`;
+      <div class="cc-exit-fade-sub cc-sub-ctls${S.settings.timing.exit === 'fade' ? '' : ' hidden'}">
+        ${ctlNum('timing.exitDuration', 'Crossfade length', 0.04, 0.4, 0.01, 's')}
+      </div>`)}`;
 }
 function drawMotionTiles() {
   const st = Object.assign({}, S.settings.style);
@@ -1946,18 +1975,56 @@ function applyPreset(id) {
 
 /* ── events ───────────────────────────────────────────────────── */
 
-const RELAYOUT = /^(style\.(fontFamily|fontWeight|fontSize|textCase|punctuation|punctCommas|punctDots|punctExpressive|emojiPlacement|emojiScale)|layout\.|grouping\.|timing\.)/;
-// Settings that show or hide other controls: re-render the tab when they change.
-const STRUCTURAL = { 'style.background': 1, 'style.shadow': 1, 'style.emphasis': 1, 'style.fontFamily': 1,
-  'style.punctuation': 1, 'style.gradient': 1, 'style.activeGlow': 1, 'style.speakerColoring': 1,
-  'style.emojiEnabled': 1, 'style.emojiPlacement': 1,
-  'motion.preset': 1, 'motion.highlight': 1, 'timing.exit': 1, 'grouping.maxLines': 1, previewAspect: 1 };
+const RELAYOUT = /^(style\.(fontFamily|fontWeight|fontSize|textCase|punctuation|punctCommas|punctDots|punctExpressive|emojiEnabled|emojiPlacement|emojiScale)|layout\.|grouping\.|timing\.)/;
+// Settings that show or hide major tabs or require full structural rebuild.
+// Note: Inline sub-controls (gradient, shadow, emoji, glow, etc.) are toggled in place
+// without destroying the active DOM or re-rendering all preset tiles.
+const STRUCTURAL = {
+  'grouping.maxLines': 1,
+  previewAspect: 1
+};
 
 // Picking a colour for something that's switched off switches it on —
 // otherwise the swatch looks broken (nothing changes).
 const ENABLE_ON_COLOR = {
   'style.strokeColor': () => { if (!(S.settings.style.strokeWidth > 0)) return ['style.strokeWidth', 4]; return null; },
 };
+
+function updateSubControls(path) {
+  if (path === 'style.gradient') {
+    const box = $('.cc-gradient-sub');
+    if (box) box.classList.toggle('hidden', !S.settings.style.gradient);
+  } else if (path === 'style.activeGlow') {
+    const box = $('.cc-glow-sub');
+    if (box) box.classList.toggle('hidden', !S.settings.style.activeGlow);
+  } else if (path === 'style.speakerColoring') {
+    const box = $('.cc-speaker-sub');
+    if (box) box.classList.toggle('hidden', !S.settings.style.speakerColoring);
+  } else if (path === 'style.shadow') {
+    const box = $('.cc-shadow-sub');
+    if (box) box.classList.toggle('hidden', !S.settings.style.shadow);
+  } else if (path === 'style.emojiEnabled') {
+    const box = $('.cc-emoji-sub');
+    if (box) box.classList.toggle('hidden', !S.settings.style.emojiEnabled);
+  } else if (path === 'style.background') {
+    const box = $('.cc-bg-sub');
+    if (box) box.classList.toggle('hidden', S.settings.style.background === 'none');
+  } else if (path === 'style.emphasis') {
+    const box = $('.cc-emphasis-sub');
+    if (box) box.classList.toggle('hidden', S.settings.style.emphasis === 'color');
+  } else if (path === 'style.punctuation') {
+    const box = $('.cc-punct-sub');
+    if (box) box.classList.toggle('hidden', S.settings.style.punctuation !== 'custom');
+  } else if (path === 'motion.highlight') {
+    const boxBox = $('.cc-hl-box-sub');
+    if (boxBox) boxBox.classList.toggle('hidden', S.settings.motion.highlight !== 'box');
+    const boxColor = $('.cc-hl-color-sub');
+    if (boxColor) boxColor.classList.toggle('hidden', M.highlightMode(S.settings.motion) !== 'color');
+  } else if (path === 'timing.exit') {
+    const box = $('.cc-exit-fade-sub');
+    if (box) box.classList.toggle('hidden', S.settings.timing.exit !== 'fade');
+  }
+}
 
 function onSetting(path) {
   if (ENABLE_ON_COLOR[path]) {
@@ -1977,11 +2044,20 @@ function onSetting(path) {
     if (ws.indexOf(Number(S.settings.style.fontWeight)) === -1) {
       S.settings.style.fontWeight = ws.reduce((a, b) => (Math.abs(b - 800) < Math.abs(a - 800) ? b : a), ws[0]);
     }
+    renderBody();
   }
   if (path === 'previewAspect') refreshSequence(false);
+
+  // Update inline sub-control visibility in place (no DOM replacement)
+  updateSubControls(path);
+
   if (RELAYOUT.test(path)) scheduleScene(); else requestDraw();
-  if (STRUCTURAL[path]) renderBody();
-  else if (path.indexOf('motion.') === 0 && S.tab === 'motion') drawMotionTiles();
+
+  if (STRUCTURAL[path]) {
+    renderBody();
+  } else if (path.indexOf('motion.') === 0 && S.tab === 'motion') {
+    drawMotionTiles();
+  }
   saveSettingsSoon();
 }
 

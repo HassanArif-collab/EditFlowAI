@@ -103,32 +103,47 @@ function fillRound(ctx, x, y, w, h, radiusK, color, alpha) {
 /* ── text ── */
 
 function drawText(ctx, text, x, y, color, st, devScale, asc, desc) {
-  const stroke = st.strokeWidth > 0;
-  if (st.shadow && st.shadowOpacity > 0) {
-    ctx.shadowColor = rgba(st.shadowColor, st.shadowOpacity);
-    ctx.shadowBlur = Math.max(0, st.shadowBlur);
-    ctx.shadowOffsetX = 0;
-    ctx.shadowOffsetY = st.shadowDistance;
+  const safeColor = (typeof color === 'string' && color.trim()) ? color.trim() : '#ffffff';
+  const stroke = (Number(st.strokeWidth) || 0) > 0;
+  if (st.shadow && (Number(st.shadowOpacity) || 0) > 0) {
+    try {
+      ctx.shadowColor = rgba(st.shadowColor || '#000000', st.shadowOpacity);
+      ctx.shadowBlur = Math.max(0, Number(st.shadowBlur) || 0);
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = Number(st.shadowDistance) || 0;
+    } catch (_) {}
   }
   if (stroke) {
     ctx.lineJoin = 'round';
     ctx.miterLimit = 2;
-    ctx.lineWidth = st.strokeWidth * 2;      // half is hidden under the fill
-    ctx.strokeStyle = st.strokeColor;
-    ctx.strokeText(text, x, y);
+    ctx.lineWidth = (Number(st.strokeWidth) || 0) * 2;      // half is hidden under the fill
+    ctx.strokeStyle = st.strokeColor || '#000000';
+    try { ctx.strokeText(text, x, y); } catch (_) {}
     ctx.shadowColor = 'transparent';         // one shadow, under the outline
   }
+  let fillApplied = false;
   if (st.gradient && st.gradientColor && typeof ctx.createLinearGradient === 'function') {
-    const a = asc || 60;
-    const d = desc || 20;
-    const grad = ctx.createLinearGradient(0, y - a, 0, y + d);
-    grad.addColorStop(0, color);
-    grad.addColorStop(1, st.gradientColor);
-    ctx.fillStyle = grad;
-  } else {
-    ctx.fillStyle = color;
+    try {
+      const a = Number(asc) || 60;
+      const d = Number(desc) || 20;
+      const y0 = isFinite(y - a) ? (y - a) : (y - 60);
+      const y1 = isFinite(y + d) ? (y + d) : (y + 20);
+      const grad = ctx.createLinearGradient(0, y0, 0, y1);
+      grad.addColorStop(0, safeColor);
+      const gradBottom = (typeof st.gradientColor === 'string' && st.gradientColor.trim()) ? st.gradientColor.trim() : '#ffea00';
+      grad.addColorStop(1, gradBottom);
+      ctx.fillStyle = grad;
+      fillApplied = true;
+    } catch (_) {
+      fillApplied = false;
+    }
   }
-  ctx.fillText(text, x, y);
+  if (!fillApplied) {
+    ctx.fillStyle = safeColor;
+  }
+  try {
+    ctx.fillText(text, x, y);
+  } catch (_) {}
   ctx.shadowColor = 'transparent';
 }
 
@@ -139,6 +154,7 @@ function drawText(ctx, text, x, y, color, st, devScale, asc, desc) {
  *   opts.clear   clear the canvas first (default true)
  */
 export function drawFrame(ctx, scene, settings, t, opts) {
+  if (!ctx || !scene) return 0;
   const o = opts || {};
   const sc = o.scale || 1;
   if (o.clear !== false) {
@@ -147,17 +163,29 @@ export function drawFrame(ctx, scene, settings, t, opts) {
   }
   const caps = activeCaptions(scene, t);
   if (!caps.length) return 0;
-  const st = Object.assign({}, STYLE_DEFAULTS, (settings && settings.style) || {});
-  const motion = (settings && settings.motion) || {};
-  const lay = (settings && settings.layout) || {};
-  ctx.save();
-  ctx.setTransform(sc, 0, 0, sc, 0, -(o.offsetY || 0) * sc);
-  ctx.font = fontString(st, scene.fontSize);
-  ctx.textBaseline = 'alphabetic';
-  ctx.textAlign = 'left';
-  for (const c of caps) drawCaption(ctx, c, scene, st, motion, lay, t, sc);
-  ctx.restore();
-  return caps.length;
+  try {
+    const st = Object.assign({}, STYLE_DEFAULTS, (settings && settings.style) || {});
+    const motion = (settings && settings.motion) || {};
+    const lay = (settings && settings.layout) || {};
+    ctx.save();
+    ctx.setTransform(sc, 0, 0, sc, 0, -(o.offsetY || 0) * sc);
+    ctx.font = fontString(st, scene.fontSize);
+    ctx.textBaseline = 'alphabetic';
+    ctx.textAlign = 'left';
+    for (const c of caps) {
+      try {
+        drawCaption(ctx, c, scene, st, motion, lay, t, sc);
+      } catch (capErr) {
+        console.warn('[Captions] drawCaption render error:', capErr);
+      }
+    }
+    ctx.restore();
+    return caps.length;
+  } catch (err) {
+    console.error('[Captions] drawFrame top-level error:', err);
+    try { ctx.restore(); } catch (_) {}
+    return 0;
+  }
 }
 
 function drawCaption(ctx, c, scene, st, motion, lay, t, sc) {
