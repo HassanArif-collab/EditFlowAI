@@ -46,10 +46,12 @@ function openReview(opts = {}) {
   _ensureStyles();
   const view = _ensureContainer();
   const hero = $('#hero'), chat = $('#chat-scroll'), footer = $('#app-footer');
+  const captions = $('#captions-view'), storyCut = $('#story-cut-view');
   S.prevView = { hero: hero?.classList.contains('hidden') ?? true,
                  chat: chat?.classList.contains('hidden') ?? true,
                  footer: footer?.classList.contains('hidden') ?? true };
   hero?.classList.add('hidden'); chat?.classList.add('hidden'); footer?.classList.add('hidden');
+  captions?.classList.add('hidden'); storyCut?.classList.add('hidden');
   view.classList.remove('hidden');
   if (S.reviewId && S.words.length) _render(); else _renderSetup(opts);
   _bindKeys();

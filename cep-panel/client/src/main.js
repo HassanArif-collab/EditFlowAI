@@ -12,25 +12,59 @@ function _setActiveNav(activeTab) {
   });
 }
 
-function switchToChat() {
-  _setActiveNav('chat');
-  try { localStorage.setItem('editflow_home_view', 'chat'); } catch (_) {}
-  const cc = document.getElementById('captions-view');
-  if (cc) cc.classList.add('hidden');
-  const sc = document.getElementById('story-cut-view');
-  if (sc) sc.classList.add('hidden');
-  const rv = document.getElementById('review-view');
-  if (rv) rv.classList.add('hidden');
+function showView(targetView) {
+  _setActiveNav(targetView);
+  try { localStorage.setItem('editflow_home_view', targetView); } catch (_) {}
+
   const hero = document.getElementById('hero');
   const chat = document.getElementById('chat-scroll');
   const footer = document.getElementById('app-footer');
-  if (chat && chat.children.length > 0) {
-    chat.classList.remove('hidden');
-    if (footer) footer.classList.remove('hidden');
-    if (hero) hero.classList.add('hidden');
-  } else if (hero) {
-    hero.classList.remove('hidden');
+  const captions = document.getElementById('captions-view');
+  const storyCut = document.getElementById('story-cut-view');
+  const review = document.getElementById('review-view');
+
+  // Unconditionally hide all view containers first to prevent layout collisions
+  [hero, chat, footer, captions, storyCut, review].forEach(el => {
+    if (el) el.classList.add('hidden');
+  });
+
+  if (targetView === 'chat') {
+    if (chat && chat.children.length > 0) {
+      chat.classList.remove('hidden');
+      if (footer) footer.classList.remove('hidden');
+    } else if (hero) {
+      hero.classList.remove('hidden');
+    }
+  } else if (targetView === 'captions') {
+    if (typeof openCaptions === 'function') {
+      openCaptions();
+      const cv = document.getElementById('captions-view');
+      if (cv) cv.classList.remove('hidden');
+    } else {
+      console.warn('[EditFlow] Captions module still loading...');
+    }
+  } else if (targetView === 'story-cut') {
+    if (typeof openStoryCut === 'function') {
+      openStoryCut();
+      const sc = document.getElementById('story-cut-view');
+      if (sc) sc.classList.remove('hidden');
+    } else {
+      console.warn('[EditFlow] Story Cut module still loading...');
+    }
+  } else if (targetView === 'review') {
+    if (typeof openReview === 'function') {
+      openReview();
+      const rv = document.getElementById('review-view');
+      if (rv) rv.classList.remove('hidden');
+    } else {
+      console.warn('[EditFlow] Review module still loading...');
+    }
   }
+}
+window.__editflowShowView = showView;
+
+function switchToChat() {
+  showView('chat');
 }
 window.__editflowSwitchToChat = switchToChat;
 
@@ -40,7 +74,7 @@ window.__editflowSwitchToChat = switchToChat;
  * Initializes all modules, wires up DOM events, and starts the app.
  * This file owns no business logic — it delegates to the modules.
  */
-const BUILD_TAG = 'v2.0-progress-visuals';  // bump when shipping a fix; visible in header
+const BUILD_TAG = 'v2.0-brand-vl-nav-fix';  // bump when shipping a fix; visible in header
 
 // FIRST thing on parse: clear the inline boot-check banner. If the user sees
 // the banner disappear, we KNOW main.js parsed successfully and modules are
@@ -139,6 +173,16 @@ async function _loadOrchestrator() {
     window.__editflowOpenStoryCut = openStoryCut;
   } catch (e) {
     console.error('[EditFlow] Failed to load story-cut-view:', e);
+  }
+
+  // Once sub-modules are ready, automatically mount the saved home view
+  try {
+    const homeView = localStorage.getItem('editflow_home_view') || 'captions';
+    if (typeof showView === 'function') {
+      showView(homeView);
+    }
+  } catch (e) {
+    console.warn('[EditFlow] Initial view mount failed:', e);
   }
 }
 
@@ -289,81 +333,37 @@ async function init() {
   // 9. Initialize settings overlay
   _initSettingsOverlay();
 
-  // 9a. Wire Chat workspace tab
+  // 9a. Wire Header Navigation Tabs with unified router
   const btnNavChat = document.getElementById('btn-nav-chat');
   if (btnNavChat) {
-    btnNavChat.addEventListener('click', () => switchToChat());
+    btnNavChat.addEventListener('click', () => showView('chat'));
   }
-
-  // 9b. Wire Review workspace tab
   if (btnReview) {
-    btnReview.addEventListener('click', () => {
-      try {
-        _setActiveNav('review');
-        try { localStorage.setItem('editflow_home_view', 'review'); } catch (_) {}
-        if (openReview) openReview();
-        else console.warn('[EditFlow] Review not loaded yet');
-      } catch (e) {
-        console.error('[EditFlow] openReview failed:', e);
-      }
-    });
+    btnReview.addEventListener('click', () => showView('review'));
   }
-
-  // 9c. Wire Story Cut workspace tab
   const btnStoryCut = document.getElementById('btn-story-cut');
   if (btnStoryCut) {
-    btnStoryCut.addEventListener('click', () => {
-      try {
-        _setActiveNav('story-cut');
-        try { localStorage.setItem('editflow_home_view', 'story-cut'); } catch (_) {}
-        if (openStoryCut) openStoryCut();
-        else console.warn('[EditFlow] Story Cut not loaded yet');
-      } catch (e) {
-        console.error('[EditFlow] openStoryCut failed:', e);
-      }
-    });
+    btnStoryCut.addEventListener('click', () => showView('story-cut'));
   }
-
-  // 9d. Wire Captions Studio workspace tab
   if (btnCaptions) {
-    btnCaptions.addEventListener('click', () => {
-      try {
-        _setActiveNav('captions');
-        try { localStorage.setItem('editflow_home_view', 'captions'); } catch (_) {}
-        if (openCaptions) openCaptions();
-        else console.warn('[EditFlow] Captions not loaded yet');
-      } catch (e) {
-        console.error('[EditFlow] openCaptions failed:', e);
-      }
-    });
+    btnCaptions.addEventListener('click', () => showView('captions'));
   }
 
-  // 9e. Wire Hero Quick-Action Cards
+  // 9e. Wire Hero Quick-Action Cards directly to router
   const cardCaptions = document.getElementById('hero-card-captions');
-  if (cardCaptions && btnCaptions) cardCaptions.addEventListener('click', () => btnCaptions.click());
+  if (cardCaptions) cardCaptions.addEventListener('click', () => showView('captions'));
   const cardStoryCut = document.getElementById('hero-card-story-cut');
-  if (cardStoryCut && btnStoryCut) cardStoryCut.addEventListener('click', () => btnStoryCut.click());
+  if (cardStoryCut) cardStoryCut.addEventListener('click', () => showView('story-cut'));
   const cardReview = document.getElementById('hero-card-review');
-  if (cardReview && btnReview) cardReview.addEventListener('click', () => btnReview.click());
+  if (cardReview) cardReview.addEventListener('click', () => showView('review'));
 
   // 9f. Boot into the last-used home view
   try {
     const homeView = localStorage.getItem('editflow_home_view') || 'captions';
-    if (homeView === 'captions' && typeof openCaptions === 'function') {
-      _setActiveNav('captions');
-      openCaptions();
-    } else if (homeView === 'story-cut' && typeof openStoryCut === 'function') {
-      _setActiveNav('story-cut');
-      openStoryCut();
-    } else if (homeView === 'review' && typeof openReview === 'function') {
-      _setActiveNav('review');
-      openReview();
-    } else {
-      switchToChat();
-    }
+    showView(homeView);
   } catch (e) {
     console.warn('[EditFlow] home view open failed, showing chat:', e);
-    switchToChat();
+    showView('chat');
   }
 
   // 9b. Dev Reload button — re-loads the ExtendScript bundle + the panel

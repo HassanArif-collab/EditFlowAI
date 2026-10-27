@@ -26,8 +26,13 @@ from .visual_quality_scorer import FrameQuality, VisualQualityScorer, visual_qua
 
 logger = logging.getLogger(__name__)
 
-VIDEO_EXTS: Set[str] = {".mp4", ".mov", ".m4v", ".mkv", ".avi", ".webm"}
-IMAGE_EXTS: Set[str] = {".png", ".jpg", ".jpeg", ".webp", ".tiff", ".bmp"}
+VIDEO_EXTS: Set[str] = {
+    ".mp4", ".mov", ".m4v", ".mkv", ".avi", ".webm",
+    ".3gp", ".wmv", ".flv", ".ts", ".mts", ".m2ts"
+}
+IMAGE_EXTS: Set[str] = {
+    ".png", ".jpg", ".jpeg", ".webp", ".tiff", ".bmp", ".gif"
+}
 TRANSCRIPT_EXTS: Set[str] = {".json", ".srt", ".txt", ".vtt"}
 
 
@@ -72,8 +77,11 @@ class VisualItem:
 class LibraryFolder:
     path: str
     name: str
+    brand: str = ""
     total_assets: int = 0
     broll_count: int = 0
+    talking_head_count: int = 0
+    transcribed_count: int = 0
     last_indexed: Optional[str] = None
     is_active: bool = True
 
@@ -108,13 +116,37 @@ class VisualLibraryService:
         self._load_index()
         self._initialized = True
 
+    @staticmethod
+    def infer_brand_from_path(path_str: str) -> str:
+        if not path_str:
+            return ""
+        norm = os.path.normpath(path_str)
+        parts = norm.split(os.sep)
+        for i, part in enumerate(parts):
+            if part.upper() == "MARKETING" and i + 1 < len(parts):
+                return parts[i + 1]
+        return ""
+
     def _load_config(self):
         if self.config_file.exists():
             try:
                 data = json.loads(self.config_file.read_text(encoding="utf-8"))
-                self._folders = {
-                    f["path"]: LibraryFolder(**f) for f in data.get("folders", [])
-                }
+                folders = {}
+                for f in data.get("folders", []):
+                    brand = f.get("brand") or self.infer_brand_from_path(f.get("path", ""))
+                    lf = LibraryFolder(
+                        path=f.get("path", ""),
+                        name=f.get("name", ""),
+                        brand=brand,
+                        total_assets=f.get("total_assets", 0),
+                        broll_count=f.get("broll_count", 0),
+                        talking_head_count=f.get("talking_head_count", 0),
+                        transcribed_count=f.get("transcribed_count", 0),
+                        last_indexed=f.get("last_indexed"),
+                        is_active=f.get("is_active", True),
+                    )
+                    folders[lf.path] = lf
+                self._folders = folders
             except Exception as e:
                 logger.warning(f"[visual_library] Failed to load folders_config.json: {e}")
                 self._folders = {}
@@ -146,20 +178,48 @@ class VisualLibraryService:
 
     # ── Folder Management ────────────────────────────────────────────────────────
 
-    def list_folders(self) -> List[Dict[str, Any]]:
+    def list_folders(self, brand: Optional[str] = None) -> List[Dict[str, Any]]:
         self.initialize()
         self._load_config()
-        return [f.to_dict() for f in self._folders.values()]
+        folders = list(self._folders.values())
+        if brand and brand.lower() not in ("all", "", "null", "undefined"):
+            folders = [f for f in folders if f.brand.lower() == brand.lower()]
+        return [f.to_dict() for f in folders]
 
-    def add_folder(self, folder_path: str, auto_analyze: bool = True) -> Dict[str, Any]:
+    def list_brands(self) -> List[str]:
+        self.initialize()
+        self._load_config()
+        brands = set()
+        for f in self._folders.values():
+            if f.brand:
+                brands.add(f.brand)
+        # Scan D:\MARKETING
+        marketing_dir = r"D:\MARKETING"
+        if os.path.isdir(marketing_dir):
+            try:
+                for entry in os.scandir(marketing_dir):
+                    if entry.is_dir() and not entry.name.startswith(".") and entry.name.lower() not in ("data", "other", "delivered"):
+                        brands.add(entry.name)
+            except Exception as e:
+                logger.warning(f"[visual_library] Error discovering brands: {e}")
+        return sorted(list(brands))
+
+    def add_folder(self, folder_path: str, brand: Optional[str] = None, auto_analyze: bool = True) -> Dict[str, Any]:
         """Add a raw data folder to the visual library and optionally analyze it."""
         self.initialize()
+        folder_path = folder_path.strip().strip('"').strip("'")
         norm_path = os.path.normpath(os.path.abspath(folder_path))
         if not os.path.isdir(norm_path):
             return {"success": False, "error": f"Directory does not exist: {norm_path}"}
 
         folder_name = os.path.basename(norm_path) or norm_path
-        folder = LibraryFolder(path=norm_path, name=folder_name, is_active=True)
+        detected_brand = brand or self.infer_brand_from_path(norm_path)
+        folder = LibraryFolder(
+            path=norm_path,
+            name=folder_name,
+            brand=detected_brand,
+            is_active=True
+        )
         self._folders[norm_path] = folder
         self._save_config()
 
@@ -228,10 +288,11 @@ class VisualLibraryService:
         folder_name = os.path.basename(norm_path) or norm_path
         indexed_count = 0
         broll_count = 0
+        talking_head_count = 0
+        transcribed_count = 0
 
         # Scan all video and image files in folder
         for root, dirs, files in os.walk(norm_path):
-            # Also look for transcripts in the same directory or subdirectories
             transcripts_by_stem: Dict[str, str] = {}
             for f in files:
                 ext = os.path.splitext(f)[1].lower()
@@ -245,6 +306,10 @@ class VisualLibraryService:
                     continue
 
                 full_path = os.path.join(root, f)
+                file_stem = os.path.splitext(f)[0].lower()
+                if file_stem in transcripts_by_stem:
+                    transcribed_count += 1
+
                 try:
                     stat = os.stat(full_path)
                     item_id = hashlib.md5(full_path.lower().encode("utf-8")).hexdigest()
@@ -255,6 +320,8 @@ class VisualLibraryService:
                         indexed_count += 1
                         if existing.category in ("pure_broll", "demonstration_broll", "still_graphic"):
                             broll_count += 1
+                        elif existing.category == "talking_head":
+                            talking_head_count += 1
                         continue
 
                     # Analyze the media file
@@ -264,6 +331,8 @@ class VisualLibraryService:
                         indexed_count += 1
                         if item.category in ("pure_broll", "demonstration_broll", "still_graphic"):
                             broll_count += 1
+                        elif item.category == "talking_head":
+                            talking_head_count += 1
 
                 except Exception as e:
                     logger.warning(f"[visual_library] Error analyzing file {full_path}: {e}")
@@ -274,6 +343,8 @@ class VisualLibraryService:
         if norm_path in self._folders:
             self._folders[norm_path].total_assets = indexed_count
             self._folders[norm_path].broll_count = broll_count
+            self._folders[norm_path].talking_head_count = talking_head_count
+            self._folders[norm_path].transcribed_count = transcribed_count
             self._folders[norm_path].last_indexed = now_iso
             self._save_config()
 
@@ -313,11 +384,8 @@ class VisualLibraryService:
                 duration = float(info.get("duration") or 0.0)
                 fps = float(info.get("fps") or 30.0)
                 has_aud = bool(info.get("has_audio"))
-                res_str = info.get("resolution")
-                if res_str and "x" in res_str:
-                    w_s, h_s = res_str.split("x")
-                    width = int(w_s)
-                    height = int(h_s)
+                width = int(info.get("width") or 1920)
+                height = int(info.get("height") or 1080)
             except Exception:
                 duration = 5.0
         else:
@@ -423,19 +491,20 @@ class VisualLibraryService:
 
         # 4. Semantic Categorization & Tagging
         path_lower = full_path.lower()
-        has_broll_keyword = any(k in path_lower for k in ("visual", "b-roll", "broll", "drone", "exterior", "cutaway", "stills"))
-        has_interview_keyword = any(k in path_lower for k in ("interview", "talking", "speaker", "speech"))
+        has_broll_keyword = any(k in path_lower for k in ("visual", "b-roll", "broll", "drone", "exterior", "cutaway", "stills", "whatsapp", "raw", "lot", "parking", "scene", "overlay", "footage", "shot", "clip", "cinematic"))
+        has_interview_keyword = any(k in path_lower for k in ("interview", "talking", "speaker", "speech", "podcast", "qa", "q&a"))
+        has_dialogue = bool(transcript_text.strip())
 
         if not is_video:
             category = "still_graphic"
         elif embedded_visuals:
             category = "demonstration_broll"
-        elif has_broll_keyword or not has_aud:
+        elif has_broll_keyword or not has_aud or not has_dialogue:
             category = "pure_broll"
         elif has_interview_keyword:
             category = "talking_head"
         else:
-            category = "pure_broll" if duration < 12.0 else "talking_head"
+            category = "pure_broll" if duration < 45.0 else "talking_head"
 
         # Extract semantic tags from path, stem, and transcript
         tags = self._extract_tags(full_path, stem, transcript_text, category)
@@ -577,6 +646,55 @@ class VisualLibraryService:
 
         results.sort(key=sort_key, reverse=True)
         return [r.to_dict() for r in results[:limit]]
+
+
+    async def transcribe_and_index_folder(
+        self,
+        folder_path: str,
+        force: bool = False,
+        on_progress: Optional[Any] = None,
+    ) -> Dict[str, Any]:
+        """
+        Transcribe any untranscribed media in the folder and re-index.
+        """
+        self.initialize()
+        norm_path = os.path.normpath(os.path.abspath(folder_path))
+        if not os.path.isdir(norm_path):
+            return {"success": False, "error": f"Directory not found: {norm_path}"}
+
+        from .whisper_service import whisper_service
+
+        video_files = []
+        for root, _, files in os.walk(norm_path):
+            for f in files:
+                ext = os.path.splitext(f)[1].lower()
+                if ext in VIDEO_EXTS:
+                    video_files.append(Path(root) / f)
+
+        total_files = len(video_files)
+        transcribed_count = 0
+
+        for i, vf in enumerate(video_files):
+            sidecar = vf.with_name(vf.stem + ".transcript.json")
+            if not sidecar.exists() or force:
+                if on_progress:
+                    await on_progress({
+                        "file": vf.name,
+                        "processed": i + 1,
+                        "total": total_files,
+                        "percent": int(((i + 1) / max(total_files, 1)) * 100),
+                        "message": f"Transcribing {vf.name} ({i + 1}/{total_files})..."
+                    })
+                try:
+                    await whisper_service.transcribe(str(vf))
+                    transcribed_count += 1
+                except Exception as e:
+                    logger.error(f"[visual_library] Error transcribing {vf}: {e}")
+
+        stats = self.analyze_folder(norm_path, force=True)
+        stats["transcribed_new"] = transcribed_count
+        stats["total_videos"] = total_files
+        return stats
 
     def get_thumbnail_file(self, item_id: str) -> Optional[Path]:
         """Return the path to the cached thumbnail file on disk."""

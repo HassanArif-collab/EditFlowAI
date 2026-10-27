@@ -39,6 +39,9 @@ const S = {
   assetsCount: 0,
   showFolderModal: false,
   visualFolders: [],
+  activeBrand: localStorage.getItem('editflow_active_brand') || 'Rahima Aziz Foundation',
+  availableBrands: [],
+  isTranscribingVl: false,
   showAddVlModal: false,
   showMoreDrawer: false,
   activeTrimCutIndex: null,
@@ -113,6 +116,7 @@ export function openStoryCut() {
   const chat = document.getElementById('chat-scroll');
   const footer = document.getElementById('app-footer');
   const captions = document.getElementById('captions-view');
+  const review = document.getElementById('review-view');
 
   S.prevView = {
     hero: hero ? !hero.classList.contains('hidden') : false,
@@ -120,7 +124,7 @@ export function openStoryCut() {
     footer: footer ? !footer.classList.contains('hidden') : false,
   };
 
-  [hero, chat, footer, captions].forEach((el) => el && el.classList.add('hidden'));
+  [hero, chat, footer, captions, review].forEach((el) => el && el.classList.add('hidden'));
   view.classList.remove('hidden');
 
   if (!S.audioElement) {
@@ -130,6 +134,7 @@ export function openStoryCut() {
   }
 
   detectActiveSequence();
+  loadBrands();
   loadVisualFolders();
   if (!S.scripts.length) {
     loadScripts();
@@ -575,9 +580,25 @@ function selectTakeSwap(cutIndex, clip) {
 
 // ── Visual Library Folders Management ────────────────────────
 
+async function loadBrands() {
+  try {
+    const res = await apiGet('/api/visual-library/brands');
+    if (res && res.success && res.brands) {
+      S.availableBrands = res.brands;
+      if (!S.activeBrand || !S.availableBrands.includes(S.activeBrand)) {
+        if (S.availableBrands.length > 0) S.activeBrand = S.availableBrands[0];
+      }
+      render();
+    }
+  } catch (e) {
+    console.warn('[StoryCut] Error loading brands:', e);
+  }
+}
+
 async function loadVisualFolders() {
   try {
-    const res = await apiGet('/api/visual-library/folders');
+    const brandParam = S.activeBrand ? `?brand=${encodeURIComponent(S.activeBrand)}` : '';
+    const res = await apiGet(`/api/visual-library/folders${brandParam}`);
     if (res && res.success) {
       S.visualFolders = res.folders || [];
       render();
@@ -589,9 +610,14 @@ async function loadVisualFolders() {
 
 async function addVisualFolder(folderPath) {
   if (!folderPath) return;
+  const cleanPath = folderPath.replace(/^["']|["']$/g, '').trim();
   setBusy(true, 'Adding raw data folder to Visual Library...');
   try {
-    const res = await apiPost('/api/visual-library/folders', { folder_path: folderPath, auto_analyze: true });
+    const res = await apiPost('/api/visual-library/folders', {
+      folder_path: cleanPath,
+      brand: S.activeBrand,
+      auto_analyze: true
+    });
     if (res && res.success) {
       setStatus('success', `Added "${res.folder.name}" to Visual Library.`);
       await loadVisualFolders();
@@ -603,6 +629,47 @@ async function addVisualFolder(folderPath) {
   } finally {
     setBusy(false);
     render();
+  }
+}
+
+async function transcribeAndIndexVl(folderPath = null) {
+  S.isTranscribingVl = true;
+  setBusy(true, 'Initiating transcription & visual indexing with Whisper...');
+  try {
+    const res = await apiPost('/api/visual-library/transcribe-and-index', {
+      folder_path: folderPath,
+      brand: S.activeBrand,
+      force: false
+    });
+    if (res && res.success) {
+      setStatus('info', 'Batch transcription & indexing in progress in background...');
+      const pollTimer = setInterval(async () => {
+        try {
+          const st = await apiGet('/api/visual-library/status');
+          if (st && st.status) {
+            if (st.status.is_busy) {
+              setBusy(true, st.status.message || 'Transcribing footage...');
+            } else {
+              clearInterval(pollTimer);
+              S.isTranscribingVl = false;
+              setBusy(false);
+              setStatus('success', 'Transcription & indexing completed!');
+              await loadVisualFolders();
+            }
+          }
+        } catch (_) {
+          clearInterval(pollTimer);
+          S.isTranscribingVl = false;
+          setBusy(false);
+        }
+      }, 2000);
+    } else {
+      setBusy(false);
+      setStatus('error', (res && res.detail) || 'Failed to initiate transcription.');
+    }
+  } catch (e) {
+    setBusy(false);
+    setStatus('error', 'Transcription error: ' + e.message);
   }
 }
 
@@ -1262,17 +1329,31 @@ function render() {
         </div>
 
         <div class="sc-drawer-row">
+          <span class="sc-drawer-lbl">Brand / Client:</span>
+          <div class="sc-drawer-content" style="gap:8px; align-items:center;">
+            <select id="sc-brand-select" class="sc-select" style="max-width:240px; font-weight:600; background:var(--sc-surface-raised, #2a2a2a); color:var(--sc-text, #fff); border:1px solid var(--sc-border, #444); border-radius:4px; padding:3px 6px;">
+              ${(S.availableBrands && S.availableBrands.length > 0) ? S.availableBrands.map(b => `<option value="${escapeHtml(b)}" ${b === S.activeBrand ? 'selected' : ''}>${escapeHtml(b)}</option>`).join('') : `<option value="${escapeHtml(S.activeBrand)}">${escapeHtml(S.activeBrand)}</option>`}
+            </select>
+            <span style="font-size:11px; color:var(--sc-text-muted);">Scoped footage &amp; B-roll library</span>
+          </div>
+        </div>
+
+        <div class="sc-drawer-row">
           <span class="sc-drawer-lbl">Visual Library:</span>
           <div class="sc-drawer-content" style="flex-wrap:wrap; gap:6px;">
             ${(S.visualFolders && S.visualFolders.length > 0) ? S.visualFolders.map((f) => `
               <div class="sc-drawer-chip" title="${escapeHtml(f.path)}">
                 <span class="chip-name">${escapeHtml(f.name)}</span>
-                <span class="chip-count">${f.broll_count || f.total_assets || 0}</span>
+                <span class="chip-count" title="${f.broll_count} B-roll clips, ${f.total_assets} total">${f.broll_count} B-roll / ${f.total_assets}</span>
+                <span class="chip-status ${f.transcribed_count >= f.total_assets && f.total_assets > 0 ? 'ready' : 'pending'}" style="font-size:10px; opacity:0.85;" title="${f.transcribed_count || 0}/${f.total_assets} clips transcribed">🎙️ ${f.transcribed_count || 0}/${f.total_assets}</span>
                 <button class="chip-del" data-action="remove-vl-folder" data-path="${escapeHtml(f.path)}" title="Unlink folder">&times;</button>
               </div>
-            `).join('') : '<span style="color:var(--sc-text-muted); font-size:11px;">No raw footage folders linked</span>'}
+            `).join('') : '<span style="color:var(--sc-text-muted); font-size:11px;">No raw footage folders linked for this brand</span>'}
             <button id="sc-btn-open-add-vl" class="sc-btn-subtle" title="Add raw footage folder">
               ${svgIcon('plus')} Add Folder
+            </button>
+            <button id="sc-btn-transcribe-vl" class="sc-btn-subtle" style="color:var(--sc-accent, #3b82f6); font-weight:600;" title="Transcribe and index all footage in linked folders">
+              ⚡ Transcribe &amp; Index
             </button>
             <button id="sc-btn-rescan-vl" class="sc-btn-subtle" title="Rescan video quality">
               ${svgIcon('refresh')} Rescan
@@ -1710,6 +1791,18 @@ function attachEventHandlers(v) {
     };
   }
 
+  const brandSelect = v.querySelector('#sc-brand-select');
+  if (brandSelect) {
+    brandSelect.onchange = (e) => {
+      S.activeBrand = e.target.value;
+      try { localStorage.setItem('editflow_active_brand', S.activeBrand); } catch (_) {}
+      loadVisualFolders();
+    };
+  }
+
+  const btnTranscribeVl = v.querySelector('#sc-btn-transcribe-vl');
+  if (btnTranscribeVl) btnTranscribeVl.onclick = () => transcribeAndIndexVl();
+
   const btnRescanVl = v.querySelector('#sc-btn-rescan-vl');
   if (btnRescanVl) btnRescanVl.onclick = rescanVisualLibrary;
 
@@ -1880,3 +1973,5 @@ function fmtSec(sec) {
   const ms = Math.floor((sec % 1) * 10);
   return `${m}:${s < 10 ? '0' : ''}${s}.${ms}`;
 }
+
+window.addEventListener('editflow:folder-added', () => { loadVisualFolders(); });

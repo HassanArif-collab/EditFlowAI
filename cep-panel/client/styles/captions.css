@@ -172,8 +172,14 @@
 .cc-tile {
   display: flex; flex-direction: column; gap: 4px; padding: 4px; border-radius: 6px; cursor: pointer;
   border: 1px solid var(--cc-line); background: var(--cc-surface); color: var(--cc-text); font-size: 11px; font-weight: 600;
+  transition: transform 0.16s cubic-bezier(0.2, 0, 0, 1), border-color 0.16s ease, box-shadow 0.16s ease, background 0.16s ease;
 }
-.cc-tile:hover { border-color: #5a5a5a; background: var(--cc-raised); }
+.cc-tile:hover {
+  transform: translateY(-2px) scale(1.02);
+  border-color: var(--cc-accent, #3b82f6);
+  background: var(--cc-raised);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+}
 .cc-tile.cc-on { border-color: var(--cc-accent); box-shadow: 0 0 0 1px var(--cc-accent); color: var(--cc-bright); }
 .cc-tile-cv { width: 100%; height: auto; aspect-ratio: 9 / 5; border-radius: 3px; display: block; background: #3b4048; }
 

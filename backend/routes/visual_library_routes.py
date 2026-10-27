@@ -31,7 +31,14 @@ _indexing_status = {
 
 class AddFolderRequest(BaseModel):
     folder_path: str
+    brand: Optional[str] = None
     auto_analyze: Optional[bool] = True
+
+
+class TranscribeAndIndexRequest(BaseModel):
+    folder_path: Optional[str] = None
+    brand: Optional[str] = None
+    force: Optional[bool] = False
 
 
 class RemoveFolderRequest(BaseModel):
@@ -49,11 +56,22 @@ async def get_status() -> Dict[str, Any]:
     return {"success": True, "status": _indexing_status}
 
 
-@router.get("/folders")
-async def list_folders() -> Dict[str, Any]:
-    """List all registered raw data folders in the visual library."""
+@router.get("/brands")
+async def list_brands() -> Dict[str, Any]:
+    """List all detected brands / clients across local folders."""
     try:
-        folders = visual_library_service.list_folders()
+        brands = visual_library_service.list_brands()
+        return {"success": True, "brands": brands}
+    except Exception as e:
+        logger.error(f"[visual_library_routes] List brands error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/folders")
+async def list_folders(brand: Optional[str] = Query(None, description="Filter by brand name")) -> Dict[str, Any]:
+    """List all registered raw data folders in the visual library, optionally filtered by brand."""
+    try:
+        folders = visual_library_service.list_folders(brand=brand)
         return {"success": True, "total": len(folders), "folders": folders}
     except Exception as e:
         logger.error(f"[visual_library_routes] List folders error: {e}", exc_info=True)
@@ -81,7 +99,7 @@ def _background_analyze(folder_path: Optional[str] = None, force: bool = False):
 async def add_folder(req: AddFolderRequest, background_tasks: BackgroundTasks) -> Dict[str, Any]:
     """Add a raw data folder to the visual library and trigger indexing in background."""
     try:
-        res = visual_library_service.add_folder(req.folder_path, auto_analyze=False)
+        res = visual_library_service.add_folder(req.folder_path, brand=req.brand, auto_analyze=False)
         if not res.get("success"):
             raise HTTPException(status_code=400, detail=res.get("error"))
 
@@ -110,6 +128,38 @@ async def remove_folder(folder_path: str = Query(..., description="Folder path t
         logger.error(f"[visual_library_routes] Remove folder error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
+
+
+async def _background_transcribe_and_index(folder_path: Optional[str] = None, brand: Optional[str] = None, force: bool = False):
+    global _indexing_status
+    _indexing_status["is_busy"] = True
+    _indexing_status["message"] = f"Transcribing & indexing footage..."
+    
+    async def on_prog(p: Dict[str, Any]):
+        _indexing_status["processed"] = p.get("processed", 0)
+        _indexing_status["total"] = p.get("total", 0)
+        _indexing_status["message"] = p.get("message", "Processing...")
+        
+    try:
+        if folder_path:
+            await visual_library_service.transcribe_and_index_folder(folder_path, force=force, on_progress=on_prog)
+        else:
+            folders = visual_library_service.list_folders(brand=brand)
+            for f in folders:
+                await visual_library_service.transcribe_and_index_folder(f["path"], force=force, on_progress=on_prog)
+        _indexing_status["message"] = "Transcription & indexing complete."
+    except Exception as e:
+        logger.error(f"[visual_library_routes] Background transcribe error: {e}", exc_info=True)
+        _indexing_status["message"] = f"Error: {e}"
+    finally:
+        _indexing_status["is_busy"] = False
+
+
+@router.post("/transcribe-and-index")
+async def transcribe_and_index(req: TranscribeAndIndexRequest, background_tasks: BackgroundTasks) -> Dict[str, Any]:
+    """Batch transcribe all untranscribed clips and deep index visual quality."""
+    background_tasks.add_task(_background_transcribe_and_index, req.folder_path, req.brand, req.force)
+    return {"success": True, "message": "Background transcription & indexing initiated."}
 
 @router.post("/analyze")
 async def analyze_all(background_tasks: BackgroundTasks, force: bool = Query(False, description="Force re-analysis of all files")) -> Dict[str, Any]:

@@ -121,12 +121,37 @@ async function _handleOSFiles(files) {
 }
 
 async function _handleDirectory(file) {
-  // This backend operates on bins already inside the Premiere project, not
-  // on raw OS folders. Tell the user to import the folder into Premiere first.
+  const dirPath = file.path;
   const dirName = file.name || 'this folder';
+  if (!dirPath) {
+    appendMessage('agent-text', {
+      text: `Drag "${dirName}" into a bin inside Premiere first, then drop that bin onto this panel.`,
+    });
+    return;
+  }
   appendMessage('agent-text', {
-    text: `Drag "${dirName}" into a bin inside Premiere first, then drop that bin onto this panel.`,
+    text: `📁 Adding folder "${dirName}" to Visual Library...`,
   });
+  try {
+    const res = await apiPost('/api/visual-library/folders', {
+      folder_path: dirPath,
+      auto_analyze: true
+    });
+    if (res && res.success) {
+      const indexed = res.analysis ? res.analysis.indexed_count : (res.folder ? res.folder.total_assets : 0);
+      const broll = res.analysis ? res.analysis.broll_count : (res.folder ? res.folder.broll_count : 0);
+      appendMessage('agent-text', {
+        text: `✅ Added "${dirName}" to Visual Library! (${indexed} assets found, ${broll} B-roll clips indexed).`,
+      });
+      window.dispatchEvent(new CustomEvent('editflow:folder-added', { detail: res }));
+    } else {
+      appendMessage('error', {
+        text: res.detail || res.error || `Failed to add "${dirName}" to Visual Library.`
+      });
+    }
+  } catch (err) {
+    appendMessage('error', { text: `Error indexing folder: ${err.message}` });
+  }
 }
 
 async function _handlePProDrop() {

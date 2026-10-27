@@ -719,7 +719,8 @@ class WhisperService:
                         try:
                             import ctranslate2
                             import numpy as np
-                            dummy = np.zeros((1, 80, 300), dtype=np.float32)
+                            n_mels = 128 if "v3" in str(model_spec).lower() else 80
+                            dummy = np.zeros((1, n_mels, 300), dtype=np.float32)
                             sv = ctranslate2.StorageView.from_array(dummy)
                             self._model.model.encode(sv)
                         except Exception as val_err:

@@ -280,12 +280,14 @@ function openCaptions() {
   const hero = document.getElementById('hero');
   const chat = document.getElementById('chat-scroll');
   const footer = document.getElementById('app-footer');
+  const sc = document.getElementById('story-cut-view');
+  const rv = document.getElementById('review-view');
   S.prevView = {
     hero: hero ? hero.classList.contains('hidden') : true,
     chat: chat ? chat.classList.contains('hidden') : true,
     footer: footer ? footer.classList.contains('hidden') : true,
   };
-  [hero, chat, footer].forEach((el) => el && el.classList.add('hidden'));
+  [hero, chat, footer, sc, rv].forEach((el) => el && el.classList.add('hidden'));
   view.classList.remove('hidden');
   if (!S.settings) {
     S.settings = loadSettings();
@@ -402,11 +404,10 @@ const TABS = [['transcript', 'Transcript'], ['style', 'Style'], ['motion', 'Moti
 
 function renderShell() {
   root.innerHTML = `
-    <div class="cc-top">
-      <div class="cc-title">Captions 3.0</div>
+    <div class="cc-seq-bar">
+      <span class="cc-seq-lbl">Sequence:</span>
       <div class="cc-seq" id="cc-seq"></div>
-      <button class="cc-icon-btn" data-act="refresh-seq" title="Re-read the active sequence">${icon('refresh')}</button>
-      <button class="cc-icon-btn" data-act="close" title="Close captions">${icon('close')}</button>
+      <button class="cc-icon-btn cc-small" data-act="refresh-seq" title="Re-read the active sequence">${icon('refresh')}</button>
     </div>
     <div class="cc-stage" id="cc-stage">
       <div class="cc-canvas-wrap" id="cc-canvas-wrap"><canvas id="cc-canvas"></canvas></div>
@@ -1704,9 +1705,9 @@ function paintTile(cv, t) {
 }
 function drawPresetTiles() {
   $$('[data-tile]').forEach((cv) => {
+    setupTileHover(cv, true);
     if (cv._painted && cv.width > 0) return;
     const p = findPreset(cv.dataset.tile);
-    // every word on screen, the last one being spoken
     if (p) {
       ensureFont(p.style.fontFamily, p.style.fontWeight).then(() => {
         drawTileScene(cv, p.style, p.motion, 1.15);
@@ -1716,11 +1717,11 @@ function drawPresetTiles() {
   });
 }
 
-// Motion tiles: static preview by default, animate on hover for zero background CPU load.
+// Motion and Preset tiles: static preview by default, animate on hover for zero background CPU load.
 let activeHoverTile = null;
 let hoverTileRaf = 0;
 
-function setupTileHover(cv) {
+function setupTileHover(cv, isPreset = false) {
   const btn = cv.closest('button');
   if (!btn || btn._hasHoverAnim) return;
   btn._hasHoverAnim = true;
@@ -1730,12 +1731,17 @@ function setupTileHover(cv) {
     if (hoverTileRaf) cancelAnimationFrame(hoverTileRaf);
     const t0 = performance.now();
     const loop = (now) => {
-      if (activeHoverTile !== cv || S.tab !== 'motion' || document.hidden) {
+      if (activeHoverTile !== cv || (S.tab !== 'motion' && S.tab !== 'style') || document.hidden) {
         hoverTileRaf = 0;
         return;
       }
       const t = ((now - t0) / 1000) % 2.2;
-      paintTile(cv, Math.min(t, 1.9));
+      if (isPreset) {
+        const p = findPreset(cv.dataset.tile);
+        if (p) drawTileScene(cv, p.style, p.motion, Math.min(t, 1.8));
+      } else {
+        paintTile(cv, Math.min(t, 1.9));
+      }
       hoverTileRaf = requestAnimationFrame(loop);
     };
     hoverTileRaf = requestAnimationFrame(loop);
@@ -1748,7 +1754,12 @@ function setupTileHover(cv) {
         cancelAnimationFrame(hoverTileRaf);
         hoverTileRaf = 0;
       }
-      paintTile(cv, 0.68);
+      if (isPreset) {
+        const p = findPreset(cv.dataset.tile);
+        if (p) drawTileScene(cv, p.style, p.motion, 1.15);
+      } else {
+        paintTile(cv, 0.68);
+      }
     }
   });
 }
