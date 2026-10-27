@@ -39,6 +39,7 @@ from ..services.subtitles.word_sanitizer import sanitize_words
 from ..services.whisper_service import whisper_service
 from ..utils.error_helpers import check_and_prune_disk_space, clean_system_error
 from ..utils.progress import ProgressReporter
+from ..utils.subprocess_utils import run_silent
 from .whisper_admin import is_model_installed
 
 logger = logging.getLogger(__name__)
@@ -407,7 +408,7 @@ async def get_sequence_frame(req: SequenceFrameReq):
             cmd = [ffmpeg, "-y", "-v", "error", "-i", str(req.frame_path),
                    "-vf", f"scale={min(1920, req.width or 1080)}:-2",
                    "-q:v", "3", str(out_file)]
-            await asyncio.to_thread(subprocess.run, cmd, timeout=10)
+            await asyncio.to_thread(run_silent, cmd, timeout=10)
             if out_file.is_file():
                 return {"url": f"/api/captions/file/{out_file.name}?v={int(_time.time() * 1000)}"}
         except Exception as e:
@@ -430,7 +431,7 @@ async def get_sequence_frame(req: SequenceFrameReq):
                 "-vf", f"scale={min(1920, req.width or 1080)}:-2",
                 "-q:v", "3", str(out_file)
             ])
-            await asyncio.to_thread(subprocess.run, cmd, timeout=15)
+            await asyncio.to_thread(run_silent, cmd, timeout=15)
             if out_file.is_file():
                 return {"url": f"/api/captions/file/{out_file.name}?v={int(_time.time() * 1000)}"}
         except Exception as e:
@@ -749,7 +750,7 @@ async def preview(req: PreviewReq):
         # don't alpha-composite ProRes). Same pixels, same timing.
         mp4 = mov.with_suffix(".mp4")
         proc = await asyncio.to_thread(
-            subprocess.run,
+            run_silent,
             [_ffmpeg_path(), "-hide_banner", "-y",
              "-f", "lavfi",
              "-i", (f"color=c=0x1a1a1a:s={style.width}x{style.height}"
@@ -770,7 +771,7 @@ async def preview(req: PreviewReq):
         for t in times:
             png = mov.with_name(f"{mov.stem}-f{int(t * 10)}.png")
             proc = await asyncio.to_thread(
-                subprocess.run,
+                run_silent,
                 [_ffmpeg_path(), "-hide_banner", "-y",
                  "-ss", str(t), "-i", str(mov),
                  "-frames:v", "1", "-update", "1", str(png)],

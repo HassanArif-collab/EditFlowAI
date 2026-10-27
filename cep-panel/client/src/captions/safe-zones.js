@@ -38,6 +38,15 @@ export const SAFE_ZONES = {
       { x: 0.00, y: 0.92, w: 1.00, h: 0.08, tag: 'nav' },
     ],
   },
+  title: {
+    label: 'Title Safe (90%)',
+    unsafe: [
+      { x: 0.00, y: 0.00, w: 1.00, h: 0.05, tag: 'top margin' },
+      { x: 0.00, y: 0.95, w: 1.00, h: 0.05, tag: 'bottom margin' },
+      { x: 0.00, y: 0.05, w: 0.05, h: 0.90, tag: 'left margin' },
+      { x: 0.95, y: 0.05, w: 0.05, h: 0.90, tag: 'right margin' },
+    ],
+  },
 };
 
 /** Unsafe rects a fractional box {x,y,w,h} overlaps (empty = safe). */

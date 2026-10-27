@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .config import init_dirs
-from .routes import agent, captions, chat, edit, external_plan, media, models_routes, pipeline, preflight, premiere, providers, review, script_extract, whisper_admin
+from .routes import agent, captions, chat, edit, external_plan, media, media_resolver_routes, models_routes, pipeline, preflight, premiere, providers, review, script_assembly_routes, script_extract, timeline_visual_routes, visual_library_routes, whisper_admin
 
 import os
 
@@ -54,6 +54,10 @@ async def lifespan(app: FastAPI):
     import asyncio
     discovery_task = asyncio.create_task(_background_discover())
     app.state.discovery_task = discovery_task
+
+    # Background media resolver indexing
+    from .services.media_resolver import media_resolver
+    asyncio.create_task(asyncio.to_thread(media_resolver.index_directory))
 
     # Dev-only live reload: file watcher pushing dev_reload to the panel.
     watch_task = None
@@ -142,6 +146,10 @@ app.include_router(review.router, prefix="/api")
 app.include_router(captions.router, prefix="/api")
 app.include_router(script_extract.router)
 app.include_router(whisper_admin.router, prefix="/api")
+app.include_router(media_resolver_routes.router, prefix="/api")
+app.include_router(script_assembly_routes.router, prefix="/api")
+app.include_router(visual_library_routes.router, prefix="/api")
+app.include_router(timeline_visual_routes.router, prefix="/api")
 
 panel_dir = Path(__file__).parent.parent / "cep-panel" / "client"
 if panel_dir.exists():

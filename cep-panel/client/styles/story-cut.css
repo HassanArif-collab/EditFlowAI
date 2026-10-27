@@ -1,0 +1,1128 @@
+/* ================================================================
+   story-cut.css — EditFlow Story Cut & B-Roll Studio
+   Adobe Spectrum Minimalist Dark Slate Design System.
+   Chromium 88 safe (CEP 11). Zero AI gimmicks, zero emojis.
+   ================================================================ */
+
+.sc-view {
+  --sc-bg: #1e1e1e;
+  --sc-surface: #252525;
+  --sc-surface-elevated: #2b2b2b;
+  --sc-surface-hover: #323232;
+  --sc-border: #333333;
+  --sc-border-subtle: #292929;
+  --sc-line: #2e2e2e;
+  
+  --sc-text-primary: #f0f0f0;
+  --sc-text-secondary: #999999;
+  --sc-text-muted: #666666;
+  
+  --sc-accent: #1473e6;
+  --sc-accent-hover: #0d66d0;
+  --sc-accent-subtle: rgba(20, 115, 230, 0.12);
+  --sc-accent-border: rgba(20, 115, 230, 0.35);
+
+  --sc-ok: #2d9d78;
+  --sc-ok-subtle: rgba(45, 157, 120, 0.15);
+  --sc-warn: #e68619;
+  --sc-err: #e34850;
+  --sc-err-subtle: rgba(227, 72, 80, 0.15);
+
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--sc-bg);
+  color: var(--sc-text-primary);
+  font-size: 12px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  overflow: hidden;
+  z-index: 100;
+  user-select: none;
+}
+
+.sc-view *, .sc-view *::before, .sc-view *::after {
+  box-sizing: border-box;
+}
+
+.sc-view .hidden { display: none !important; }
+.sc-view button { font-family: inherit; }
+
+/* ── Typography & Helpers ───────────────────────────────────── */
+.sc-mono { font-family: "Cascadia Code", "Consolas", monospace; }
+.sc-ellipsis { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ── Header Row (Single 38px Native Bar) ───────────────────── */
+.sc-header {
+  height: 38px;
+  background: var(--sc-surface);
+  border-bottom: 1px solid var(--sc-border);
+  display: flex;
+  align-items: center;
+  padding: 0 10px 0 12px;
+  gap: 10px;
+  flex: none;
+}
+
+.sc-header-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  font-size: 12.5px;
+  color: var(--sc-text-primary);
+  letter-spacing: -0.1px;
+}
+
+.sc-header-title svg {
+  width: 15px;
+  height: 15px;
+  fill: var(--sc-accent);
+}
+
+/* Segmented Control (Mode Toggle) */
+.sc-segmented {
+  display: flex;
+  background: #181818;
+  border: 1px solid var(--sc-border);
+  border-radius: 4px;
+  padding: 2px;
+  gap: 1px;
+}
+
+.sc-seg-btn {
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  padding: 3px 9px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--sc-text-secondary);
+  cursor: pointer;
+  transition: all 0.12s ease;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.sc-seg-btn:hover {
+  color: var(--sc-text-primary);
+}
+
+.sc-seg-btn.active {
+  background: var(--sc-surface-elevated);
+  color: #ffffff;
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+.sc-seg-btn svg {
+  width: 12px;
+  height: 12px;
+  fill: currentColor;
+}
+
+.sc-header-spacer { flex: 1; }
+
+.sc-icon-btn {
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--sc-text-secondary);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.sc-icon-btn:hover {
+  background: var(--sc-surface-hover);
+  color: var(--sc-text-primary);
+  border-color: var(--sc-border);
+}
+
+.sc-icon-btn.active {
+  background: var(--sc-accent-subtle);
+  color: var(--sc-accent);
+  border-color: var(--sc-accent-border);
+}
+
+.sc-icon-btn svg {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+}
+
+/* ── More / Settings Slide-Down Drawer ───────────────────────── */
+.sc-drawer {
+  background: var(--sc-surface);
+  border-bottom: 1px solid var(--sc-border);
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: none;
+  animation: scSlideDown 0.15s ease-out;
+}
+
+@keyframes scSlideDown {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.sc-drawer-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+}
+
+.sc-drawer-lbl {
+  width: 110px;
+  color: var(--sc-text-muted);
+  font-weight: 500;
+  flex: none;
+}
+
+.sc-drawer-content {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.sc-drawer-chip {
+  background: #1c1c1c;
+  border: 1px solid var(--sc-border);
+  border-radius: 3px;
+  padding: 2px 7px;
+  color: var(--sc-text-secondary);
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 240px;
+}
+
+.sc-drawer-chip .chip-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sc-drawer-chip .chip-count {
+  font-size: 9.5px;
+  color: var(--sc-text-muted);
+  background: #262626;
+  padding: 1px 4px;
+  border-radius: 2px;
+}
+
+.sc-drawer-chip .chip-del {
+  background: none;
+  border: none;
+  color: var(--sc-text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 0 1px;
+}
+
+.sc-drawer-chip .chip-del:hover {
+  color: var(--sc-err);
+}
+
+/* ── Compact Controls Toolbar (Single Row) ──────────────────── */
+.sc-toolbar {
+  height: 36px;
+  background: #202020;
+  border-bottom: 1px solid var(--sc-border-subtle);
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  gap: 8px;
+  flex: none;
+}
+
+.sc-seq-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--sc-text-primary);
+  font-weight: 500;
+  min-width: 0;
+  max-width: 200px;
+}
+
+.sc-seq-breadcrumb svg {
+  width: 13px;
+  height: 13px;
+  fill: var(--sc-accent);
+  flex: none;
+}
+
+.sc-compact-select-wrap {
+  display: inline-flex;
+  align-items: center;
+  position: relative;
+}
+
+.sc-compact-select {
+  background: var(--sc-surface);
+  border: 1px solid var(--sc-border);
+  border-radius: 4px;
+  color: var(--sc-text-primary);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 22px 3px 8px;
+  height: 25px;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  outline: none;
+}
+
+.sc-compact-select:hover {
+  border-color: #444444;
+}
+
+.sc-compact-select:focus {
+  border-color: var(--sc-accent);
+}
+
+.sc-select-arrow {
+  position: absolute;
+  right: 7px;
+  pointer-events: none;
+  width: 9px;
+  height: 9px;
+  fill: var(--sc-text-muted);
+}
+
+.sc-btn-subtle {
+  background: transparent;
+  border: 1px solid var(--sc-border);
+  border-radius: 4px;
+  color: var(--sc-text-secondary);
+  font-size: 11px;
+  padding: 3px 8px;
+  height: 25px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.sc-btn-subtle:hover {
+  background: var(--sc-surface-hover);
+  color: var(--sc-text-primary);
+}
+
+.sc-btn-subtle svg {
+  width: 12px;
+  height: 12px;
+  fill: currentColor;
+}
+
+/* ── Storyboard Beats List ──────────────────────────────────── */
+.sc-storyboard {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sc-storyboard::-webkit-scrollbar {
+  width: 6px;
+}
+.sc-storyboard::-webkit-scrollbar-track {
+  background: transparent;
+}
+.sc-storyboard::-webkit-scrollbar-thumb {
+  background: #333333;
+  border-radius: 3px;
+}
+.sc-storyboard::-webkit-scrollbar-thumb:hover {
+  background: #444444;
+}
+
+/* Storyboard Row */
+.sc-row-item {
+  background: var(--sc-surface);
+  border: 1px solid var(--sc-border-subtle);
+  border-radius: 5px;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  transition: border-color 0.12s ease, background 0.12s ease;
+  position: relative;
+}
+
+.sc-row-item:hover {
+  border-color: #383838;
+  background: #272727;
+}
+
+.sc-row-item.playing {
+  border-color: var(--sc-accent-border);
+  background: var(--sc-accent-subtle);
+}
+
+/* Meta column: timestamp + speaker */
+.sc-col-meta {
+  width: 75px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.sc-meta-index {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--sc-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.sc-meta-time {
+  font-size: 10px;
+  color: var(--sc-text-secondary);
+}
+
+.sc-meta-speaker {
+  font-size: 10px;
+  font-weight: 500;
+  color: #a0a0a0;
+  background: #1d1d1d;
+  padding: 1px 4px;
+  border-radius: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border: 1px solid #2d2d2d;
+}
+
+/* Dialogue quote column */
+.sc-col-quote {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--sc-text-primary);
+  user-select: text;
+}
+
+/* Visual B-Roll Column */
+.sc-col-visual {
+  width: 170px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sc-broll-chip {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: #1c1c1c;
+  border: 1px solid var(--sc-border);
+  border-radius: 4px;
+  padding: 3px 6px 3px 3px;
+  max-width: 100%;
+  position: relative;
+  transition: border-color 0.12s;
+}
+
+.sc-broll-chip:hover {
+  border-color: #4a4a4a;
+}
+
+.sc-broll-thumb-wrap {
+  width: 44px;
+  height: 28px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: #141414;
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sc-broll-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.sc-broll-thumb-fallback {
+  width: 14px;
+  height: 14px;
+  fill: #555555;
+}
+
+.sc-broll-dur-tag {
+  position: absolute;
+  bottom: 1px;
+  right: 1px;
+  background: rgba(0, 0, 0, 0.78);
+  color: #fff;
+  font-size: 8px;
+  padding: 0 2px;
+  border-radius: 2px;
+  line-height: 1.1;
+}
+
+.sc-broll-text {
+  min-width: 0;
+  flex: 1;
+}
+
+.sc-broll-name {
+  font-size: 10.5px;
+  font-weight: 500;
+  color: #ffffff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sc-broll-track {
+  font-size: 9px;
+  color: var(--sc-text-muted);
+}
+
+.sc-broll-del-btn {
+  background: none;
+  border: none;
+  color: var(--sc-text-muted);
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 2px;
+  opacity: 0.6;
+}
+
+.sc-broll-del-btn:hover {
+  color: var(--sc-err);
+  opacity: 1;
+}
+
+.sc-broll-del-btn svg {
+  width: 10px;
+  height: 10px;
+  fill: currentColor;
+}
+
+/* Empty visual placeholder slot */
+.sc-broll-empty-slot {
+  border: 1px dashed #3a3a3a;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--sc-text-muted);
+  font-size: 10.5px;
+  padding: 5px 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+
+.sc-broll-empty-slot:hover {
+  border-color: #555555;
+  color: var(--sc-text-secondary);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.sc-broll-empty-slot svg {
+  width: 11px;
+  height: 11px;
+  fill: currentColor;
+}
+
+/* Actions Column (Hover-activated) */
+.sc-col-actions {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  flex: none;
+}
+
+.sc-row-item:hover .sc-col-actions,
+.sc-row-item.playing .sc-col-actions {
+  opacity: 1;
+}
+
+.sc-action-btn {
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #202020;
+  border: 1px solid var(--sc-border);
+  border-radius: 4px;
+  color: var(--sc-text-secondary);
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.sc-action-btn:hover {
+  background: var(--sc-surface-hover);
+  color: var(--sc-text-primary);
+  border-color: #484848;
+}
+
+.sc-action-btn.active {
+  background: var(--sc-accent);
+  border-color: var(--sc-accent);
+  color: #ffffff;
+}
+
+.sc-action-btn svg {
+  width: 12px;
+  height: 12px;
+  fill: currentColor;
+}
+
+/* ── Inline Trim Popover ────────────────────────────────────── */
+.sc-trim-popover {
+  position: absolute;
+  top: 100%;
+  right: 10px;
+  margin-top: 4px;
+  background: var(--sc-surface-elevated);
+  border: 1px solid var(--sc-border);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+  border-radius: 5px;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  z-index: 50;
+  animation: scFadeIn 0.12s ease-out;
+}
+
+@keyframes scFadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.sc-trim-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.sc-trim-lbl {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--sc-text-muted);
+  width: 24px;
+}
+
+.sc-trim-stepper {
+  background: #202020;
+  border: 1px solid var(--sc-border);
+  color: var(--sc-text-primary);
+  border-radius: 3px;
+  padding: 2px 6px;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.sc-trim-stepper:hover {
+  background: #303030;
+}
+
+/* ── Context-Aware Footer Dock ──────────────────────────────── */
+.sc-footer {
+  height: 48px;
+  background: #222222;
+  border-top: 1px solid var(--sc-border);
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  gap: 12px;
+  flex: none;
+}
+
+.sc-status-quiet {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11.5px;
+  color: var(--sc-text-secondary);
+  min-width: 0;
+}
+
+.sc-status-quiet svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+
+.sc-status-quiet.success svg { fill: var(--sc-ok); }
+.sc-status-quiet.error svg { fill: var(--sc-err); }
+.sc-status-quiet.info svg { fill: var(--sc-accent); }
+
+.sc-status-quiet .status-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Primary CTA Button */
+.sc-btn-primary {
+  background: var(--sc-accent);
+  border: 1px solid var(--sc-accent);
+  color: #ffffff;
+  font-weight: 600;
+  font-size: 12px;
+  height: 30px;
+  padding: 0 16px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+  white-space: nowrap;
+}
+
+.sc-btn-primary:hover:not(:disabled) {
+  background: var(--sc-accent-hover);
+  border-color: var(--sc-accent-hover);
+}
+
+.sc-btn-primary:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.sc-btn-primary svg {
+  width: 13px;
+  height: 13px;
+  fill: currentColor;
+}
+
+/* ── Clean Popover for Take / B-Roll Swapping ────────────────── */
+.sc-popover-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sc-modal-box {
+  background: var(--sc-surface-elevated);
+  border: 1px solid var(--sc-border);
+  border-radius: 6px;
+  width: 380px;
+  max-width: 90vw;
+  max-height: 85vh;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: scModalIn 0.14s ease-out;
+}
+
+@keyframes scModalIn {
+  from { opacity: 0; transform: scale(0.97); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.sc-modal-header {
+  height: 38px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--sc-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--sc-text-primary);
+}
+
+.sc-modal-body {
+  padding: 12px 14px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sc-modal-desc {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--sc-text-secondary);
+}
+
+.sc-modal-footer {
+  height: 44px;
+  padding: 0 14px;
+  border-top: 1px solid var(--sc-border);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.sc-input {
+  width: 100%;
+  height: 28px;
+  background: #1c1c1c;
+  border: 1px solid var(--sc-border);
+  border-radius: 4px;
+  color: var(--sc-text-primary);
+  font-size: 11.5px;
+  padding: 0 8px;
+  outline: none;
+}
+
+.sc-input:focus {
+  border-color: var(--sc-accent);
+}
+
+/* B-Roll Selection Grid inside Modal */
+.sc-broll-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+}
+
+.sc-broll-card-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  background: #222222;
+  border: 1px solid var(--sc-border-subtle);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.sc-broll-card-row:hover {
+  background: #2c2c2c;
+  border-color: var(--sc-accent);
+}
+
+.sc-broll-card-thumb {
+  width: 56px;
+  height: 36px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: #141414;
+  flex: none;
+  position: relative;
+}
+
+.sc-broll-card-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.sc-broll-card-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.sc-broll-card-title {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: #ffffff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sc-broll-card-sub {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+  color: var(--sc-text-muted);
+  margin-top: 2px;
+}
+
+.sc-broll-card-badge {
+  background: #181818;
+  padding: 1px 4px;
+  border-radius: 2px;
+  border: 1px solid #2e2e2e;
+}
+
+/* ── Progress Card & Live Stage Pipeline ─────────────────────── */
+.sc-progress-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 40px 24px;
+  text-align: center;
+  max-width: 420px;
+  margin: auto;
+  position: relative;
+}
+
+.sc-progress-spinner {
+  width: 52px;
+  height: 52px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sc-spinner-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  animation: sc-spin 1.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+.sc-spinner-track {
+  stroke: rgba(255, 255, 255, 0.08);
+}
+
+.sc-spinner-head {
+  stroke: var(--sc-accent);
+  stroke-dasharray: 80;
+  stroke-dashoffset: 60;
+  stroke-linecap: round;
+}
+
+.sc-progress-center-icon {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1;
+}
+
+.sc-progress-center-icon svg {
+  width: 16px;
+  height: 16px;
+  fill: var(--sc-accent);
+}
+
+.sc-progress-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--sc-text-primary);
+  letter-spacing: -0.01em;
+}
+
+.sc-progress-desc {
+  font-size: 11px;
+  color: var(--sc-text-secondary);
+  line-height: 1.5;
+  max-width: 340px;
+  min-height: 32px;
+}
+
+/* Step Progression Track */
+.sc-progress-steps {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 6px;
+  width: 100%;
+}
+
+.sc-step {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  color: var(--sc-text-muted);
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.sc-step.active {
+  color: var(--sc-accent);
+  font-weight: 600;
+}
+
+.sc-step.done {
+  color: #a5d6a7;
+}
+
+.sc-step-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #333333;
+}
+
+.sc-step.active .sc-step-dot {
+  background: var(--sc-accent);
+  box-shadow: 0 0 8px var(--sc-accent);
+  animation: sc-pulse 1.2s infinite ease-in-out;
+}
+
+.sc-step.done .sc-step-dot {
+  background: #4caf50;
+}
+
+.sc-step-line {
+  width: 16px;
+  height: 1px;
+  background: #333333;
+}
+
+.sc-step-line.done {
+  background: #4caf50;
+}
+
+/* Live Pulse Activity Bar */
+.sc-pulse-bar-wrap {
+  width: 180px;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+  overflow: hidden;
+  position: relative;
+  margin-top: 4px;
+}
+
+.sc-pulse-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 40%;
+  background: var(--sc-accent);
+  border-radius: 2px;
+  animation: sc-indeterminate 1.4s infinite ease-in-out;
+}
+
+.sc-progress-hint {
+  font-size: 9.5px;
+  color: #666666;
+  margin-top: 8px;
+}
+
+/* Animations */
+@keyframes sc-spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+@keyframes sc-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.4); opacity: 0.7; }
+}
+
+@keyframes sc-indeterminate {
+  0% { left: -40%; width: 40%; }
+  50% { left: 40%; width: 60%; }
+  100% { left: 100%; width: 20%; }
+}
+
+.sc-spin {
+  animation: sc-spin 0.9s linear infinite;
+}
+
+/* Visual Library Badge in Toolbar */
+.sc-vl-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  background: #242424;
+  border: 1px solid var(--sc-border);
+  border-radius: 3px;
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--sc-text-secondary);
+  cursor: pointer;
+  transition: all 0.12s ease;
+  white-space: nowrap;
+}
+
+.sc-vl-pill:hover {
+  background: #2c2c2c;
+  color: var(--sc-text-primary);
+  border-color: var(--sc-accent);
+}
+
+.sc-vl-pill svg {
+  width: 12px;
+  height: 12px;
+  fill: var(--sc-accent);
+}
+
+/* Status Strip above Footer (Full width, zero cutoff) */
+.sc-status-strip {
+  padding: 4px 12px;
+  background: #181818;
+  border-top: 1px solid var(--sc-border);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  color: var(--sc-text-secondary);
+  flex: none;
+}
+
+.sc-status-strip.info {
+  background: #121820;
+  color: var(--sc-accent);
+  border-top-color: rgba(38, 128, 235, 0.3);
+}
+
+.sc-status-strip.success {
+  background: #121a14;
+  color: #a5d6a7;
+  border-top-color: rgba(76, 175, 80, 0.3);
+}
+
+.sc-status-strip.error {
+  background: #221414;
+  color: #ef9a9a;
+  border-top-color: rgba(244, 67, 54, 0.3);
+}
+
+.sc-status-strip svg {
+  width: 12px;
+  height: 12px;
+  flex: none;
+}
+
+.sc-status-strip.info svg { fill: var(--sc-accent); }
+.sc-status-strip.success svg { fill: #4caf50; }
+.sc-status-strip.error svg { fill: #f44336; }

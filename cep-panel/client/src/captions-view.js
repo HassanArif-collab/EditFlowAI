@@ -17,14 +17,24 @@ import { isExtendScriptAvailable, callExtendScript } from './extendscript.js';
 import * as M from './captions/model.js';
 import { drawFrame, STYLE_DEFAULTS } from './captions/render.js';
 import { BUNDLED, ensureFont, makeMeasurer, listSystemFonts, injectFontStyles, weightName } from './captions/fonts.js';
-import { PRESETS, findPreset } from './captions/presets.js';
+import { PRESETS, findPreset, getAllPresets, saveUserPreset, deleteUserPreset } from './captions/presets.js';
 import { renderOverlay } from './captions/export.js';
 import { SAFE_ZONES, drawSafeZones } from './captions/safe-zones.js';
+import { getEmojiSuggestion, findAllSuggestions } from './captions/emojis.js';
+import {
+  fmtTimestamp,
+  parseTimestamp,
+  autoDetectChapters,
+  formatSocialChapters,
+  parseSocialChapters,
+  validateYouTubeChapters,
+} from './captions/chapters.js';
 
 const SETTINGS_KEY = 'editflow.captions.settings.v3';
 const SETTINGS_KEY_V2 = 'editflow.captions.settings.v2';
 const WORDS_KEY = 'editflow.captions.words.';
 const AUDIO_KEY = 'editflow.captions.audio.';
+const CHAPTERS_KEY = 'editflow.captions.chapters.';
 const REF = 1080;   // style sizes are authored at 1080p and scale with the sequence
 
 const DEFAULTS = {
@@ -32,7 +42,7 @@ const DEFAULTS = {
   previewAspect: '9:16',
   style: Object.assign({}, STYLE_DEFAULTS),
   motion: Object.assign({}, M.MOTION_DEFAULTS),
-  layout: { posX: 50, posY: 72, boxWidth: 86, lineHeight: 1.12, align: 'center' },
+  layout: { posX: 50, posY: 72, boxWidth: 86, lineHeight: 1.12, align: 'center', rotation: 0 },
   grouping: Object.assign({}, M.GROUP_DEFAULTS),
   timing: Object.assign({}, M.TIMING_DEFAULTS),
   output: { codec: 'prores' },
@@ -81,6 +91,7 @@ const S = {
   audioUrl: '',
   audioMuted: false,
   audioRangeIn: 0,
+  chapters: [],
 };
 
 let root = null;
@@ -192,10 +203,26 @@ function loadAudio() {
   S.audioRangeIn = 0;
   updateAudioBtn();
 }
+function chaptersKey() { return CHAPTERS_KEY + (S.seq && S.seq.id ? S.seq.id : 'default'); }
+function saveChapters() {
+  try {
+    if (S.chapters && S.chapters.length) localStorage.setItem(chaptersKey(), JSON.stringify(S.chapters));
+    else localStorage.removeItem(chaptersKey());
+  } catch (_) {}
+}
+function loadChapters() {
+  try {
+    const raw = localStorage.getItem(chaptersKey());
+    S.chapters = raw ? JSON.parse(raw) : [];
+  } catch (_) {
+    S.chapters = [];
+  }
+}
 function loadWords() {
   try { S.words = JSON.parse(localStorage.getItem(wordsKey()) || '[]') || []; } catch (_) { S.words = []; }
   S.sel = -1; S.history = []; S.future = []; S.editing = -1;
   loadAudio();
+  loadChapters();
 }
 
 /* ── effective settings (style scaled to the sequence) ────────── */
@@ -597,7 +624,7 @@ function drawPreview() {
     ctx.fillRect(0, 0, W, H);
   }
   if (S.scene) drawFrame(ctx, S.scene, effSettings(), S.t, { scale: W / S.seq.width, clear: false });
-  if (S.safe !== 'off' && S.seq.height > S.seq.width) drawSafeZones(ctx, W, H, S.safe);
+  if (S.safe !== 'off' && (S.safe === 'title' || S.seq.height > S.seq.width)) drawSafeZones(ctx, W, H, S.safe);
   if (S.drag || S.hoverBox) {
     const lay = S.settings.layout, k = W / S.seq.width;
     const bw = S.seq.width * lay.boxWidth / 100 * k;
@@ -950,10 +977,14 @@ function ctlSelect(path, label, options) {
     ${options.map(([val, text]) => `<option value="${esc(val)}"${String(val) === v ? ' selected' : ''}>${esc(text)}</option>`).join('')}
   </select></div>`;
 }
-function ctlSeg(path, label, options) {
-  const v = String(getPath(S.settings, path));
+function ctlSeg(path, label, options, matchFn) {
+  const raw = getPath(S.settings, path);
+  const sv = String(raw != null ? raw : '');
   return `<div class="cc-ctl"><label class="cc-lbl">${label}</label><div class="cc-seg" data-bind="${path}" data-kind="seg">
-    ${options.map(([val, text, title]) => `<button type="button" data-value="${esc(val)}" class="${String(val) === v ? 'cc-on' : ''}"${title ? ` title="${esc(title)}"` : ''}>${text}</button>`).join('')}
+    ${options.map(([val, text, title]) => {
+      const on = matchFn ? matchFn(val, raw) : String(val) === sv;
+      return `<button type="button" data-value="${esc(val)}" class="${on ? 'cc-on' : ''}"${title ? ` title="${esc(title)}"` : ''}>${text}</button>`;
+    }).join('')}
   </div></div>`;
 }
 function ctlColor(path, label) {
@@ -1036,6 +1067,18 @@ function tabTranscript() {
   const hideF = S.settings.grouping.hideFillers !== false;
   const hidden = S.words.filter((w) => !M.isVisible(w, hideF)).length;
   const sourceLabel = S.sourceName ? ` · <span title="${esc(S.sourceName)}">${esc(S.sourceName)}</span>` : '';
+  const fillers = M.findFillerRanges(S.words);
+  const silences = M.findSilenceRanges(S.words, 0.6, 0.2);
+  const totalSilenceSaved = silences.reduce((acc, s) => acc + s.saved, 0);
+  const emojiSuggestions = (S.settings.style.emojiEnabled && S.words.length) ? findAllSuggestions(S.words) : [];
+  const cutBar = (fillers.length > 0 || silences.length > 0 || emojiSuggestions.length > 0) ? `
+    <div class="cc-cutbar">
+      <span class="cc-cutbar-label">Timeline Tools:</span>
+      ${fillers.length > 0 ? `<button class="cc-btn cc-small" data-act="clean-fillers" title="Ripple delete ${fillers.length} filler words from sequence timeline">Cut Fillers (${fillers.length})</button>` : ''}
+      ${silences.length > 0 ? `<button class="cc-btn cc-small" data-act="trim-silence" title="Tighten ${silences.length} long pauses and ripple delete silence from timeline">Tighten Pauses (${fmtTime(totalSilenceSaved)})</button>` : ''}
+      ${emojiSuggestions.length > 0 ? `<button class="cc-btn cc-small" data-act="apply-all-emojis" title="Apply ${emojiSuggestions.length} keyword emojis">Apply Emojis (${emojiSuggestions.length})</button>` : ''}
+    </div>` : '';
+
   return `
     <div class="cc-txbar">
       <button class="cc-icon-btn" data-act="undo" title="Undo (Ctrl+Z)" ${S.history.length ? '' : 'disabled'}>${icon('undo')}</button>
@@ -1045,6 +1088,7 @@ function tabTranscript() {
       <button class="cc-btn cc-small" data-act="source-toggle">${S.showSource ? 'Done' : 'Re-transcribe…'}</button>
       <button class="cc-btn cc-small" data-act="clear-tx" title="Clear current transcript and start fresh">Clear</button>
     </div>
+    ${cutBar}
     ${S.showSource ? `<div class="cc-sec">${sourceCard()}</div>` : ''}
     ${S.findOpen ? `<div class="cc-find">
       <input class="cc-input" id="cc-find" placeholder="Find word" spellcheck="false">
@@ -1077,12 +1121,17 @@ function renderTranscriptList() {
     const cls = ['cc-w'];
     if (!visible) cls.push(w.hidden === true ? 'cc-hidden' : 'cc-auto-hidden');
     if (w.emphasis) cls.push('cc-emph');
+    if (w.speaker != null) cls.push('cc-spk-' + ((Number(w.speaker) || 0) + 1));
     if (i === S.sel) cls.push('cc-sel');
     if (w.breakBefore) cls.push('cc-brk');
     if (i === S.editing) {
       html += `<input class="cc-w-edit" id="cc-w-edit" value="${esc(w.text)}" data-i="${i}" spellcheck="false" size="${Math.max(3, w.text.length + 2)}">`;
     } else {
-      html += `<span class="${cls.join(' ')}" data-i="${i}" title="${fmtTime(w.start)}${!visible && w.hidden !== true ? ' · filler, hidden automatically' : ''}">${esc(w.text)}</span>`;
+      let emojiBadge = '';
+      if (w.emoji) {
+        emojiBadge = `<span class="cc-emoji-pill cc-emoji-active" data-act="w-remove-emoji" data-i="${i}" title="Remove ${w.emoji}">${w.emoji}<small>✕</small></span>`;
+      }
+      html += `<span class="${cls.join(' ')}" data-i="${i}" title="${fmtTime(w.start)}${!visible && w.hidden !== true ? ' · filler, hidden automatically' : ''}">${esc(w.text)}${emojiBadge}</span>`;
     }
     if (open && i + 1 < S.words.length) html += ' ';
   });
@@ -1106,12 +1155,18 @@ function renderSelBar() {
   const w = S.words[S.sel];
   if (!w) { bar.innerHTML = ''; bar.classList.add('hidden'); return; }
   const vis = M.isVisible(w, S.settings.grouping.hideFillers !== false);
+  const curSpk = (w.speaker != null && isFinite(w.speaker)) ? Number(w.speaker) : 0;
+  const sugg = (!w.emoji && S.settings.style.emojiEnabled) ? getEmojiSuggestion(w.text) : null;
   bar.classList.remove('hidden');
   bar.innerHTML = `<span class="cc-selword">“${esc(w.text)}” <span class="cc-dim">${fmtTime(w.start)}</span></span>
     <button class="cc-btn cc-small" data-act="w-hide" title="Hide / show this word (H)">${vis ? 'Hide' : 'Show'}</button>
     <button class="cc-btn cc-small${w.emphasis ? ' cc-on' : ''}" data-act="w-emph" title="Emphasise (E)">Emphasis</button>
+    <button class="cc-btn cc-small${w.speaker ? ' cc-on' : ''}" data-act="w-speaker" title="Toggle speaker assignment (Speaker 1 / Speaker 2)">Speaker ${curSpk + 1}</button>
+    ${sugg ? `<button class="cc-btn cc-small" data-act="w-apply-emoji" data-i="${S.sel}" data-emoji="${sugg}" title="Add suggested ${sugg}">+ ${sugg}</button>` : ''}
+    <button class="cc-btn cc-small${w.emoji ? ' cc-on' : ''}" data-act="w-custom-emoji" title="Set emoji for this word">${w.emoji ? `${w.emoji} Emoji` : 'Emoji…'}</button>
     <button class="cc-btn cc-small${w.breakBefore ? ' cc-on' : ''}" data-act="w-break" title="Start a new caption at this word (B)">New caption</button>
     <button class="cc-btn cc-small" data-act="w-edit" title="Fix the spelling (Enter)">Edit</button>
+    <button class="cc-btn cc-small cc-danger" data-act="w-cut" title="Delete word and ripple cut from Premiere timeline (Del / Backspace)">Ripple Cut</button>
     <span class="cc-nudge"><button class="cc-btn cc-small" data-act="w-earlier" title="Start one frame earlier">−1f</button><button class="cc-btn cc-small" data-act="w-later" title="Start one frame later">+1f</button></span>`;
 }
 
@@ -1152,6 +1207,7 @@ function wordAction(act) {
   if (act === 'hide') w.hidden = M.isVisible(w, S.settings.grouping.hideFillers !== false) ? true : false;
   else if (act === 'emph') w.emphasis = !w.emphasis;
   else if (act === 'break') w.breakBefore = !w.breakBefore;
+  else if (act === 'speaker') w.speaker = ((Number(w.speaker) || 0) + 1) % 2;
   else if (act === 'earlier' || act === 'later') {
     const f = (S.seq.fps.den / S.seq.fps.num) * (act === 'earlier' ? -1 : 1);
     const prev = S.words[S.sel - 1];
@@ -1218,6 +1274,37 @@ function replaceAll() {
   if (!n || !r) { S.history.pop(); setStatus(n ? 'Type the replacement first.' : `No “${f}” in the transcript.`); return; }
   setStatus(`Replaced ${n} × “${f}”.`, 'ok');
   wordsChanged();
+}
+
+/* ── timeline ripple editing (Descript-style text cuts) ────────── */
+
+async function executeTimelineRippleCut(ranges, desc) {
+  if (!ranges || !ranges.length) return;
+  if (!inCEP()) {
+    snapshot();
+    S.words = M.applyRippleDeletesToWords(S.words, ranges);
+    S.sel = -1;
+    wordsChanged();
+    setStatus(`${desc} (preview mode: excised from transcript; connect to Premiere for timeline cut)`, 'info');
+    return;
+  }
+  setBusy({ kind: 'cut', label: `${desc}…`, progress: null });
+  try {
+    const res = await callExtendScript('removeTimelineRanges', { ranges: ranges });
+    if (!res || !res.success) {
+      throw new Error((res && res.error) || 'Timeline cut failed');
+    }
+    snapshot();
+    S.words = M.applyRippleDeletesToWords(S.words, ranges);
+    S.sel = -1;
+    wordsChanged();
+    const timeSaved = res.totalTimeSaved ? ` (${fmtTime(res.totalTimeSaved)} saved)` : '';
+    setStatus(`${desc} on timeline${timeSaved}`, 'ok');
+  } catch (err) {
+    setStatus(`Timeline cut failed: ${formatUserError(err)}`, 'error');
+  } finally {
+    setBusy(null);
+  }
 }
 
 /* ── transcription ────────────────────────────────────────────── */
@@ -1405,16 +1492,33 @@ function weightsFor(family) {
 function tabStyle() {
   const st = S.settings.style;
   const ws = weightsFor(st.fontFamily);
-  const tiles = PRESETS.map((p) => `<button class="cc-tile${S.settings.preset === p.id ? ' cc-on' : ''}" data-preset="${p.id}" title="Apply the ${esc(p.name)} look">
-      <canvas class="cc-tile-cv" data-tile="${p.id}"></canvas><span>${esc(p.name)}</span></button>`).join('');
+  const allPresets = getAllPresets();
+  const tiles = allPresets.map((p) => {
+    const tileBody = `<button class="cc-tile${S.settings.preset === p.id ? ' cc-on' : ''}" data-preset="${p.id}" title="Apply the ${esc(p.name)} look">
+      <canvas class="cc-tile-cv" data-tile="${p.id}"></canvas><span>${esc(p.name)}</span></button>`;
+    if (p.isUser) {
+      return `<div class="cc-tile-wrap">
+        ${tileBody}
+        <button class="cc-tile-del" data-act="del-preset" data-id="${p.id}" title="Delete preset">✕</button>
+      </div>`;
+    }
+    return tileBody;
+  }).join('');
+
+  const lookExtra = `
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+      <span style="font-size:11px; font-weight:600; color:var(--cc-dim, #aaa);">PRESETS${S.settings.preset === 'custom' ? ' · customised' : ''}</span>
+      <button class="cc-btn cc-small" data-act="save-user-preset" title="Save your current look as a reusable preset" style="padding:2px 8px; font-size:11px; height:24px;">+ Save Look</button>
+    </div>`;
+
   return `
-    ${section('Look', `<div class="cc-tiles">${tiles}</div>`, S.settings.preset === 'custom' ? ' <small class="cc-dim">· customised</small>' : '')}
+    ${section('Look', `${lookExtra}<div class="cc-tiles">${tiles}</div>`)}
     ${section('Font', `
       <div class="cc-ctl"><label class="cc-lbl">Family</label><select class="cc-select" data-bind="style.fontFamily" data-kind="text">${fontOptions()}</select></div>
       <p class="cc-warn${S.fontOk ? ' hidden' : ''}" id="cc-font-warn">This font isn't available to the panel — pick another, or install it in Windows and reopen the panel.</p>
       ${ctlSeg('style.fontWeight', 'Weight', ws.map((w) => [w, weightName(w)]))}
       ${ctlNum('style.fontSize', 'Size', 24, 220, 1, 'px')}
-      ${ctlSeg('style.textCase', 'Case', [['as_is', 'As spoken'], ['upper', 'UPPER'], ['lower', 'lower']])}
+      ${ctlSeg('style.textCase', 'Case', [['as_is', 'As spoken'], ['upper', 'UPPER'], ['title', 'Title Case'], ['lower', 'lower']])}
       ${ctlSeg('style.punctuation', 'Punctuation', [
         ['no_dots', 'No dots', 'Keep commas & pauses, drop ending dots (.)'],
         ['keep', 'Keep all', 'Keep all punctuation as spoken'],
@@ -1432,6 +1536,18 @@ function tabStyle() {
       ${ctlColor('style.color', 'Text')}
       ${M.highlightMode(S.settings.motion) === 'color' ? ctlColor('style.activeColor', 'Active word') : ''}
       ${ctlColor('style.emphasisColor', 'Emphasis')}</div>
+      ${ctlToggle('style.gradient', 'Gradient fill', '2-colour vertical gradient')}
+      ${st.gradient ? `<div class="cc-swatches">${ctlColor('style.gradientColor', 'Bottom colour')}</div>` : ''}
+      ${ctlToggle('style.activeGlow', 'Active word glow', 'Subtle luminance bloom around the spoken word')}
+      ${st.activeGlow ? `
+        <div class="cc-swatches">${ctlColor('style.activeGlowColor', 'Glow colour')}</div>
+        ${ctlNum('style.activeGlowBlur', 'Glow softness', 4, 40, 1, 'px')}` : ''}
+      ${ctlToggle('style.speakerColoring', 'Multi-speaker coloring', 'Differentiate speakers with distinct colors')}
+      ${st.speakerColoring ? `
+        <div class="cc-swatches">
+          ${ctlColor('style.speakerColors.0', 'Speaker 1')}
+          ${ctlColor('style.speakerColors.1', 'Speaker 2')}
+        </div>` : ''}
       ${ctlSeg('style.emphasis', 'Emphasised words get', [['color', 'Colour'], ['pill', 'Pill'], ['both', 'Both']])}
       ${st.emphasis !== 'color' ? `<div class="cc-swatches">${ctlColor('style.pillColor', 'Pill')}</div>${ctlNum('style.pillOpacity', 'Pill opacity', 0, 100, 1, '%', 100)}` : ''}`)}
     ${section('Outline', `${ctlNum('style.strokeWidth', 'Thickness', 0, 20, 0.5, 'px')}
@@ -1449,14 +1565,35 @@ function tabStyle() {
           <div style="flex:1">${ctlNum('style.bgPad', 'Horizontal padding', 0, 60, 1, '%', 100)}</div>
           <div style="flex:1">${ctlNum('style.bgPadY', 'Vertical padding', 0, 60, 1, '%', 100)}</div>
         </div>` : ''}`)}
+    ${section('Emojis', `
+      ${ctlToggle('style.emojiEnabled', 'Dynamic Emojis', 'Display contextual emojis on spoken keywords')}
+      ${st.emojiEnabled ? `
+        <div style="margin-top:6px">
+          ${ctlSeg('style.emojiPlacement', 'Placement', [['above', 'Above word'], ['inline', 'Inline with text']])}
+          ${ctlNum('style.emojiScale', 'Emoji size', 0.6, 2.0, 0.1, '×')}
+        </div>` : ''}`)}
     ${section('Position', `
       ${ctlNum('layout.posY', 'Height on screen', 5, 95, 0.5, '%')}
       <div style="display:flex;align-items:center;gap:6px">
         <div style="flex:1">${ctlNum('layout.posX', 'Left / right', 5, 95, 0.5, '%')}</div>
         <button class="cc-btn cc-small" data-act="center-x" title="Reset horizontal position to exact center (50%)" style="flex:none;height:24px;margin-top:2px">Center 50%</button>
       </div>
+      ${ctlNum('layout.rotation', 'Tilt angle', -15, 15, 0.5, '°')}
       ${ctlNum('layout.boxWidth', 'Caption width', 20, 100, 1, '%')}
       ${ctlNum('layout.lineHeight', 'Vertical box height / line spacing', 0.8, 2.5, 0.02, '×')}
+      ${ctlSeg('grouping.maxWords', 'Words on screen', [
+        [1, '1 word', '1 word at a time — maximum retention pop'],
+        [3, '2-3 words', '2 to 3 words — Hormozi viral cadence'],
+        [5, '4-5 words', '4 to 5 words — standard balanced caption'],
+        [8, 'Full line', 'Full line — traditional subtitle pacing'],
+      ], (optVal, curVal) => {
+        const cv = Number(curVal) || 4;
+        if (optVal === 1 && cv === 1) return true;
+        if (optVal === 3 && (cv >= 2 && cv <= 3)) return true;
+        if (optVal === 5 && (cv >= 4 && cv <= 6)) return true;
+        if (optVal === 8 && cv >= 7) return true;
+        return false;
+      })}
       ${ctlSeg('grouping.maxLines', 'Lines', [[1, '1 line'], [2, '2 lines'], [3, '3 lines']])}
       ${ctlSeg('layout.align', 'Align', [['left', 'Left'], ['center', 'Centre'], ['right', 'Right']])}
       <p class="cc-hint">Tip: drag caption to move. Drag left/right handles for width, top/bottom handles for height.</p>`)}`;
@@ -1594,6 +1731,63 @@ function drawMotionTiles() {
   });
 }
 
+/* ── timeline markers & social chapters ───────────────────────── */
+
+async function sendTimelineMarkers() {
+  if (!S.chapters || !S.chapters.length) {
+    setStatus('No chapters to send to Premiere timeline.', 'info');
+    return;
+  }
+  setBusy({ kind: 'markers', label: 'Placing markers on timeline…', progress: null });
+  try {
+    const payload = {
+      chapters: S.chapters.map((c) => ({
+        time: c.time,
+        title: c.title,
+        comment: 'EditFlow Chapter: ' + c.title,
+      })),
+      clearExisting: true,
+      color: 4,
+    };
+    const res = await callExtendScript('setChapterMarkers', payload);
+    if (res && res.success) {
+      setStatus(`Placed ${res.created || S.chapters.length} chapter markers on Premiere sequence timeline!`, 'ok');
+    } else {
+      throw new Error((res && res.error) || 'Failed to place markers on timeline.');
+    }
+  } catch (e) {
+    setStatus('Marker placement failed: ' + formatUserError(e), 'error');
+  } finally {
+    setBusy(null);
+  }
+}
+
+async function importTimelineMarkers() {
+  setBusy({ kind: 'markers', label: 'Reading timeline markers…', progress: null });
+  try {
+    const res = await callExtendScript('getSequenceMarkers');
+    if (res && res.markers && res.markers.length) {
+      S.chapters = res.markers.map((m) => ({
+        time: Math.round(Number(m.time || 0) * 10) / 10,
+        title: m.name || m.comment || 'Chapter',
+      }));
+      if (!S.chapters.some((c) => Math.abs(c.time) < 0.5)) {
+        S.chapters.unshift({ time: 0, title: 'Introduction' });
+      }
+      S.chapters.sort((a, b) => a.time - b.time);
+      saveChapters();
+      renderBody();
+      setStatus(`Imported ${S.chapters.length} markers from sequence timeline.`, 'ok');
+    } else {
+      setStatus('No markers found on active sequence timeline.', 'info');
+    }
+  } catch (e) {
+    setStatus('Could not read sequence markers: ' + formatUserError(e), 'error');
+  } finally {
+    setBusy(null);
+  }
+}
+
 /* ── Export tab ───────────────────────────────────────────────── */
 
 function tabExport() {
@@ -1614,7 +1808,46 @@ function tabExport() {
     ${section('Subtitle file', `<p class="cc-hint">Plain SRT for YouTube uploads or Premiere's own caption track (no animation or styling).</p>
       <div class="cc-row2"><button class="cc-btn" data-act="srt" ${ready ? '' : 'disabled'}>Export SRT</button>
       <button class="cc-btn" data-act="srt-track" ${ready && inCEP() ? '' : 'disabled'}>Add as caption track</button></div>
-      ${S.srtPath ? `<p class="cc-dim cc-path">${esc(S.srtPath)}</p>` : ''}`)}`;
+      ${S.srtPath ? `<p class="cc-dim cc-path">${esc(S.srtPath)}</p>` : ''}`)}
+    ${section('Timeline Markers & Chapters', `
+      <p class="cc-hint">Generate YouTube chapter timestamps and native Premiere sequence markers from speech.</p>
+      <div class="cc-row" style="margin-bottom:8px;gap:6px;flex-wrap:wrap">
+        <button class="cc-btn cc-small" data-act="detect-chapters" ${S.words && S.words.length ? '' : 'disabled'} title="Auto-detect chapter topics from transcript">Auto-Detect</button>
+        <button class="cc-btn cc-small" data-act="add-chapter" title="Add a new chapter manually">+ Chapter</button>
+        <button class="cc-btn cc-small" data-act="import-markers" ${inCEP() ? '' : 'disabled'} title="Import markers from Premiere Pro sequence timeline">Import Markers</button>
+        ${S.chapters && S.chapters.length ? `<button class="cc-btn cc-small cc-danger" data-act="clear-chapters" title="Clear all chapters">Clear</button>` : ''}
+      </div>
+
+      ${(() => {
+        if (!S.chapters || !S.chapters.length) {
+          return `<div class="cc-empty-chapters"><p class="cc-dim">No chapters defined. Click <b>Auto-Detect</b> or <b>+ Chapter</b> to create timeline markers.</p></div>`;
+        }
+        const val = validateYouTubeChapters(S.chapters);
+        const valBadge = val.valid
+          ? `<span class="cc-badge cc-badge-ok" title="Meets YouTube requirements: starts at 00:00, >= 3 chapters, >= 10s gap">YouTube Compliant</span>`
+          : `<span class="cc-badge cc-badge-warn" title="${esc(val.errors.join(' '))}">Adjustment Needed</span>`;
+
+        return `
+          <div style="display:flex;align-items:center;justify-content:space-between;margin:8px 0 6px">
+            <span class="cc-dim" style="font-size:11px">${S.chapters.length} Chapter${S.chapters.length === 1 ? '' : 's'}</span>
+            ${valBadge}
+          </div>
+          <div class="cc-chapter-list">
+            ${S.chapters.map((ch, idx) => `
+              <div class="cc-chapter-row" data-idx="${idx}">
+                <button class="cc-chapter-time-btn" data-act="seek-chapter" data-t="${ch.time}" title="Seek playhead to ${fmtTimestamp(ch.time)}">${fmtTimestamp(ch.time)}</button>
+                <input type="text" class="cc-chapter-input" data-chapter-field="title" data-idx="${idx}" value="${esc(ch.title)}" placeholder="Chapter title…">
+                <button class="cc-chapter-del" data-act="del-chapter" data-idx="${idx}" title="Remove chapter">✕</button>
+              </div>
+            `).join('')}
+          </div>
+          <div class="cc-row2" style="margin-top:10px">
+            <button class="cc-btn cc-primary" data-act="copy-chapters" title="Copy chapters in YouTube / Spotify description format">Copy Chapters</button>
+            <button class="cc-btn" data-act="send-markers" ${inCEP() ? '' : 'disabled'} title="Create native chapter markers on Premiere sequence timeline">Send to Sequence</button>
+          </div>
+        `;
+      })()}
+    `)}`;
 }
 
 /* ── export ───────────────────────────────────────────────────── */
@@ -1703,6 +1936,8 @@ function applyPreset(id) {
   if (!p) return;
   S.settings.style = Object.assign({}, S.settings.style, p.style);
   S.settings.motion = Object.assign({}, M.MOTION_DEFAULTS, p.motion);
+  if (p.grouping) S.settings.grouping = Object.assign({}, S.settings.grouping, p.grouping);
+  if (p.layout) S.settings.layout = Object.assign({}, S.settings.layout, p.layout);
   S.settings.preset = id;
   saveSettingsSoon();
   renderBody();
@@ -1711,10 +1946,12 @@ function applyPreset(id) {
 
 /* ── events ───────────────────────────────────────────────────── */
 
-const RELAYOUT = /^(style\.(fontFamily|fontWeight|fontSize|textCase|punctuation|punctCommas|punctDots|punctExpressive)|layout\.|grouping\.|timing\.)/;
+const RELAYOUT = /^(style\.(fontFamily|fontWeight|fontSize|textCase|punctuation|punctCommas|punctDots|punctExpressive|emojiPlacement|emojiScale)|layout\.|grouping\.|timing\.)/;
 // Settings that show or hide other controls: re-render the tab when they change.
 const STRUCTURAL = { 'style.background': 1, 'style.shadow': 1, 'style.emphasis': 1, 'style.fontFamily': 1,
-  'style.punctuation': 1, 'motion.preset': 1, 'motion.highlight': 1, 'timing.exit': 1, 'grouping.maxLines': 1, previewAspect: 1 };
+  'style.punctuation': 1, 'style.gradient': 1, 'style.activeGlow': 1, 'style.speakerColoring': 1,
+  'style.emojiEnabled': 1, 'style.emojiPlacement': 1,
+  'motion.preset': 1, 'motion.highlight': 1, 'timing.exit': 1, 'grouping.maxLines': 1, previewAspect: 1 };
 
 // Picking a colour for something that's switched off switches it on —
 // otherwise the swatch looks broken (nothing changes).
@@ -1796,6 +2033,14 @@ function bindEvents() {
   root.addEventListener('input', (e) => {
     const el = e.target;
     if (el.id === 'cc-scrub') { setPlaying(false); seek(parseFloat(el.value) || 0); return; }
+    if (el.dataset && el.dataset.chapterField === 'title') {
+      const idx = Number(el.dataset.idx);
+      if (S.chapters && S.chapters[idx]) {
+        S.chapters[idx].title = el.value;
+        saveChapters();
+      }
+      return;
+    }
     if (el.dataset && el.dataset.bind) onBoundInput(el);
   });
   root.addEventListener('change', (e) => {
@@ -1880,6 +2125,11 @@ function bindEvents() {
     if (k === 'h') wordAction('hide');
     else if (k === 'e') wordAction('emph');
     else if (k === 'b') wordAction('break');
+    else if (k === 's') wordAction('speaker');
+    else if (k === 'delete' || k === 'backspace') {
+      const w = S.words[S.sel];
+      if (w) executeTimelineRippleCut([{ start: w.start, end: w.end, label: w.text }], `Cut "${w.text}"`);
+    }
     else if (k === 'enter') { S.editing = S.sel; renderTranscriptList(); }
     else if (k === 'arrowright' || k === 'arrowleft') {
       const nextIdx = clamp(S.sel + (k === 'arrowright' ? 1 : -1), 0, S.words.length - 1);
@@ -2083,10 +2333,173 @@ function onAction(act, el) {
     case 'redo': redo(); break;
     case 'w-hide': wordAction('hide'); break;
     case 'w-emph': wordAction('emph'); break;
+    case 'w-speaker': wordAction('speaker'); break;
     case 'w-break': wordAction('break'); break;
     case 'w-earlier': wordAction('earlier'); break;
     case 'w-later': wordAction('later'); break;
     case 'w-edit': S.editing = S.sel; renderTranscriptList(); break;
+    case 'w-apply-emoji': {
+      const idx = Number(el.dataset.i);
+      const emoji = el.dataset.emoji;
+      if (S.words[idx] && emoji) {
+        snapshot();
+        S.words[idx].emoji = emoji;
+        wordsChanged();
+        setStatus(`Attached ${emoji} to "${S.words[idx].text}"`, 'ok');
+      }
+      break;
+    }
+    case 'w-remove-emoji': {
+      const idx = Number(el.dataset.i);
+      if (S.words[idx]) {
+        snapshot();
+        delete S.words[idx].emoji;
+        wordsChanged();
+        setStatus('Removed emoji.', 'info');
+      }
+      break;
+    }
+    case 'apply-all-emojis': {
+      const suggestions = findAllSuggestions(S.words);
+      if (!suggestions.length) { setStatus('No emoji suggestions found.', 'info'); break; }
+      snapshot();
+      suggestions.forEach((s) => {
+        if (S.words[s.index]) S.words[s.index].emoji = s.emoji;
+      });
+      wordsChanged();
+      setStatus(`Applied ${suggestions.length} emojis to keywords!`, 'ok');
+      break;
+    }
+    case 'w-custom-emoji': {
+      const w = S.words[S.sel];
+      if (!w) break;
+      const val = prompt('Enter an emoji for this word (e.g. 🔥, 💰, 🚀, or leave empty to clear):', w.emoji || '');
+      if (val !== null) {
+        snapshot();
+        if (val.trim()) w.emoji = val.trim();
+        else delete w.emoji;
+        wordsChanged();
+      }
+      break;
+    }
+    case 'save-user-preset': {
+      const name = (prompt('Enter a name for this custom preset:', 'My Look') || '').trim();
+      if (!name) break;
+      const created = saveUserPreset({
+        name,
+        style: S.settings.style,
+        motion: S.settings.motion,
+        grouping: S.settings.grouping,
+        layout: S.settings.layout,
+      });
+      if (created) {
+        S.settings.preset = created.id;
+        renderBody();
+        setStatus(`Saved preset "${name}"!`, 'ok');
+      }
+      break;
+    }
+    case 'del-preset': {
+      const id = el && el.dataset.id;
+      if (id && confirm('Delete this custom preset?')) {
+        deleteUserPreset(id);
+        if (S.settings.preset === id) S.settings.preset = 'clean';
+        renderBody();
+        setStatus('Preset deleted.', 'info');
+      }
+      break;
+    }
+    case 'w-cut': {
+      const w = S.words[S.sel];
+      if (w) executeTimelineRippleCut([{ start: w.start, end: w.end, label: w.text }], `Cut "${w.text}"`);
+      break;
+    }
+    case 'clean-fillers': {
+      const fillers = M.findFillerRanges(S.words);
+      if (!fillers.length) { setStatus('No filler words detected.', 'info'); break; }
+      const ranges = fillers.map((f) => ({ start: f.start, end: f.end, label: f.text }));
+      executeTimelineRippleCut(ranges, `Removed ${ranges.length} filler words`);
+      break;
+    }
+    case 'trim-silence': {
+      const silences = M.findSilenceRanges(S.words, 0.6, 0.2);
+      if (!silences.length) { setStatus('No long pauses detected to tighten.', 'info'); break; }
+      const ranges = silences.map((s) => ({ start: s.start, end: s.end, label: s.label }));
+      const saved = silences.reduce((acc, s) => acc + s.saved, 0);
+      executeTimelineRippleCut(ranges, `Tightened ${ranges.length} pauses (${fmtTime(saved)} saved)`);
+      break;
+    }
+    case 'detect-chapters': {
+      if (!S.words || !S.words.length) {
+        setStatus('No transcript words available to detect chapters.', 'info');
+        break;
+      }
+      S.chapters = autoDetectChapters(S.words);
+      saveChapters();
+      renderBody();
+      setStatus(`Auto-detected ${S.chapters.length} chapters from transcript.`, 'ok');
+      break;
+    }
+    case 'add-chapter': {
+      const t = Math.round((S.t || 0) * 10) / 10;
+      if (!S.chapters) S.chapters = [];
+      const title = 'Chapter ' + (S.chapters.length + 1);
+      S.chapters.push({ time: t, title });
+      S.chapters.sort((a, b) => a.time - b.time);
+      saveChapters();
+      renderBody();
+      setStatus(`Added chapter at ${fmtTimestamp(t)}.`, 'ok');
+      break;
+    }
+    case 'del-chapter': {
+      const idx = el && Number(el.dataset.idx);
+      if (S.chapters && idx != null && S.chapters[idx]) {
+        S.chapters.splice(idx, 1);
+        saveChapters();
+        renderBody();
+      }
+      break;
+    }
+    case 'clear-chapters': {
+      S.chapters = [];
+      saveChapters();
+      renderBody();
+      setStatus('Cleared all chapters.', 'info');
+      break;
+    }
+    case 'seek-chapter': {
+      const t = el && parseFloat(el.dataset.t);
+      if (t != null && !isNaN(t)) {
+        setPlaying(false);
+        seek(t + 0.001);
+      }
+      break;
+    }
+    case 'copy-chapters': {
+      if (!S.chapters || !S.chapters.length) {
+        setStatus('No chapters to copy.', 'info');
+        break;
+      }
+      const text = formatSocialChapters(S.chapters, 'youtube');
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text);
+        } else {
+          const ta = document.createElement('textarea');
+          ta.value = text;
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+        }
+        setStatus(`Copied ${S.chapters.length} YouTube chapters to clipboard!`, 'ok');
+      } catch (e) {
+        setStatus('Could not copy to clipboard: ' + formatUserError(e), 'error');
+      }
+      break;
+    }
+    case 'send-markers': sendTimelineMarkers(); break;
+    case 'import-markers': importTimelineMarkers(); break;
     default: break;
   }
 }

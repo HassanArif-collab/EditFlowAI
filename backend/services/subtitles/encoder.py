@@ -26,6 +26,8 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ...utils.subprocess_utils import popen_silent
+
 logger = logging.getLogger(__name__)
 
 OP_FRAME = 1
@@ -136,7 +138,7 @@ def start(ffmpeg: str, out_path: Path, width: int, height: int, band_y: int, ban
     out_path.parent.mkdir(parents=True, exist_ok=True)
     check_and_prune_disk_space(out_path.parent, min_mb=250, auto_prune=False)
     cmd = build_command(ffmpeg, width, height, band_y, band_h, fps_num, fps_den, out_path, codec)
-    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+    proc = popen_silent(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
                             stderr=subprocess.PIPE, bufsize=0)
     job = EncodeJob(id=uuid.uuid4().hex[:12], path=out_path, width=width, height=height,
                     band_y=band_y, band_h=band_h, fps_num=fps_num, fps_den=fps_den, proc=proc)

@@ -352,3 +352,456 @@ test('RTL layout: Urdu and Arabic text is laid out right-to-left', () => {
   assert.ok(firstWord.x > secondWord.x, `RTL: first word x (${firstWord.x}) must be > second word x (${secondWord.x})`);
 });
 
+test('displayText: Title Case formats properly and handles apostrophes and punctuation', () => {
+  assert.equal(M.displayText('make every word count', { textCase: 'title' }), 'Make Every Word Count');
+  assert.equal(M.displayText('HELLO WORLD', { textCase: 'title' }), 'Hello World');
+  assert.equal(M.displayText("you'll love this video", { textCase: 'title' }), "You'll Love This Video");
+  assert.equal(M.displayText('fast-paced action', { textCase: 'title' }), 'Fast-Paced Action');
+  assert.equal(M.displayText('(secret tip)', { textCase: 'title' }), '(Secret Tip)');
+});
+
+test('groupWords: maxWords controls retention cadence (1-word pop vs 2-3 words)', () => {
+  const ws = words('make@0-0.3 every@0.3-0.6 word@0.6-0.9 count@0.9-1.2');
+  const g1 = group(ws, { maxWords: 1 });
+  assert.equal(g1.length, 4, 'maxWords: 1 produces 4 single-word captions');
+  assert.deepEqual(g1.map(g => g.words.map(w => w.text).join(' ')), ['make', 'every', 'word', 'count']);
+
+  const g2 = group(ws, { maxWords: 2 });
+  assert.equal(g2.length, 2, 'maxWords: 2 produces 2 captions');
+  assert.deepEqual(g2.map(g => g.words.map(w => w.text).join(' ')), ['make every', 'word count']);
+});
+
+test('presets: viral presets are valid with signature styling and motion', () => {
+  const P = loadEsm(path.resolve(__dirname, '..', 'cep-panel', 'client', 'src', 'captions', 'presets.js'));
+  const viralIds = ['hormozi', 'mrbeast', 'ali_abdaal', 'urdu_nastaliq', 'neon_cyber'];
+  for (const id of viralIds) {
+    const p = P.findPreset(id);
+    assert.ok(p, `Preset ${id} must exist in PRESETS`);
+    assert.ok(p.name, `Preset ${id} has a display name`);
+    assert.ok(p.style && p.style.fontFamily, `Preset ${id} has valid style and fontFamily`);
+    assert.ok(p.motion && p.motion.preset, `Preset ${id} has valid motion preset`);
+    if (p.motion.easing) {
+      assert.ok(M.EASINGS[p.motion.easing], `Easing ${p.motion.easing} in preset ${id} must exist in EASINGS`);
+    }
+  }
+});
+
+test('findFillerRanges: detects verbal filler words', () => {
+  const ws = [
+    { text: 'Hello', start: 0, end: 0.5 },
+    { text: 'um', start: 0.8, end: 1.1 },
+    { text: 'world', start: 1.5, end: 2.0 },
+    { text: 'uh', start: 2.2, end: 2.5 },
+  ];
+  const fillers = M.findFillerRanges(ws);
+  assert.equal(fillers.length, 2);
+  assert.equal(fillers[0].text, 'um');
+  assert.equal(fillers[1].text, 'uh');
+});
+
+test('findSilenceRanges: detects long pauses and computes target tightening cut', () => {
+  const ws = [
+    { text: 'First', start: 0, end: 1.0 },
+    // 2.0s pause from 1.0s to 3.0s
+    { text: 'second', start: 3.0, end: 4.0 },
+  ];
+  const silences = M.findSilenceRanges(ws, 0.6, 0.2);
+  assert.equal(silences.length, 1);
+  assert.equal(silences[0].start, 1.2); // 1.0 + 0.2 target pause
+  assert.equal(silences[0].end, 3.0);
+  assert.equal(silences[0].saved, 1.8);
+});
+
+test('applyRippleDeletesToWords: excises words and shifts subsequent timestamps in sync with timeline', () => {
+  const ws = [
+    { text: 'Hello', start: 0, end: 1.0 },
+    { text: 'um', start: 2.0, end: 2.5 },
+    { text: 'world', start: 4.0, end: 5.0 },
+    { text: 'uh', start: 6.0, end: 6.5 },
+    { text: 'again', start: 8.0, end: 9.0 },
+  ];
+  const ranges = [
+    { start: 2.0, end: 2.5 }, // 0.5s cut
+    { start: 6.0, end: 6.5 }, // 0.5s cut
+  ];
+  const updated = M.applyRippleDeletesToWords(ws, ranges);
+  assert.equal(updated.length, 3);
+  assert.equal(updated[0].text, 'Hello');
+  assert.equal(updated[0].start, 0);
+  assert.equal(updated[0].end, 1.0);
+
+  assert.equal(updated[1].text, 'world');
+  assert.equal(updated[1].start, 3.5); // 4.0 - 0.5
+  assert.equal(updated[1].end, 4.5);
+
+  assert.equal(updated[2].text, 'again');
+  assert.equal(updated[2].start, 7.0); // 8.0 - 1.0
+  assert.equal(updated[2].end, 8.0);
+});
+
+test('user presets: CRUD functions load, save, delete, and list custom presets', () => {
+  const store = {};
+  global.localStorage = {
+    getItem: (k) => store[k] || null,
+    setItem: (k, v) => { store[k] = String(v); },
+    removeItem: (k) => { delete store[k]; },
+  };
+
+  const P = loadEsm(path.resolve(__dirname, '..', 'cep-panel', 'client', 'src', 'captions', 'presets.js'), { localStorage: global.localStorage });
+
+  assert.deepEqual(P.loadUserPresets(), []);
+
+  const saved = P.saveUserPreset({
+    name: 'Neon Brand',
+    style: { fontFamily: 'Montserrat', color: '#ff00ff' },
+    motion: { preset: 'pop' },
+  });
+
+  assert.ok(saved && saved.id, 'New preset has generated ID');
+  assert.equal(saved.name, 'Neon Brand');
+  assert.equal(saved.isUser, true);
+
+  const list = P.loadUserPresets();
+  assert.equal(list.length, 1);
+  assert.equal(list[0].id, saved.id);
+
+  const found = P.findPreset(saved.id);
+  assert.ok(found, 'findPreset resolves custom user preset');
+  assert.equal(found.name, 'Neon Brand');
+
+  const all = P.getAllPresets();
+  assert.equal(all.length, P.PRESETS.length + 1);
+
+  const deleted = P.deleteUserPreset(saved.id);
+  assert.equal(deleted, true);
+  assert.equal(P.loadUserPresets().length, 0);
+  assert.equal(P.findPreset(saved.id), null);
+});
+
+test('multi-speaker: sanitizeWords preserves speaker tag and buildScene attaches speaker to words', () => {
+  const raw = [
+    { text: 'Host speaking', start: 0, end: 1.0, speaker: 0 },
+    { text: 'Guest reply', start: 1.2, end: 2.2, speaker: 1 },
+  ];
+  const sanitized = M.sanitizeWords(raw);
+  assert.equal(sanitized[0].speaker, 0);
+  assert.equal(sanitized[1].speaker, 1);
+
+  const sc = M.buildScene(sanitized, {}, env());
+  assert.ok(sc.captions.length > 0);
+  const allSceneWords = [];
+  sc.captions.forEach((c) => c.lines.forEach((l) => l.words.forEach((w) => allSceneWords.push(w))));
+  assert.equal(allSceneWords[0].speaker, 0);
+  assert.equal(allSceneWords[1].speaker, 1);
+});
+
+test('Urdu / Nastaliq: buildScene applies enhanced calligraphy clearance when RTL text is present', () => {
+  const latinWords = [{ text: 'Hello', start: 0, end: 0.5 }, { text: 'world', start: 0.6, end: 1.0 }];
+  const urduWords = [{ text: 'خوش', start: 0, end: 0.5 }, { text: 'آمدید', start: 0.6, end: 1.0 }];
+
+  const latinScene = M.buildScene(latinWords, {}, { width: 1080, height: 1920, fps: { num: 30, den: 1 } });
+  const urduScene = M.buildScene(urduWords, {}, { width: 1080, height: 1920, fps: { num: 30, den: 1 } });
+
+  const fontSize = 80;
+  assert.equal(latinScene.captions[0].ascent, fontSize * 0.78);
+  assert.equal(latinScene.captions[0].descent, fontSize * 0.22);
+
+  // Urdu Nastaliq has higher vertical span for ligatures and diacritics
+  assert.equal(urduScene.captions[0].ascent, fontSize * 0.92);
+  assert.equal(urduScene.captions[0].descent, fontSize * 0.38);
+});
+
+test('safe zones: platform safety guides and title safe geometry are defined', () => {
+  const SZ = loadEsm(path.resolve(__dirname, '..', 'cep-panel', 'client', 'src', 'captions', 'safe-zones.js'));
+  assert.ok(SZ.SAFE_ZONES.tiktok, 'TikTok safe zone exists');
+  assert.ok(SZ.SAFE_ZONES.reels, 'Reels safe zone exists');
+  assert.ok(SZ.SAFE_ZONES.shorts, 'Shorts safe zone exists');
+  assert.ok(SZ.SAFE_ZONES.title, 'Title safe zone exists');
+
+  // Title safe is 90% (5% margin each side)
+  const title = SZ.SAFE_ZONES.title;
+  assert.equal(title.unsafe.length, 4);
+
+  // A box at the very bottom edge intersects TikTok unsafe area
+  const bottomBox = { x: 0.2, y: 0.92, w: 0.6, h: 0.05 };
+  const hits = SZ.boxIntersectsUnsafe('tiktok', bottomBox);
+  assert.ok(hits.length > 0, 'Bottom caption intersects TikTok nav bar');
+
+  // A box centered at y=0.5, w=0.5 does not intersect
+  const safeBox = { x: 0.25, y: 0.5, w: 0.5, h: 0.1 };
+  assert.equal(SZ.boxIntersectsUnsafe('tiktok', safeBox).length, 0);
+});
+
+test('renderer: gradients, active glow, speaker colors, and rotation render cleanly', () => {
+  const R = loadEsm(path.resolve(__dirname, '..', 'cep-panel', 'client', 'src', 'captions', 'render.js'), M);
+
+  assert.equal(R.STYLE_DEFAULTS.gradient, false);
+  assert.equal(R.STYLE_DEFAULTS.activeGlow, false);
+  assert.equal(R.STYLE_DEFAULTS.speakerColoring, false);
+  assert.ok(Array.isArray(R.STYLE_DEFAULTS.speakerColors));
+
+  // Mock canvas 2D context
+  const mockCtx = {
+    canvas: { width: 540, height: 960 },
+    save() {},
+    restore() {},
+    setTransform() {},
+    clearRect() {},
+    translate() {},
+    rotate() {},
+    scale() {},
+    beginPath() {},
+    moveTo() {},
+    lineTo() {},
+    arcTo() {},
+    closePath() {},
+    fill() {},
+    stroke() {},
+    fillText() {},
+    strokeText() {},
+    createLinearGradient() {
+      return { addColorStop() {} };
+    },
+  };
+
+  const ws = [
+    { text: 'One', start: 0, end: 0.5, speaker: 0 },
+    { text: 'Two', start: 0.5, end: 1.0, speaker: 1 },
+  ];
+  const sc = M.buildScene(ws, {}, env());
+
+  const settings = {
+    style: {
+      gradient: true,
+      gradientColor: '#ffea00',
+      activeGlow: true,
+      activeGlowColor: '#00f0ff',
+      activeGlowBlur: 20,
+      speakerColoring: true,
+      speakerColors: ['#ffffff', '#00f0ff'],
+    },
+    motion: { preset: 'pop', highlight: 'color' },
+    layout: { rotation: 4.5 },
+  };
+
+  // Rendering frame at t=0.2 (word 1 active)
+  const drawn = R.drawFrame(mockCtx, sc, settings, 0.2, { scale: 0.5 });
+  assert.equal(drawn, 1);
+
+  // Band calculation with rotation & glow pad
+  const bandWithoutRot = R.captionBand(sc, { style: { strokeWidth: 0 }, layout: { rotation: 0 } });
+  const bandWithRot = R.captionBand(sc, { style: { strokeWidth: 0 }, layout: { rotation: 10 } });
+  assert.ok(bandWithRot.h >= bandWithoutRot.h, 'Tilted caption band has height headroom');
+});
+
+test('emojis: keyword matching, stemming, and custom user mappings', () => {
+  const store = {};
+  const mockStorage = {
+    getItem: (k) => store[k] || null,
+    setItem: (k, v) => { store[k] = String(v); },
+    removeItem: (k) => { delete store[k]; },
+  };
+
+  const E = loadEsm(path.resolve(__dirname, '..', 'cep-panel', 'client', 'src', 'captions', 'emojis.js'), { localStorage: mockStorage });
+
+  // Direct keyword matching
+  assert.equal(E.getEmojiSuggestion('money'), '💰');
+  assert.equal(E.getEmojiSuggestion('fire'), '🔥');
+  assert.equal(E.getEmojiSuggestion('rocket'), '🚀');
+  assert.equal(E.getEmojiSuggestion('brain'), '🧠');
+
+  // Punctuation and case normalization
+  assert.equal(E.getEmojiSuggestion('Money!'), '💰');
+  assert.equal(E.getEmojiSuggestion('"GROWTH"'), '🚀');
+  assert.equal(E.getEmojiSuggestion('secret...'), '🤫');
+
+  // Stemming & plural/possessive normalization
+  assert.equal(E.getEmojiSuggestion('dollars'), '💵');
+  assert.equal(E.getEmojiSuggestion("dollar's"), '💵');
+  assert.equal(E.getEmojiSuggestion('growing'), '🌱');
+
+  // Non-keywords return null
+  assert.equal(E.getEmojiSuggestion('the'), null);
+  assert.equal(E.getEmojiSuggestion('and'), null);
+  assert.equal(E.getEmojiSuggestion('xyzabc123'), null);
+
+  // Scan word list
+  const words = [
+    { text: 'How', start: 0, end: 0.5 },
+    { text: 'to', start: 0.5, end: 0.8 },
+    { text: 'make', start: 0.8, end: 1.1 },
+    { text: 'money', start: 1.1, end: 1.6 },
+    { text: 'fast', start: 1.6, end: 2.0 },
+  ];
+  const suggestions = E.findAllSuggestions(words);
+  assert.equal(suggestions.length, 2);
+  assert.equal(suggestions[0].word, 'money');
+  assert.equal(suggestions[0].emoji, '💰');
+  assert.equal(suggestions[1].word, 'fast');
+  assert.equal(suggestions[1].emoji, '⚡');
+
+  // Custom user mappings override
+  E.saveCustomEmoji('coding', '💻');
+  assert.equal(E.getEmojiSuggestion('coding'), '💻');
+  E.deleteCustomEmoji('coding');
+  assert.equal(E.getEmojiSuggestion('coding'), null);
+});
+
+test('emojis: model preserves emoji and applies inline vs above layout headroom', () => {
+  const raw = [
+    { text: 'Huge', start: 0, end: 0.5 },
+    { text: 'profit', start: 0.5, end: 1.0, emoji: '📈' },
+  ];
+  const sanitized = M.sanitizeWords(raw);
+  assert.equal(sanitized[1].emoji, '📈');
+
+  // Above placement (default)
+  const scAbove = M.buildScene(sanitized, { style: { emojiPlacement: 'above', emojiScale: 1.0 } }, env());
+  const capAbove = scAbove.captions[0];
+  const profitAbove = capAbove.lines[0].words[1];
+  assert.equal(profitAbove.emoji, '📈');
+  assert.equal(profitAbove.text, 'profit'); // text stays clean
+
+  // Inline placement
+  const scInline = M.buildScene(sanitized, { style: { emojiPlacement: 'inline' } }, env());
+  const profitInline = scInline.captions[0].lines[0].words[1];
+  assert.equal(profitInline.text, 'profit 📈'); // emoji rendered directly inline
+
+  // Floating emoji allocates headroom in caption band
+  const R = loadEsm(path.resolve(__dirname, '..', 'cep-panel', 'client', 'src', 'captions', 'render.js'), M);
+  const bandNormal = R.captionBand(scAbove, { style: { emojiPlacement: 'inline' } });
+  const bandWithEmojiAbove = R.captionBand(scAbove, { style: { emojiPlacement: 'above', emojiScale: 1.0 } });
+  assert.ok(bandWithEmojiAbove.h > bandNormal.h, 'Floating emoji expands caption band headroom');
+});
+
+test('chapters: formatting, parsing, and YouTube compliance validation', () => {
+  const CH = loadEsm(path.resolve(__dirname, '..', 'cep-panel', 'client', 'src', 'captions', 'chapters.js'));
+
+  // 1. Timestamp formatting
+  assert.equal(CH.fmtTimestamp(0), '00:00');
+  assert.equal(CH.fmtTimestamp(84), '01:24');
+  assert.equal(CH.fmtTimestamp(3665), '01:01:05');
+  assert.equal(CH.fmtTimestamp(84, true), '00:01:24');
+  assert.equal(CH.fmtTimestamp(-5), '00:00');
+
+  // 2. Timestamp parsing
+  assert.equal(CH.parseTimestamp('00:00'), 0);
+  assert.equal(CH.parseTimestamp('0:00'), 0);
+  assert.equal(CH.parseTimestamp('01:24'), 84);
+  assert.equal(CH.parseTimestamp('[01:24]'), 84);
+  assert.equal(CH.parseTimestamp('01:05:20'), 3920);
+  assert.equal(CH.parseTimestamp('invalid'), null);
+
+  // 3. Social chapter formatting
+  const sample = [
+    { time: 0, title: 'Introduction' },
+    { time: 84, title: 'The Problem' },
+    { time: 215, title: 'How It Works' },
+  ];
+  const ytText = CH.formatSocialChapters(sample, 'youtube');
+  assert.equal(ytText, '00:00 Introduction\n01:24 The Problem\n03:35 How It Works');
+
+  const bracketText = CH.formatSocialChapters(sample, 'brackets');
+  assert.equal(bracketText, '[00:00] Introduction\n[01:24] The Problem\n[03:35] How It Works');
+
+  const hyphenText = CH.formatSocialChapters(sample, 'hyphen');
+  assert.equal(hyphenText, '00:00 - Introduction\n01:24 - The Problem\n03:35 - How It Works');
+
+  // 4. Parsing pasted chapters
+  const pasted = `
+    Here are the chapters:
+    00:00 Introduction
+    01:24 The Problem
+    [03:35] - How It Works
+  `;
+  const parsed = CH.parseSocialChapters(pasted);
+  assert.equal(parsed.length, 3);
+  assert.equal(parsed[0].time, 0);
+  assert.equal(parsed[0].title, 'Introduction');
+  assert.equal(parsed[1].time, 84);
+  assert.equal(parsed[1].title, 'The Problem');
+  assert.equal(parsed[2].time, 215);
+  assert.equal(parsed[2].title, 'How It Works');
+
+  // 5. YouTube Validation
+  const validCheck = CH.validateYouTubeChapters(sample);
+  assert.ok(validCheck.valid, 'Valid chapters set passes YouTube check');
+  assert.equal(validCheck.errors.length, 0);
+
+  // Bad check: doesn't start at 0
+  const badStart = CH.validateYouTubeChapters([
+    { time: 15, title: 'Start' },
+    { time: 35, title: 'Middle' },
+    { time: 55, title: 'End' },
+  ]);
+  assert.ok(!badStart.valid);
+  assert.ok(badStart.errors[0].includes('00:00'));
+
+  // Bad check: fewer than 3 chapters
+  const tooFew = CH.validateYouTubeChapters([
+    { time: 0, title: 'Intro' },
+    { time: 30, title: 'Outro' },
+  ]);
+  assert.ok(!tooFew.valid);
+  assert.ok(tooFew.errors[0].includes('at least 3 chapters'));
+
+  // Bad check: less than 10s gap
+  const tooClose = CH.validateYouTubeChapters([
+    { time: 0, title: 'Intro' },
+    { time: 5, title: 'Next' },
+    { time: 40, title: 'End' },
+  ]);
+  assert.ok(!tooClose.valid);
+  assert.ok(tooClose.errors[0].includes('less than 10 seconds'));
+});
+
+test('chapters: autoDetectChapters extracts topics from hooks, pauses, and speakers', () => {
+  const CH = loadEsm(path.resolve(__dirname, '..', 'cep-panel', 'client', 'src', 'captions', 'chapters.js'));
+
+  const words = [
+    { text: 'Welcome', start: 0.0, end: 0.5, speaker: 'Host' },
+    { text: 'to', start: 0.5, end: 0.7, speaker: 'Host' },
+    { text: 'the', start: 0.7, end: 0.9, speaker: 'Host' },
+    { text: 'video.', start: 0.9, end: 1.4, speaker: 'Host' },
+
+    // Hook at 16s: "The problem is..."
+    { text: 'The', start: 16.0, end: 16.3, speaker: 'Host' },
+    { text: 'problem', start: 16.3, end: 16.8, speaker: 'Host' },
+    { text: 'is', start: 16.8, end: 17.0, speaker: 'Host' },
+    { text: 'most', start: 17.0, end: 17.3, speaker: 'Host' },
+    { text: 'editors', start: 17.3, end: 17.8, speaker: 'Host' },
+    { text: 'waste', start: 17.8, end: 18.2, speaker: 'Host' },
+    { text: 'hours.', start: 18.2, end: 18.8, speaker: 'Host' },
+
+    // Hook at 35s: "How it works..."
+    { text: 'How', start: 35.0, end: 35.3, speaker: 'Host' },
+    { text: 'it', start: 35.3, end: 35.5, speaker: 'Host' },
+    { text: 'works', start: 35.5, end: 36.0, speaker: 'Host' },
+    { text: 'is', start: 36.0, end: 36.2, speaker: 'Host' },
+    { text: 'very', start: 36.2, end: 36.5, speaker: 'Host' },
+    { text: 'simple.', start: 36.5, end: 37.0, speaker: 'Host' },
+
+    // Conclusion at 55s: "In conclusion..."
+    { text: 'In', start: 55.0, end: 55.3, speaker: 'Guest' },
+    { text: 'conclusion', start: 55.3, end: 56.0, speaker: 'Guest' },
+    { text: 'this', start: 56.0, end: 56.3, speaker: 'Guest' },
+    { text: 'saves', start: 56.3, end: 56.7, speaker: 'Guest' },
+    { text: 'time.', start: 56.7, end: 57.2, speaker: 'Guest' },
+  ];
+
+  const chapters = CH.autoDetectChapters(words, { minChapterDuration: 10 });
+  assert.ok(chapters.length >= 4, 'Detected at least 4 chapters');
+  assert.equal(chapters[0].time, 0);
+  assert.equal(chapters[0].title, 'Introduction');
+
+  // Verify hook chapters detected
+  assert.ok(chapters.some((c) => c.title === 'The Problem' && c.time === 16.0));
+  assert.ok(chapters.some((c) => c.title === 'How It Works' && c.time === 35.0));
+  assert.ok(chapters.some((c) => c.title === 'Conclusion' && c.time === 55.0));
+
+  // YouTube validation on detected chapters
+  const valid = CH.validateYouTubeChapters(chapters);
+  assert.ok(valid.valid, 'Auto-detected chapters are fully YouTube compliant');
+});
+
+

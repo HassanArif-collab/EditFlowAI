@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from ..config import get_settings
+from .subprocess_utils import run_silent
 
 
 # ── Async wrappers ──
@@ -26,7 +27,7 @@ async def run_ffmpeg_async(
     subprocess.run() inside an `async def` freezes the entire uvicorn worker.
     """
     return await asyncio.to_thread(
-        subprocess.run,
+        run_silent,
         cmd,
         capture_output=True,
         text=True,
@@ -44,7 +45,7 @@ def probe_video(video_path: str | Path) -> Dict:
         "-show_format", "-show_streams", str(video_path),
     ]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        result = run_silent(cmd, capture_output=True, text=True, timeout=30)
         if result.returncode != 0:
             return {"error": (result.stderr or "ffprobe failed").strip()[:200]}
         return json.loads(result.stdout) if result.stdout else {}
@@ -60,7 +61,7 @@ def get_duration(video_path: str | Path) -> float:
         "-of", "default=noprint_wrappers=1:nokey=1", str(video_path),
     ]
     try:
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=True)
+        out = run_silent(cmd, capture_output=True, text=True, timeout=30, check=True)
         return float(out.stdout.strip())
     except (subprocess.SubprocessError, ValueError, OSError):
         return 0.0
@@ -139,7 +140,7 @@ def extract_frames(
                 "-s", resolution, str(frame_path),
             ]
             try:
-                subprocess.run(
+                run_silent(
                     cmd, stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL, check=True, timeout=30,
                 )
@@ -177,7 +178,7 @@ def extract_audio(
         "-vn", "-acodec", "pcm_s16le", "-ar", str(sample_rate),
         "-ac", "1", str(output_path),
     ]
-    subprocess.run(cmd, check=True, timeout=300)
+    run_silent(cmd, check=True, timeout=300)
     return output_path
 
 

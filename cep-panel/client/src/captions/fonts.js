@@ -100,7 +100,7 @@ export function makeMeasurer(style) {
   const size = style.fontSize || 80;
   const mH = ctx.measureText('H');
   const mg = ctx.measureText('gjpqy');
-  const mUrdu = ctx.measureText('ٹآقےج');
+  const mUrdu = ctx.measureText('ٹآقےجالْحَمْدُ');
   let capH = mH.actualBoundingBoxAscent > 0 ? mH.actualBoundingBoxAscent : size * 0.72;
   if (mUrdu && mUrdu.actualBoundingBoxAscent > capH) capH = mUrdu.actualBoundingBoxAscent;
   let desc = mg.actualBoundingBoxDescent > 0 ? mg.actualBoundingBoxDescent : size * 0.2;

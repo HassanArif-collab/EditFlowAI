@@ -42,6 +42,7 @@ from ..services.media_fingerprint import (
     compute_file_fingerprint,
 )
 from ..utils.ffmpeg_utils import extract_audio
+from ..utils.subprocess_utils import run_silent
 
 logger = logging.getLogger(__name__)
 
@@ -251,7 +252,7 @@ class AudioPrepareService:
             str(output),
         ])
 
-        result = subprocess.run(
+        result = run_silent(
             cmd, capture_output=True, text=True, timeout=120,
         )
         if result.returncode != 0:

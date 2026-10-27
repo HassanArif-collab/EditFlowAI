@@ -14,7 +14,7 @@ export const STYLE_DEFAULTS = {
   fontFamily: 'Montserrat',
   fontWeight: 800,
   fontSize: 80,             // px at the sequence's resolution
-  textCase: 'as_is',        // as_is | upper | lower
+  textCase: 'as_is',        // as_is | upper | title | lower
   punctuation: 'no_dots',   // no_dots | keep | soft | none | custom
   punctCommas: true,
   punctDots: false,
@@ -39,11 +39,24 @@ export const STYLE_DEFAULTS = {
   bgPad: 0.22,              // em
   bgPadY: 0.165,            // em (vertical padding)
   hlBoxColor: '#6d4aff',    // highlight: box
+  gradient: false,          // 2-color vertical linear gradient fill
+  gradientColor: '#ffea00', // bottom color for gradient
+  activeGlow: false,        // neon bloom glow on active word
+  activeGlowColor: '#00f0ff',
+  activeGlowBlur: 16,
+  speakerColoring: false,   // multi-speaker coloring
+  speakerColors: ['#ffffff', '#00f0ff', '#ffd84d', '#ff6b6b'],
+  emojiEnabled: false,      // keyword emojis (default: off)
+  emojiPlacement: 'above',  // above | inline
+  emojiScale: 1.0,          // relative emoji size
 };
 
 export function fontString(style, size) {
   const fam = String(style.fontFamily || 'Montserrat').replace(/"/g, '');
-  return `${style.fontWeight || 700} ${size || style.fontSize || 80}px "${fam}", "Arial Black", Arial, sans-serif`;
+  const fallbacks = /urdu|nastaliq|arabic/i.test(fam)
+    ? '"Noto Nastaliq Urdu", "Urdu Typesetting", "Jameel Noori Nastaliq", "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", Arial, sans-serif'
+    : '"Arial Black", "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", Arial, sans-serif';
+  return `${style.fontWeight || 700} ${size || style.fontSize || 80}px "${fam}", ${fallbacks}`;
 }
 
 /* ── colour helpers ── */
@@ -89,7 +102,7 @@ function fillRound(ctx, x, y, w, h, radiusK, color, alpha) {
 
 /* ── text ── */
 
-function drawText(ctx, text, x, y, color, st, devScale) {
+function drawText(ctx, text, x, y, color, st, devScale, asc, desc) {
   const stroke = st.strokeWidth > 0;
   if (st.shadow && st.shadowOpacity > 0) {
     ctx.shadowColor = rgba(st.shadowColor, st.shadowOpacity);
@@ -105,7 +118,16 @@ function drawText(ctx, text, x, y, color, st, devScale) {
     ctx.strokeText(text, x, y);
     ctx.shadowColor = 'transparent';         // one shadow, under the outline
   }
-  ctx.fillStyle = color;
+  if (st.gradient && st.gradientColor && typeof ctx.createLinearGradient === 'function') {
+    const a = asc || 60;
+    const d = desc || 20;
+    const grad = ctx.createLinearGradient(0, y - a, 0, y + d);
+    grad.addColorStop(0, color);
+    grad.addColorStop(1, st.gradientColor);
+    ctx.fillStyle = grad;
+  } else {
+    ctx.fillStyle = color;
+  }
   ctx.fillText(text, x, y);
   ctx.shadowColor = 'transparent';
 }
@@ -127,23 +149,29 @@ export function drawFrame(ctx, scene, settings, t, opts) {
   if (!caps.length) return 0;
   const st = Object.assign({}, STYLE_DEFAULTS, (settings && settings.style) || {});
   const motion = (settings && settings.motion) || {};
+  const lay = (settings && settings.layout) || {};
   ctx.save();
   ctx.setTransform(sc, 0, 0, sc, 0, -(o.offsetY || 0) * sc);
   ctx.font = fontString(st, scene.fontSize);
   ctx.textBaseline = 'alphabetic';
   ctx.textAlign = 'left';
-  for (const c of caps) drawCaption(ctx, c, scene, st, motion, t, sc);
+  for (const c of caps) drawCaption(ctx, c, scene, st, motion, lay, t, sc);
   ctx.restore();
   return caps.length;
 }
 
-function drawCaption(ctx, c, scene, st, motion, t, sc) {
+function drawCaption(ctx, c, scene, st, motion, lay, t, sc) {
   const fs = scene.fontSize;
   const mode = highlightMode(motion);
   const asc = c.ascent, desc = c.descent;
   const pad = (st.bgPad != null ? st.bgPad : 0.22) * fs;
   const padY = st.bgPadY != null ? st.bgPadY * fs : pad * 0.75;
   ctx.save();
+  if (lay && lay.rotation) {
+    ctx.translate(c.cx, c.cy);
+    ctx.rotate((lay.rotation * Math.PI) / 180);
+    ctx.translate(-c.cx, -c.cy);
+  }
   if (c.fit < 1) { ctx.translate(c.cx, c.cy); ctx.scale(c.fit, c.fit); ctx.translate(-c.cx, -c.cy); }
   const devScale = sc * c.fit;
 
@@ -151,7 +179,7 @@ function drawCaption(ctx, c, scene, st, motion, t, sc) {
   // with the first word; caption presets fade it with the text.
   const first = c.lines[0].words[0];
   const bgK = WORD_LEVEL[motion.preset || 'fade_up']
-    ? clamp01((t - c.tIn) / 0.12) * exitFactor(c, t)
+  ? clamp01((t - c.tIn) / 0.12) * exitFactor(c, t)
     : wordState(t, first, c, motion, fs).alpha;
 
   if (st.background === 'box' || st.background === 'block') {
@@ -185,6 +213,10 @@ function drawCaption(ctx, c, scene, st, motion, t, sc) {
       if (!text) continue;
 
       let color = st.color;
+      if (st.speakerColoring && Array.isArray(st.speakerColors) && st.speakerColors.length > 0) {
+        const spkIdx = (w.speaker != null && isFinite(w.speaker)) ? Math.max(0, Math.floor(w.speaker)) : 0;
+        color = st.speakerColors[spkIdx % st.speakerColors.length] || st.color;
+      }
       const emph = w.emphasis;
       if (emph && (st.emphasis === 'color' || st.emphasis === 'both')) color = st.emphasisColor;
       if (s.hi > 0 && mode === 'color') color = mixHex(color, st.activeColor, s.hi);
@@ -207,7 +239,28 @@ function drawCaption(ctx, c, scene, st, motion, t, sc) {
       ctx.globalAlpha = alpha;
       ctx.translate(ox, cy);
       if (scale !== 1) ctx.scale(scale, scale);
-      drawText(ctx, text, -w.w / 2, (asc - desc) / 2, color, st, devScale * scale);
+      if (st.activeGlow && s.hi > 0) {
+        ctx.save();
+        ctx.shadowColor = st.activeGlowColor || '#00f0ff';
+        ctx.shadowBlur = (st.activeGlowBlur || 16) * s.hi;
+        ctx.shadowOffsetX = 0;
+        ctx.shadowOffsetY = 0;
+        ctx.fillStyle = st.activeGlowColor || '#00f0ff';
+        ctx.fillText(text, -w.w / 2, (asc - desc) / 2);
+        ctx.restore();
+      }
+      if (w.emoji && (st.emojiPlacement || 'above') === 'above') {
+        ctx.save();
+        const emojiSize = Math.max(16, Math.round(fs * (st.emojiScale || 1.0) * 0.72));
+        ctx.font = `${emojiSize}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Segoe UI Symbol", sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'bottom';
+        ctx.shadowColor = 'transparent';
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(w.emoji, 0, -(asc + desc) / 2 - 4);
+        ctx.restore();
+      }
+      drawText(ctx, text, -w.w / 2, (asc - desc) / 2, color, st, devScale * scale, asc, desc);
       ctx.restore();
     }
   }
@@ -222,6 +275,7 @@ function drawCaption(ctx, c, scene, st, motion, t, sc) {
 export function captionBand(scene, settings) {
   const st = Object.assign({}, STYLE_DEFAULTS, (settings && settings.style) || {});
   const m = (settings && settings.motion) || {};
+  const lay = (settings && settings.layout) || {};
   const fs = scene.fontSize;
   let top = Infinity, bot = -Infinity;
   for (const c of scene.captions) {
@@ -234,8 +288,11 @@ export function captionBand(scene, settings) {
   if (!isFinite(top)) return { y: 0, h: 2 };
   const travel = Math.max((m.distance || 0.35) * fs, m.preset === 'bounce' ? 1.0 * fs * (m.intensity || 1) : 0,
     m.preset === 'pop' || m.highlight === 'scale' ? 0.5 * fs : 0);
-  const fx = st.strokeWidth + (st.shadow ? st.shadowBlur * 1.5 + st.shadowDistance : 0) + (st.bgPad || 0.22) * fs + 8;
-  let y = Math.floor(top - travel - fx), h = Math.ceil(bot + travel + fx) - y;
+  const rot = lay.rotation || 0;
+  const rotPad = rot ? Math.abs(Math.sin((rot * Math.PI) / 180)) * (scene.width * 0.45) : 0;
+  const emojiPad = ((st.emojiPlacement || 'above') === 'above') ? (fs * 0.85 * (st.emojiScale || 1.0)) : 0;
+  const fx = st.strokeWidth + (st.shadow ? st.shadowBlur * 1.5 + st.shadowDistance : 0) + (st.activeGlow ? (st.activeGlowBlur || 16) * 1.5 : 0) + (st.bgPad || 0.22) * fs + 16;
+  let y = Math.floor(top - travel - fx - rotPad - emojiPad), h = Math.ceil(bot + travel + fx + rotPad) - y;
   y = Math.max(0, y);
   h = Math.min(scene.height - y, h);
   // even rows: ProRes 4:4:4 is fine with odd sizes, but keep the pad simple

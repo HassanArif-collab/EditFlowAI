@@ -106,7 +106,8 @@ def mix_sequence_audio(ffmpeg: str, clips: list[dict], out_wav: Path, duration: 
     written: list[tuple[int, int]] = []        # sample ranges already filled
     overlaps = 0
     for c in clips:
-        proc = subprocess.run(extract_command(ffmpeg, c), capture_output=True, timeout=600)
+        from ...utils.subprocess_utils import run_silent
+        proc = run_silent(extract_command(ffmpeg, c), capture_output=True, timeout=600)
         if proc.returncode != 0:
             logger.warning("sequence audio: skipped %s: %s", c["path"],
                            proc.stderr.decode("utf-8", errors="replace")[-300:])

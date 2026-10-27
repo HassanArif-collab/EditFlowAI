@@ -6,12 +6,22 @@ trackManager = (function() {
 
     function ensureTracks(seq, requiredVideoTracks, requiredAudioTracks) {
         var added = 0;
-        while (seq.videoTracks.numTracks < requiredVideoTracks) {
-            try { seq.createVideoTrack("Video " + (seq.videoTracks.numTracks + 1)); added++; } catch (e) { break; }
-        }
-        while (seq.audioTracks.numTracks < requiredAudioTracks) {
-            try { seq.createAudioTrack("Audio " + (seq.audioTracks.numTracks + 1)); added++; } catch (e) { break; }
-        }
+        try {
+            if (typeof app.enableQE === 'function') app.enableQE();
+            var qs = (typeof qe !== 'undefined' && qe.project) ? qe.project.getActiveSequence() : null;
+            if (qs && typeof qs.addTracks === 'function') {
+                while (seq.videoTracks.numTracks < requiredVideoTracks) {
+                    var curV = seq.videoTracks.numTracks;
+                    qs.addTracks(1, curV, 0, 0, 0);
+                    added++;
+                }
+                while (seq.audioTracks.numTracks < requiredAudioTracks) {
+                    var curA = seq.audioTracks.numTracks;
+                    qs.addTracks(0, 0, 1, 2, curA);
+                    added++;
+                }
+            }
+        } catch (e) {}
         return added;
     }
 

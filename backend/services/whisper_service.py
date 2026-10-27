@@ -30,6 +30,7 @@ from ..models.schemas import TranscriptResult, TranscriptSegment, TranscriptWord
 from ..services.media_fingerprint import compute_file_fingerprint
 from ..utils.ffmpeg_utils import extract_audio
 from ..utils.progress import ProgressReporter, manager as _ws_manager
+from ..utils.subprocess_utils import run_silent
 
 logger = logging.getLogger(__name__)
 
@@ -405,7 +406,7 @@ class WhisperService:
             pass
         try:
             import subprocess
-            p = subprocess.run(
+            p = run_silent(
                 ["nvidia-smi", "--query-gpu=memory.free,memory.total", "--format=csv,noheader,nounits"],
                 capture_output=True, text=True, timeout=2,
             )
@@ -582,7 +583,7 @@ class WhisperService:
                 if not gpu_name:
                     import subprocess
                     try:
-                        p = subprocess.run(
+                        p = run_silent(
                             ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
                             capture_output=True, text=True, timeout=2,
                         )

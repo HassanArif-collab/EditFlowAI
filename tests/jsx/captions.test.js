@@ -40,12 +40,45 @@ function makeHost(overrides = {}) {
     ProjectItemType: { BIN: 1 },
   };
   host.app.project.activeSequence = {
+    timebase: '8475533333',
+    setInPoint(v) { host.seqIn = v; },
+    setOutPoint(v) { host.seqOut = v; },
+    clearInPoint() { host.seqIn = null; },
+    clearOutPoint() { host.seqOut = null; },
     createCaptionTrack(item) {
       if (host.failCaption) throw new Error('not a function in this build');
       host.captionCreated = item;
       return 'TRACK_OK';
     },
+    markers: {
+      createMarker(timeInSec) {
+        const m = {
+          start: timeInSec,
+          name: '',
+          comments: '',
+          color: 0,
+          type: 'Standard',
+          setColorByIndex(c) { m.color = c; },
+          setTypeAsChapter() { m.type = 'Chapter'; },
+        };
+        markerList.push(m);
+        return m;
+      },
+      deleteMarker(m) {
+        const idx = markerList.indexOf(m);
+        if (idx !== -1) markerList.splice(idx, 1);
+      },
+      getFirstMarker() {
+        return markerList[0] || null;
+      },
+      getNextMarker(cur) {
+        const idx = markerList.indexOf(cur);
+        return (idx >= 0 && idx < markerList.length - 1) ? markerList[idx + 1] : null;
+      },
+    },
   };
+  const markerList = [];
+  host.markerList = markerList;
   Object.assign(host, overrides);
   return host;
 }
@@ -117,6 +150,26 @@ function loadEngine(host) {
     ProjectItemType: host.ProjectItemType,
     qe: undefined,
   };
+  if (!host.app.enableQE) {
+    host.app.enableQE = function() {
+      sandbox.qe = sandbox.qe || {
+        project: {
+          getActiveSequence() {
+            return {
+              setInPoint(tc) { host.qeIn = tc; },
+              setOutPoint(tc) { host.qeOut = tc; },
+              extract() {
+                host.extractions = host.extractions || [];
+                host.extractions.push({ in: host.seqIn, out: host.seqOut });
+              },
+              clearInPoint() { host.qeIn = null; },
+              clearOutPoint() { host.qeOut = null; },
+            };
+          }
+        }
+      };
+    };
+  }
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   // Mirror index.jsx boot: evaluate the entry point, which loads all modules.
@@ -514,5 +567,96 @@ test('sequenceAudioClips reads clip volume level and applies it', () => {
   assert.equal(res.clips.length, 2);
   assert.equal(res.clips[0].volume, 1.0);
   assert.ok(Math.abs(res.clips[1].volume - 0.10) < 0.01, `quiet_sfx volume should be ~0.10, got ${res.clips[1].volume}`);
+});
+
+test('removeTimelineRanges preview mode merges ranges and calculates saved duration without cuts', () => {
+  const host = makeHost();
+  const sb = loadEngine(host);
+  const ranges = [
+    { start: 1.0, end: 1.5, label: 'um' },
+    { start: 1.4, end: 2.0, label: 'uh' }, // overlaps with earlier range -> merges to [1.0, 2.0]
+    { start: 5.0, end: 6.5, label: 'silence' },
+  ];
+  const res = dispatch(sb, 'removeTimelineRanges', { ranges, previewOnly: true });
+  assert.equal(res.success, true);
+  assert.equal(res.preview, true);
+  assert.equal(res.totalRanges, 2);
+  assert.equal(res.totalTimeSaved, 2.5);
+  assert.equal(host.extractions, undefined, 'no cuts performed in preview mode');
+});
+
+test('removeTimelineRanges executes ripple cuts in reverse chronological order', () => {
+  const host = makeHost();
+  const sb = loadEngine(host);
+  const ranges = [
+    { start: 2.0, end: 2.5, label: 'um' },
+    { start: 8.0, end: 9.0, label: 'uh' },
+  ];
+  const res = dispatch(sb, 'removeTimelineRanges', { ranges });
+  assert.equal(res.success, true);
+  assert.equal(res.cutsCompleted, 2);
+  assert.ok(host.extractions && host.extractions.length === 2);
+  // Cut 1 must be the later range (8.0 to 9.0)
+  assert.equal(host.extractions[0].in, String(Math.round(8.0 * 254016000000)));
+  assert.equal(host.extractions[0].out, String(Math.round(9.0 * 254016000000)));
+  // Cut 2 must be the earlier range (2.0 to 2.5)
+  assert.equal(host.extractions[1].in, String(Math.round(2.0 * 254016000000)));
+  assert.equal(host.extractions[1].out, String(Math.round(2.5 * 254016000000)));
+  // Cleaned up after cuts
+  assert.equal(host.seqIn, null);
+  assert.equal(host.seqOut, null);
+});
+
+test('setChapterMarkers creates native sequence markers with chapter type and colors', () => {
+  const host = makeHost();
+  const sb = loadEngine(host);
+  const chapters = [
+    { time: 0, title: 'Introduction', comment: 'EditFlow Chapter: Introduction' },
+    { time: 45.5, title: 'The Solution', comment: 'EditFlow Chapter: The Solution' },
+    { time: 120.0, title: 'Conclusion', comment: 'EditFlow Chapter: Conclusion' },
+  ];
+
+  const res = dispatch(sb, 'setChapterMarkers', { chapters, clearExisting: false, color: 4 });
+  assert.equal(res.success, true);
+  assert.equal(res.created, 3);
+  assert.equal(host.markerList.length, 3);
+
+  // Check marker attributes
+  assert.equal(host.markerList[0].name, 'Introduction');
+  assert.equal(host.markerList[0].start, 0);
+  assert.equal(host.markerList[0].color, 4);
+  assert.equal(host.markerList[0].type, 'Chapter');
+
+  assert.equal(host.markerList[1].name, 'The Solution');
+  assert.equal(host.markerList[1].start, 45.5);
+
+  // Test clearExisting clears earlier chapter markers
+  const newChapters = [
+    { time: 0, title: 'Intro V2' },
+  ];
+  const res2 = dispatch(sb, 'setChapterMarkers', { chapters: newChapters, clearExisting: true });
+  assert.equal(res2.success, true);
+  assert.equal(res2.created, 1);
+  assert.equal(host.markerList.length, 1);
+  assert.equal(host.markerList[0].name, 'Intro V2');
+});
+
+test('getSequenceMarkers reads back sequence markers for social export', () => {
+  const host = makeHost();
+  const sb = loadEngine(host);
+
+  // Pre-populate markers on timeline
+  host.markerList.push(
+    { start: 0, name: 'Intro', comments: 'Topic 1', type: 'Chapter' },
+    { start: 62.5, name: 'Deep Dive', comments: 'Topic 2', type: 'Chapter' }
+  );
+
+  const res = dispatch(sb, 'getSequenceMarkers', {});
+  assert.equal(res.success, true);
+  assert.equal(res.markers.length, 2);
+  assert.equal(res.markers[0].name, 'Intro');
+  assert.equal(res.markers[0].time, 0);
+  assert.equal(res.markers[1].name, 'Deep Dive');
+  assert.equal(res.markers[1].time, 62.5);
 });
 

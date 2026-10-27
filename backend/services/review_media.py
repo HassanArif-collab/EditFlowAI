@@ -37,6 +37,7 @@ from typing import Optional
 
 from ..config import get_settings
 from ..utils.ffmpeg_utils import get_media_info, run_ffmpeg_async
+from ..utils.subprocess_utils import run_silent
 from .media_fingerprint import fingerprint_short
 
 logger = logging.getLogger(__name__)
@@ -227,7 +228,7 @@ async def waveform_peaks(src_path: str | Path, buckets: int = 1600) -> list[floa
     ffmpeg = get_settings().FFMPEG_PATH
     cmd = [ffmpeg, "-v", "error", "-vn", "-i", str(src),
            "-ac", "1", "-ar", "8000", "-f", "s16le", "-"]
-    proc = await asyncio.to_thread(subprocess.run, cmd, capture_output=True)
+    proc = await asyncio.to_thread(run_silent, cmd, capture_output=True)
     raw = proc.stdout or b""
     if not raw:
         return []

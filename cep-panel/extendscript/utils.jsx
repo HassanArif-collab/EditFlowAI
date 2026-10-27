@@ -98,11 +98,23 @@ editflowUtils = (function() {
         try { return JSON.stringify(obj); } catch (e) { return '{}'; }
     }
 
+    function secondsToTimecode(sec, fps) {
+        if (!fps || !(fps > 0)) fps = 30;
+        var totalFrames = Math.max(0, Math.round(sec * fps));
+        var f = totalFrames % Math.round(fps);
+        var s = Math.floor(totalFrames / fps) % 60;
+        var m = Math.floor(totalFrames / (fps * 60)) % 60;
+        var h = Math.floor(totalFrames / (fps * 3600));
+        var pad = function(n) { return (n < 10 ? "0" : "") + n; };
+        return pad(h) + ":" + pad(m) + ":" + pad(s) + ":" + pad(f);
+    }
+
     return {
         TICKS_PER_SECOND: TICKS_PER_SECOND,
         secondsToTicks: secondsToTicks,
         secondsToTicksString: secondsToTicksString,
         ticksToSeconds: ticksToSeconds,
+        secondsToTimecode: secondsToTimecode,
         addTicks: addTicks,
         subTicks: subTicks,
         getSequenceEnd: getSequenceEnd,

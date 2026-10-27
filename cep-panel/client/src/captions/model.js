@@ -64,6 +64,12 @@ export const EASINGS = {
     const c1 = 1.70158, c3 = c1 + 1;
     return 1 + c3 * Math.pow(p - 1, 3) + c1 * Math.pow(p - 1, 2);
   },
+  elastic_out: (p) => {
+    if (p <= 0) return 0;
+    if (p >= 1) return 1;
+    const c4 = (2 * Math.PI) / 3;
+    return Math.pow(2, -10 * p) * Math.sin((p * 10 - 0.75) * c4) + 1;
+  },
 };
 
 export function clamp01(p) { return p < 0 ? 0 : p > 1 ? 1 : p; }
@@ -106,6 +112,8 @@ export function sanitizeWords(raw) {
       hidden: (w.hidden === true || w.keep === false) ? true : (w.hidden === false ? false : undefined),
       emphasis: !!(w.emphasis || w.pill),
       breakBefore: !!w.breakBefore,
+      speaker: w.speaker !== undefined ? Number(w.speaker) : undefined,
+      emoji: (w.emoji && typeof w.emoji === 'string') ? w.emoji.trim() : undefined,
     });
   });
   out.sort((a, b) => a.start - b.start);
@@ -151,6 +159,86 @@ export function isVisible(w, hideFillers) {
   if (w.hidden === true) return false;
   if (w.hidden === false) return true;
   return !(hideFillers && isFiller(w.text));
+}
+
+/**
+ * Find all verbal filler words in a transcript: { index, start, end, text }.
+ */
+export function findFillerRanges(words) {
+  const out = [];
+  (words || []).forEach((w, i) => {
+    if (isFiller(w.text)) {
+      out.push({ index: i, start: w.start, end: w.end, text: w.text, label: `filler (${w.text})` });
+    }
+  });
+  return out;
+}
+
+/**
+ * Find dead air pauses between words to tighten speech.
+ * Gaps longer than minPauseSec (default 0.6s) have their excess removed,
+ * keeping a natural targetPauseSec (default 0.2s).
+ */
+export function findSilenceRanges(words, minPauseSec, targetPauseSec) {
+  const minP = typeof minPauseSec === 'number' ? minPauseSec : 0.6;
+  const targetP = typeof targetPauseSec === 'number' ? targetPauseSec : 0.2;
+  const out = [];
+  const ws = words || [];
+  for (let i = 0; i < ws.length - 1; i++) {
+    const curEnd = ws[i].end;
+    const nextStart = ws[i + 1].start;
+    const gap = nextStart - curEnd;
+    if (gap >= minP) {
+      const cutStart = Math.round((curEnd + targetP) * 1000) / 1000;
+      const cutEnd = Math.round(nextStart * 1000) / 1000;
+      if (cutEnd > cutStart + 0.04) {
+        out.push({
+          start: cutStart,
+          end: cutEnd,
+          duration: gap,
+          saved: Math.round((cutEnd - cutStart) * 1000) / 1000,
+          wordBefore: ws[i].text,
+          wordAfter: ws[i + 1].text,
+          label: 'pause (' + (Math.round(gap * 10) / 10) + 's)',
+        });
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Update transcript words after ripple deletes on the timeline.
+ * Words inside excised ranges are dropped; subsequent words are shifted
+ * left by the excised duration, keeping transcript timestamps 100% in sync
+ * with Premiere Pro's timeline.
+ */
+export function applyRippleDeletesToWords(words, ranges) {
+  if (!ranges || !ranges.length) return (words || []).slice(0);
+  const sorted = ranges.slice(0).sort((a, b) => a.start - b.start);
+  const out = [];
+  for (const w of (words || [])) {
+    let remove = false;
+    let shift = 0;
+    for (const r of sorted) {
+      const overlap = Math.max(0, Math.min(w.end, r.end) - Math.max(w.start, r.start));
+      const wDur = Math.max(0.01, w.end - w.start);
+      if (overlap >= 0.5 * wDur || (w.start >= r.start && w.end <= r.end)) {
+        remove = true;
+        break;
+      }
+      if (w.start >= r.end) {
+        shift += (r.end - r.start);
+      }
+    }
+    if (!remove) {
+      out.push(Object.assign({}, w, {
+        start: Math.max(0, Math.round((w.start - shift) * 1000) / 1000),
+        end: Math.max(0, Math.round((w.end - shift) * 1000) / 1000),
+      }));
+    }
+  }
+  return out;
 }
 
 /**
@@ -212,6 +300,7 @@ export function displayText(text, opts) {
   const c = (opts && opts.textCase) || 'as_is';
   if (c === 'upper') t = t.toUpperCase();
   else if (c === 'lower') t = t.toLowerCase();
+  else if (c === 'title') t = t.toLowerCase().replace(/(?:^|[\s\-\[\(\"“])(['‘]?[a-z\u00C0-\u024F])/gi, (m) => m.toUpperCase());
   if (p === 'none') return t;
   return t || String(text || '');
 }
@@ -288,7 +377,7 @@ export function groupWords(words, opts, layout) {
   const maxWords = Math.max(1, o.maxWords | 0);
   const maxLines = Math.max(1, Math.min(3, o.maxLines | 0));
   const charMode = !(layout && typeof layout.measure === 'function' && layout.maxWidth > 0);
-  const widths = words.map((w) => (charMode ? w.display.length : layout.measure(w.display)));
+  const widths = words.map((w) => (charMode ? String(w.display != null ? w.display : (w.text || '')).length : layout.measure(w.display != null ? w.display : (w.text || ''))));
   const spaceW = charMode ? 1 : (layout.spaceW || 0);
   const maxWidth = charMode ? (o.maxChars || 24) : layout.maxWidth;
   const texts = words.map((w) => w.text);
@@ -434,7 +523,14 @@ export function buildScene(rawWords, settings, env) {
   const lay = s.layout || {};
   const hideFillers = !(s.grouping && s.grouping.hideFillers === false);
   const words = sanitizeWords(rawWords).filter((w) => isVisible(w, hideFillers));
-  for (const w of words) w.display = displayText(w.text, st);
+  const emojiPlacement = st.emojiPlacement || 'above';
+  for (const w of words) {
+    if (w.emoji && emojiPlacement === 'inline') {
+      w.display = displayText(w.text, st) + ' ' + w.emoji;
+    } else {
+      w.display = displayText(w.text, st);
+    }
+  }
   const W = env.width, H = env.height;
   const fontSize = st.fontSize || 80;
   const measure = env.measure;
@@ -443,8 +539,9 @@ export function buildScene(rawWords, settings, env) {
   const groups = groupWords(words, s.grouping, measure ? { measure, spaceW, maxWidth } : null);
   const timing = captionTiming(groups, s.timing, env.fps);
   const lineH = fontSize * (lay.lineHeight || 1.12);
-  const asc = (env.fontMetrics && env.fontMetrics.ascent) || fontSize * 0.78;
-  const desc = (env.fontMetrics && env.fontMetrics.descent) || fontSize * 0.22;
+  const hasRtl = words.some((w) => isRTLText(w.display || w.text));
+  const asc = (env.fontMetrics && env.fontMetrics.ascent) || (hasRtl ? fontSize * 0.92 : fontSize * 0.78);
+  const desc = (env.fontMetrics && env.fontMetrics.descent) || (hasRtl ? fontSize * 0.38 : fontSize * 0.22);
   const align = lay.align || 'center';
   const ax = W * ((lay.posX != null ? lay.posX : 50) / 100);
   const margin = H * 0.03;
@@ -459,12 +556,14 @@ export function buildScene(rawWords, settings, env) {
     });
     const widest = Math.max.apply(null, lines.map((l) => l.width));
     const fit = widest > maxWidth ? maxWidth / widest : 1;   // only for a giant word
+    const capHasEmojiAbove = emojiPlacement === 'above' && g.words.some((w) => w.emoji);
+    const extraEmojiTop = capHasEmojiAbove ? (fontSize * 0.75 * (st.emojiScale || 1)) : 0;
     const blockH = lines.length * lineH;
     // centre the block on posY, clamped inside the frame
     let cy = H * ((lay.posY != null ? lay.posY : 72) / 100);
-    const half = (blockH * fit) / 2;
+    const half = ((blockH + extraEmojiTop) * fit) / 2;
     cy = Math.min(H - margin - half, Math.max(margin + half, cy));
-    const top = cy - blockH / 2;
+    const top = cy - blockH / 2 + (capHasEmojiAbove ? extraEmojiTop * 0.35 : 0);
     const outLines = lines.map((l, li) => {
       let x0 = align === 'left' ? ax - maxWidth / 2
         : align === 'right' ? ax + maxWidth / 2 - l.width : ax - l.width / 2;
@@ -474,7 +573,9 @@ export function buildScene(rawWords, settings, env) {
       const lw = l.ws.map((w, k) => {
         const itemX = isRtl ? (x - l.ww[k]) : x;
         const item = { text: w.display, src: w.text, x: itemX, w: l.ww[k], start: w.start + ((s.timing && s.timing.offset) || 0),
-                       end: w.end + ((s.timing && s.timing.offset) || 0), emphasis: w.emphasis, id: w.id, gi: gi++, rtl: isRtl };
+                       end: w.end + ((s.timing && s.timing.offset) || 0), emphasis: w.emphasis, id: w.id, gi: gi++, rtl: isRtl,
+                       speaker: w.speaker !== undefined ? w.speaker : undefined,
+                       emoji: w.emoji || undefined };
         if (isRtl) x -= (l.ww[k] + spaceW);
         else x += (l.ww[k] + spaceW);
         return item;
@@ -484,7 +585,7 @@ export function buildScene(rawWords, settings, env) {
     const bx = Math.min.apply(null, outLines.map((l) => l.x));
     const bw = Math.max.apply(null, outLines.map((l) => l.x + l.width)) - bx;
     return Object.assign({ id: ci, lines: outLines, fit, cx: ax, cy,
-      box: { x: bx, y: top, w: bw, h: blockH }, ascent: asc, descent: desc }, timing[ci]);
+      box: { x: bx, y: top - extraEmojiTop, w: bw, h: blockH + extraEmojiTop }, ascent: asc, descent: desc }, timing[ci]);
   });
   const duration = captions.length ? captions[captions.length - 1].tOut : 0;
   return linkWords({ width: W, height: H, fps: env.fps || { num: 30, den: 1 }, fontSize, lineH, captions, duration });

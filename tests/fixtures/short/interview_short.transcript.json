@@ -53,7 +53,7 @@
       ],
       "no_speech_prob": 0.024658203125,
       "compression_ratio": 1.9483870967741936,
-      "avg_logprob": -0.17614582896232606
+      "avg_logprob": -0.17906250675519308
     },
     {
       "start": 5.09,
@@ -123,7 +123,7 @@
       ],
       "no_speech_prob": 0.024658203125,
       "compression_ratio": 1.9483870967741936,
-      "avg_logprob": -0.17614582896232606
+      "avg_logprob": -0.17906250675519308
     },
     {
       "start": 11.32,
@@ -229,7 +229,7 @@
       ],
       "no_speech_prob": 0.024658203125,
       "compression_ratio": 1.9483870967741936,
-      "avg_logprob": -0.17614582896232606
+      "avg_logprob": -0.17906250675519308
     },
     {
       "start": 19.4,
@@ -269,7 +269,7 @@
       ],
       "no_speech_prob": 0.024658203125,
       "compression_ratio": 1.9483870967741936,
-      "avg_logprob": -0.17614582896232606
+      "avg_logprob": -0.17906250675519308
     },
     {
       "start": 21.75,
@@ -363,7 +363,7 @@
       ],
       "no_speech_prob": 0.024658203125,
       "compression_ratio": 1.9483870967741936,
-      "avg_logprob": -0.17614582896232606
+      "avg_logprob": -0.17906250675519308
     }
   ],
   "full_text": "Hello, and welcome back to my channel. Today I want to, uh, talk about something really cool. Today I want to talk about something interesting, uh, something that I think you'll find fascinating. Welcome back to the channel. Today I want to discuss a fascinating topic that I think you'll really enjoy.",

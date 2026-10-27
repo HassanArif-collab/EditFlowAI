@@ -7,9 +7,9 @@ const fs = require('node:fs');
 
 function loadEsm(filePath, sandbox = {}) {
   let src = fs.readFileSync(filePath, 'utf8');
-  if (/^\s*import\s/m.test(src)) {
-    throw new Error('loadEsm: module has imports; provide them via sandbox instead: ' + filePath);
-  }
+  src = src.replace(/import\s*\{[\s\S]*?\}\s*from\s*['"][^'"]+['"];?/g, '');
+  src = src.replace(/import\s+[^;]+?from\s*['"][^'"]+['"];?/g, '');
+  src = src.replace(/^\s*import\s+[^;\n]+;?\s*$/gm, '');
   const names = [];
   src = src.replace(
     /^export\s+(const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/gm,

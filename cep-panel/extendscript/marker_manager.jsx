@@ -84,15 +84,30 @@ markerManager = (function() {
 
     function getSequenceMarkers() {
         var seq = app.project.activeSequence;
-        if (!seq) return editflowUtils.safeStringify({ markers: [] });
+        if (!seq) return editflowUtils.safeStringify({ success: false, markers: [] });
 
         var markers = [];
         try {
             var marker = seq.markers.getFirstMarker();
             while (marker) {
+                var t = 0;
+                if (marker.start !== undefined && marker.start !== null) {
+                    if (typeof marker.start === 'object' && marker.start.seconds !== undefined) {
+                        t = marker.start.seconds;
+                    } else if (typeof marker.start === 'object' && marker.start.ticks !== undefined) {
+                        t = editflowUtils.ticksToSeconds(marker.start.ticks);
+                    } else {
+                        var num = parseFloat(marker.start);
+                        if (num > 10000000) {
+                            t = editflowUtils.ticksToSeconds(num);
+                        } else {
+                            t = num;
+                        }
+                    }
+                }
                 markers.push({
-                    name: marker.name,
-                    time: editflowUtils.ticksToSeconds(marker.start),
+                    name: marker.name || "",
+                    time: Math.round(t * 100) / 100,
                     comment: marker.comments || "",
                     type: marker.type || ""
                 });
@@ -100,12 +115,87 @@ markerManager = (function() {
             }
         } catch (e) {}
 
-        return editflowUtils.safeStringify({ markers: markers });
+        return editflowUtils.safeStringify({ success: true, markers: markers });
+    }
+
+    function setChapterMarkers(options) {
+        var seq = app.project.activeSequence;
+        if (!seq) return editflowUtils.safeStringify({ success: false, error: "No active sequence" });
+
+        var chapters = editflowUtils.getParam(options, 'chapters') || [];
+        var clearExisting = editflowUtils.getParam(options, 'clearExisting');
+        if (clearExisting === undefined) clearExisting = false;
+        var color = editflowUtils.getParam(options, 'color');
+        if (color === undefined || color === null) color = 4; // Cyan/Blue default for chapter markers
+
+        if (!chapters.length) {
+            return editflowUtils.safeStringify({ success: false, error: "No chapters supplied" });
+        }
+
+        try {
+            if (clearExisting && seq.markers) {
+                var toDelete = [];
+                var cur = seq.markers.getFirstMarker();
+                while (cur) {
+                    var shouldDelete = false;
+                    try {
+                        if (cur.type === "Chapter") shouldDelete = true;
+                    } catch (e0) {}
+                    try {
+                        if (cur.name && cur.name.indexOf("Chapter") !== -1) shouldDelete = true;
+                        if (cur.comments && cur.comments.indexOf("EditFlow") !== -1) shouldDelete = true;
+                    } catch (e1) {}
+                    if (shouldDelete) {
+                        toDelete.push(cur);
+                    }
+                    cur = seq.markers.getNextMarker(cur);
+                }
+                for (var d = 0; d < toDelete.length; d++) {
+                    try { seq.markers.deleteMarker(toDelete[d]); } catch (e2) {}
+                }
+            }
+
+            var created = 0;
+            var failed = 0;
+            for (var i = 0; i < chapters.length; i++) {
+                var ch = chapters[i];
+                var t = parseFloat(ch.time || 0);
+                if (isNaN(t) || t < 0) t = 0;
+                var title = ch.title || ch.name || ("Chapter " + (i + 1));
+                var comment = ch.comment || "EditFlow Chapter";
+
+                try {
+                    var marker = seq.markers.createMarker(t);
+                    if (marker) {
+                        try { marker.name = title; } catch (e3) {}
+                        try { marker.comments = comment; } catch (e4) {}
+                        try { marker.setColorByIndex(color); } catch (e5) {}
+                        try { marker.setTypeAsChapter(); } catch (e6) {}
+                        created++;
+                    } else {
+                        failed++;
+                    }
+                } catch (e7) {
+                    failed++;
+                }
+            }
+
+            return editflowUtils.safeStringify({
+                success: true,
+                count: created,
+                created: created,
+                failed: failed,
+                total: chapters.length
+            });
+        } catch (e) {
+            return editflowUtils.safeStringify({ success: false, error: e.toString() });
+        }
     }
 
     return {
         addMarkerToSequence: addMarkerToSequence,
         addPhraseRangeMarkers: addPhraseRangeMarkers,
-        getSequenceMarkers: getSequenceMarkers
+        getSequenceMarkers: getSequenceMarkers,
+        setChapterMarkers: setChapterMarkers
     };
 })();

@@ -195,6 +195,26 @@ function editflowDispatch(command, payloadData) {
 
     switch (command) {
         // ── Project Scanning ──
+        case "getProjectDirectory": {
+            var prjPath = "";
+            var prjDir = "";
+            try {
+                if (app.project && app.project.path) {
+                    prjPath = app.project.path;
+                    var fileObj = new File(prjPath);
+                    if (fileObj.parent && fileObj.parent.fsName) {
+                        prjDir = fileObj.parent.fsName;
+                    }
+                }
+            } catch (pErr) {}
+            result = JSON.stringify({
+                success: true,
+                projectPath: prjPath,
+                projectDirectory: prjDir
+            });
+            break;
+        }
+
         case "scanProject":
         case "scanProjectMedia":
         case "getProjectState":
@@ -293,7 +313,12 @@ function editflowDispatch(command, payloadData) {
             break;
 
         case "getMarkers":
+        case "getSequenceMarkers":
             result = markerManager.getSequenceMarkers();
+            break;
+
+        case "setChapterMarkers":
+            result = markerManager.setChapterMarkers(options);
             break;
 
         // ── Active Sequence Phrase Removal ──

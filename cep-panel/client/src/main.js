@@ -4,7 +4,7 @@
  * Initializes all modules, wires up DOM events, and starts the app.
  * This file owns no business logic — it delegates to the modules.
  */
-const BUILD_TAG = 'captions-2.0';  // bump when shipping a fix; visible in header
+const BUILD_TAG = 'v2.0-progress-visuals';  // bump when shipping a fix; visible in header
 
 // FIRST thing on parse: clear the inline boot-check banner. If the user sees
 // the banner disappear, we KNOW main.js parsed successfully and modules are
@@ -38,6 +38,7 @@ import { initSettings, openSettings, onWhisperDownloadProgress } from './setting
 let openReview = null;
 // Same treatment for the Captions tab (captions-view.js).
 let openCaptions = null;
+let openStoryCut = null;
 // Feature flag: agent mode vs. legacy orchestrator
 const AGENT_MODE = localStorage.getItem('editflow_agent_mode') === 'on';
 
@@ -95,6 +96,13 @@ async function _loadOrchestrator() {
     window.__editflowOpenCaptions = openCaptions;
   } catch (e) {
     console.error('[EditFlow] Failed to load captions-view:', e);
+  }
+  try {
+    const scMod = await import('./story-cut-view.js' + bust);
+    openStoryCut = scMod.openStoryCut;
+    window.__editflowOpenStoryCut = openStoryCut;
+  } catch (e) {
+    console.error('[EditFlow] Failed to load story-cut-view:', e);
   }
 }
 
@@ -175,12 +183,11 @@ async function init() {
     return;
   }
 
-  // 1. Initialize ExtendScript bridge. Fast path on boot (avoids
-  //    re-parsing 12 JSX files on Premiere's main UI thread); full disk
-  //    reload is reserved for the dev reload button (#btn-dev-reload).
+  // 1. Initialize ExtendScript bridge. Force disk reload on boot so
+  //    latest ExtendScript updates (e.g. clip_manager.jsx) always take effect.
   let esAvailable = false;
   try {
-    esAvailable = await initExtendScript(false);
+    esAvailable = await initExtendScript(true);
   } catch (_) {
     esAvailable = false;
   }
@@ -257,6 +264,17 @@ async function init() {
 
   // 9c. Captions tab (Tier-1 native captions — AE-style tabbed flow).
   if (btnCaptions) {
+    const btnStoryCut = document.getElementById('btn-story-cut');
+    if (btnStoryCut) {
+      btnStoryCut.addEventListener('click', () => {
+        try {
+          if (openStoryCut) openStoryCut();
+          else console.warn('[EditFlow] Story Cut not loaded yet');
+        } catch (e) {
+          console.error('[EditFlow] openStoryCut failed:', e);
+        }
+      });
+    }
     btnCaptions.addEventListener('click', () => {
       try {
         try { localStorage.setItem('editflow_home_view', 'captions'); } catch (_) {}
