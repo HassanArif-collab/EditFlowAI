@@ -680,17 +680,40 @@ class WhisperService:
                     is_cpu = (device == "cpu")
                     # Cap CPU threads to cores//2 (max 4) so multicore CPUs do not freeze the OS
                     cpu_threads = max(1, min(4, (os.cpu_count() or 4) // 2)) if is_cpu else 2
-                    self._model = WhisperModel(
-                        model_spec,
-                        device=device,
-                        compute_type=compute_type,
-                        cpu_threads=cpu_threads,
-                        num_workers=1,
-                        local_files_only=bool(
-                            self.settings.WHISPER_LOCAL_DIR
-                            and Path(self.settings.WHISPER_LOCAL_DIR).exists()
-                        ),
+                    cache_dir_str = str(self.settings.HF_CACHE_DIR) if self.settings.HF_CACHE_DIR else None
+                    is_local_dir = bool(
+                        self.settings.WHISPER_LOCAL_DIR
+                        and Path(self.settings.WHISPER_LOCAL_DIR).exists()
                     )
+                    loaded = False
+                    if not is_local_dir:
+                        # Fast path: If model already exists in local disk cache, load with local_files_only=True
+                        # to eliminate network latency, HuggingFace rate limits, and connection hangs.
+                        try:
+                            self._model = WhisperModel(
+                                model_spec,
+                                device=device,
+                                compute_type=compute_type,
+                                cpu_threads=cpu_threads,
+                                num_workers=1,
+                                download_root=cache_dir_str,
+                                local_files_only=True,
+                            )
+                            loaded = True
+                            logger.info(f"Whisper model {model_spec} loaded from local cache in offline mode.")
+                        except Exception as cache_err:
+                            logger.info(f"Local cache miss for {model_spec} ({cache_err}); downloading via HF Hub...")
+
+                    if not loaded:
+                        self._model = WhisperModel(
+                            model_spec,
+                            device=device,
+                            compute_type=compute_type,
+                            cpu_threads=cpu_threads,
+                            num_workers=1,
+                            download_root=cache_dir_str,
+                            local_files_only=is_local_dir,
+                        )
                     if device == "cuda":
                         # Validate that CUDA libraries actually work before declaring success
                         try:

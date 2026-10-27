@@ -1167,13 +1167,25 @@ function render() {
       `;
     }).join('');
   } else {
+    const vlEmptyCallout = totalBrolls === 0 ? `
+      <div class="sc-vl-empty-card">
+        <div class="sc-vl-empty-icon">${svgIcon('folder')}</div>
+        <div class="sc-vl-empty-title">Visual Library Empty</div>
+        <div class="sc-vl-empty-desc">Link your local B-Roll folder to allow EditFlow to automatically match visuals to your timeline speech.</div>
+        <button id="sc-btn-empty-add-vl" class="sc-btn-primary" style="margin-top:4px; font-size:11.5px; height:28px;">
+          ${svgIcon('plus')} Link Footage Folder
+        </button>
+      </div>
+    ` : '';
+
     storyboardHtml = `
-      <div style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; color:var(--sc-text-muted); padding:40px 20px; text-align:center;">
+      ${vlEmptyCallout}
+      <div style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; color:var(--sc-text-muted); padding:20px; text-align:center;">
         <div style="width:36px; height:36px; display:flex; align-items:center; justify-content:center; background:#242424; border-radius:50%; border:1px solid var(--sc-border);">
           ${svgIcon('timeline')}
         </div>
         <p style="font-size:12.5px; font-weight:500; color:var(--sc-text-secondary); margin:0;">
-          ${S.mode === 'timeline_overlay' ? 'Active Timeline Ready to Transcribe' : 'No Script Compiled Yet'}
+          ${S.mode === 'timeline_overlay' ? (totalBrolls > 0 ? `${totalBrolls} B-Roll Clips Indexed · Active Timeline Ready` : 'Active Timeline Ready to Transcribe') : 'No Script Compiled Yet'}
         </p>
         <p style="font-size:11px; max-width:320px; line-height:1.4; margin:0;">
           ${S.mode === 'timeline_overlay'
@@ -1389,11 +1401,11 @@ function render() {
 
       <div style="display:flex; align-items:center; gap:8px; flex:none; margin-left:auto;">
         ${S.mode === 'timeline_overlay' ? `
-          <button id="sc-btn-transcribe-timeline" class="sc-btn-subtle" ${S.busy ? 'disabled' : ''} title="Transcribe timeline audio and match micro-visuals">
-            ${S.busy ? svgIcon('spinner') : svgIcon('refresh')} ${S.busy ? 'Transcribing...' : 'Transcribe &amp; Match'}
+          <button id="sc-btn-transcribe-timeline" class="${cuts.length > 0 ? 'sc-btn-subtle' : 'sc-btn-primary'}" ${S.busy ? 'disabled' : ''} title="Transcribe timeline audio and match micro-visuals">
+            ${S.busy ? svgIcon('spinner') : svgIcon('refresh')} ${S.busy ? 'Transcribing...' : (cuts.length > 0 ? 'Re-Transcribe' : 'Transcribe &amp; Match Visuals')}
           </button>
-          <button id="sc-btn-apply-timeline" class="sc-btn-primary" ${S.busy ? 'disabled' : ''} title="Place visuals on target video track with single Ctrl+Z undo">
-            ${(S.busy && S.busyTitle && S.busyTitle.includes('Premiere')) ? svgIcon('spinner') : svgIcon('check')} ${(S.busy && S.busyTitle && S.busyTitle.includes('Premiere')) ? 'Placing Visuals...' : `Place Visuals on ${S.targetVideoTrack === -1 ? 'Auto Track' : `Track V${S.targetVideoTrack + 1}`}${S.edlOps.length ? ` (${(S.plan && S.plan.broll_clips) ? S.plan.broll_clips.length : S.edlOps.filter((o) => o.action === 'add').length})` : ''}`}
+          <button id="sc-btn-apply-timeline" class="${cuts.length > 0 ? 'sc-btn-primary' : 'sc-btn-subtle'}" ${S.busy || !cuts.length ? 'disabled' : ''} title="Place visuals on target video track with single Ctrl+Z undo">
+            ${(S.busy && S.busyTitle && S.busyTitle.includes('Premiere')) ? svgIcon('spinner') : svgIcon('check')} ${(S.busy && S.busyTitle && S.busyTitle.includes('Premiere')) ? 'Placing Visuals...' : `Place Visuals on ${S.targetVideoTrack === -1 ? 'Auto Track' : `Track V${S.targetVideoTrack + 1}`}${cuts.length ? ` (${(S.plan && S.plan.broll_clips) ? S.plan.broll_clips.length : S.edlOps.filter((o) => o.action === 'add').length})` : ''}`}
           </button>
         ` : `
           <button id="sc-btn-auto-broll" class="sc-btn-subtle" ${S.busy || !cuts.length ? 'disabled' : ''} title="Auto-match B-roll overlays on Track V2">

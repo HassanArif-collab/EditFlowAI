@@ -1,3 +1,39 @@
+
+// ── Workspace Navigation & View Switching ─────────────────────
+function _setActiveNav(activeTab) {
+  const tabs = {
+    'chat': document.getElementById('btn-nav-chat'),
+    'story-cut': document.getElementById('btn-story-cut'),
+    'captions': document.getElementById('btn-captions'),
+    'review': document.getElementById('btn-review'),
+  };
+  Object.entries(tabs).forEach(([key, el]) => {
+    if (el) el.classList.toggle('active', key === activeTab);
+  });
+}
+
+function switchToChat() {
+  _setActiveNav('chat');
+  try { localStorage.setItem('editflow_home_view', 'chat'); } catch (_) {}
+  const cc = document.getElementById('captions-view');
+  if (cc) cc.classList.add('hidden');
+  const sc = document.getElementById('story-cut-view');
+  if (sc) sc.classList.add('hidden');
+  const rv = document.getElementById('review-view');
+  if (rv) rv.classList.add('hidden');
+  const hero = document.getElementById('hero');
+  const chat = document.getElementById('chat-scroll');
+  const footer = document.getElementById('app-footer');
+  if (chat && chat.children.length > 0) {
+    chat.classList.remove('hidden');
+    if (footer) footer.classList.remove('hidden');
+    if (hero) hero.classList.add('hidden');
+  } else if (hero) {
+    hero.classList.remove('hidden');
+  }
+}
+window.__editflowSwitchToChat = switchToChat;
+
 /**
  * main.js — Bootstrap for EditFlow single-chat frontend.
  *
@@ -253,52 +289,81 @@ async function init() {
   // 9. Initialize settings overlay
   _initSettingsOverlay();
 
-  // 9b. Wire the Review (transcript-first cut editor) button. Additive — the
-  //     legacy orchestrator/agent flows are untouched whether or not it's used.
+  // 9a. Wire Chat workspace tab
+  const btnNavChat = document.getElementById('btn-nav-chat');
+  if (btnNavChat) {
+    btnNavChat.addEventListener('click', () => switchToChat());
+  }
+
+  // 9b. Wire Review workspace tab
   if (btnReview) {
     btnReview.addEventListener('click', () => {
-      try { if (openReview) openReview(); else console.warn('[EditFlow] Review not loaded yet'); }
-      catch (e) { console.error('[EditFlow] openReview failed:', e); }
+      try {
+        _setActiveNav('review');
+        try { localStorage.setItem('editflow_home_view', 'review'); } catch (_) {}
+        if (openReview) openReview();
+        else console.warn('[EditFlow] Review not loaded yet');
+      } catch (e) {
+        console.error('[EditFlow] openReview failed:', e);
+      }
     });
   }
 
-  // 9c. Captions tab (Tier-1 native captions — AE-style tabbed flow).
+  // 9c. Wire Story Cut workspace tab
+  const btnStoryCut = document.getElementById('btn-story-cut');
+  if (btnStoryCut) {
+    btnStoryCut.addEventListener('click', () => {
+      try {
+        _setActiveNav('story-cut');
+        try { localStorage.setItem('editflow_home_view', 'story-cut'); } catch (_) {}
+        if (openStoryCut) openStoryCut();
+        else console.warn('[EditFlow] Story Cut not loaded yet');
+      } catch (e) {
+        console.error('[EditFlow] openStoryCut failed:', e);
+      }
+    });
+  }
+
+  // 9d. Wire Captions Studio workspace tab
   if (btnCaptions) {
-    const btnStoryCut = document.getElementById('btn-story-cut');
-    if (btnStoryCut) {
-      btnStoryCut.addEventListener('click', () => {
-        try {
-          if (openStoryCut) openStoryCut();
-          else console.warn('[EditFlow] Story Cut not loaded yet');
-        } catch (e) {
-          console.error('[EditFlow] openStoryCut failed:', e);
-        }
-      });
-    }
     btnCaptions.addEventListener('click', () => {
       try {
+        _setActiveNav('captions');
         try { localStorage.setItem('editflow_home_view', 'captions'); } catch (_) {}
-        if (openCaptions) openCaptions(); else console.warn('[EditFlow] Captions not loaded yet');
+        if (openCaptions) openCaptions();
+        else console.warn('[EditFlow] Captions not loaded yet');
+      } catch (e) {
+        console.error('[EditFlow] openCaptions failed:', e);
       }
-      catch (e) { console.error('[EditFlow] openCaptions failed:', e); }
     });
   }
 
-  // 9d. Boot into the last-used home view (default: Captions studio, like
-  //     the AE panel boots into its caption studio — chat stays one Close
-  //     away). Stored pref survives reloads. A throwing view must never
-  //     leave a black panel: fall back to the chat hero.
+  // 9e. Wire Hero Quick-Action Cards
+  const cardCaptions = document.getElementById('hero-card-captions');
+  if (cardCaptions && btnCaptions) cardCaptions.addEventListener('click', () => btnCaptions.click());
+  const cardStoryCut = document.getElementById('hero-card-story-cut');
+  if (cardStoryCut && btnStoryCut) cardStoryCut.addEventListener('click', () => btnStoryCut.click());
+  const cardReview = document.getElementById('hero-card-review');
+  if (cardReview && btnReview) cardReview.addEventListener('click', () => btnReview.click());
+
+  // 9f. Boot into the last-used home view
   try {
     const homeView = localStorage.getItem('editflow_home_view') || 'captions';
     if (homeView === 'captions' && typeof openCaptions === 'function') {
+      _setActiveNav('captions');
       openCaptions();
+    } else if (homeView === 'story-cut' && typeof openStoryCut === 'function') {
+      _setActiveNav('story-cut');
+      openStoryCut();
+    } else if (homeView === 'review' && typeof openReview === 'function') {
+      _setActiveNav('review');
+      openReview();
+    } else {
+      switchToChat();
     }
   } catch (e) {
     console.warn('[EditFlow] home view open failed, showing chat:', e);
-    try {
-      const hero = $('#hero');
-      if (hero) hero.classList.remove('hidden');
-    } catch (_) {}
+    switchToChat();
   }
 
   // 9b. Dev Reload button — re-loads the ExtendScript bundle + the panel

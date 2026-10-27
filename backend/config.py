@@ -22,8 +22,28 @@ logger = logging.getLogger(__name__)
 # computed their cache paths. config.py is the first module backend/main.py
 # imports, so setting it here is safe.
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
-_DEFAULT_HF_CACHE = _PROJECT_ROOT / "data" / "hf-cache"
-_HF_CACHE = Path(os.environ.get("HF_HUB_CACHE") or str(_DEFAULT_HF_CACHE)).expanduser()
+
+# Robust HF Cache detection:
+# 1. Respect explicit HF_HUB_CACHE if user set it
+# 2. Main EditFlowAI repo data/hf-cache on D: (contains full downloaded models)
+# 3. Worktree or project-local data/hf-cache
+# 4. Global ~/.cache/huggingface/hub fallback
+_explicit_cache = os.environ.get("HF_HUB_CACHE")
+_d_cache = Path("D:/AI_VIDEO_AUTOMATION/EditFlowAI/data/hf-cache")
+_project_cache = _PROJECT_ROOT / "data" / "hf-cache"
+
+if _explicit_cache:
+    _DEFAULT_HF_CACHE = Path(_explicit_cache).expanduser()
+elif _d_cache.exists() and any(_d_cache.iterdir()):
+    _DEFAULT_HF_CACHE = _d_cache
+elif _project_cache.exists() and any(_project_cache.iterdir()):
+    _DEFAULT_HF_CACHE = _project_cache
+elif _d_cache.exists():
+    _DEFAULT_HF_CACHE = _d_cache
+else:
+    _DEFAULT_HF_CACHE = _project_cache
+
+_HF_CACHE = _DEFAULT_HF_CACHE.expanduser()
 try:
     _HF_CACHE.mkdir(parents=True, exist_ok=True)
     os.environ["HF_HUB_CACHE"] = str(_HF_CACHE)
@@ -105,7 +125,7 @@ class Settings(BaseSettings):
     WHISPER_COMPUTE_TYPE: str = "auto"
     WHISPER_LOCAL_DIR: Optional[str] = None
     # Auto-unload model from RAM/VRAM after 30 seconds of inactivity to free VRAM for Premiere's Mercury Playback Engine
-    WHISPER_IDLE_TIMEOUT_SECONDS: int = 30
+    WHISPER_IDLE_TIMEOUT_SECONDS: int = 300
 
     # ── HuggingFace cache ──
     # Exposed for diagnostics + UI. The env var was already set at module top.

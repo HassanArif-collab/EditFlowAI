@@ -139,6 +139,7 @@ const ICONS = {
   undo: '<path d="M12.5 8C9.9 8 7.5 9 5.7 10.6L2 7v9h9l-3.6-3.6A7 7 0 0 1 19.3 15l2.4-.8A9.5 9.5 0 0 0 12.5 8z"/>',
   redo: '<path d="M18.4 10.6A9.4 9.4 0 0 0 11.5 8a9.5 9.5 0 0 0-9.2 6.2l2.4.8A7 7 0 0 1 16.6 12.4L13 16h9V7z"/>',
   eye: '<path d="M12 5C6.5 5 2.7 9.3 1.5 12c1.2 2.7 5 7 10.5 7s9.3-4.3 10.5-7C21.3 9.3 17.5 5 12 5zm0 11a4 4 0 1 1 0-8 4 4 0 0 1 0 8z"/>',
+  eyeOff: '<path d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.44-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78l3.15 3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z"/>',
   bg: '<path d="M3 3h8v8H3zM13 13h8v8h-8z"/><path d="M13 3h8v8h-8zM3 13h8v8H3z" opacity=".35"/>',
   camera: '<path d="M9 3L7.17 5H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2h-3.17L15 3H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>',
   volume: '<path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>',
@@ -274,6 +275,7 @@ function scheduleScene() {
 function openCaptions() {
   injectFontStyles();
   ensureStyles();
+  S.previewOpen = true;
   const view = ensureContainer();
   const hero = document.getElementById('hero');
   const chat = document.getElementById('chat-scroll');
@@ -457,10 +459,38 @@ function layoutPreview() {
   const stage = $('#cc-stage');
   const cv = $('#cc-canvas');
   if (!stage || !cv) return;
-  stage.classList.toggle('hidden', !S.previewOpen);
+  const wrap = $('#cc-canvas-wrap');
   const resizer = $('#cc-stage-resizer');
-  if (resizer) resizer.classList.toggle('hidden', !S.previewOpen);
-  if (!S.previewOpen) return;
+  const prevBtn = $('[data-act="toggle-preview"]');
+
+  if (prevBtn) {
+    prevBtn.innerHTML = icon(S.previewOpen ? 'eye' : 'eyeOff');
+    prevBtn.classList.toggle('cc-on', !S.previewOpen);
+    prevBtn.title = S.previewOpen ? "Collapse preview canvas" : "Expand preview canvas";
+  }
+
+  let banner = $('#cc-preview-banner');
+  if (!S.previewOpen) {
+    stage.style.height = '36px';
+    stage.classList.add('cc-stage-collapsed');
+    if (wrap) wrap.style.display = 'none';
+    if (resizer) resizer.style.display = 'none';
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'cc-preview-banner';
+      banner.className = 'cc-preview-collapsed-banner';
+      banner.innerHTML = `<button class="cc-btn cc-small cc-accent-pill" data-act="toggle-preview" style="height:26px;font-size:11px;cursor:pointer;">👁️ Preview Collapsed — Click to Show Preview</button>`;
+      stage.appendChild(banner);
+    } else {
+      banner.style.display = 'flex';
+    }
+    return;
+  }
+
+  stage.classList.remove('cc-stage-collapsed');
+  if (banner) banner.style.display = 'none';
+  if (wrap) wrap.style.display = 'block';
+  if (resizer) resizer.style.display = 'flex';
 
   const rootH = (root && root.clientHeight > 0) ? root.clientHeight : (window.innerHeight || 600);
   const userH = S.previewHeight || (S.settings && S.settings.previewHeight);
@@ -472,7 +502,7 @@ function layoutPreview() {
   const avH = Math.max(80, baseH - 16);
   const seqW = (S.seq && S.seq.width > 0) ? S.seq.width : 1080;
   const seqH = (S.seq && S.seq.height > 0) ? S.seq.height : 1920;
-  const ar = seqW / seqH;
+  const ar = (seqW && seqH) ? (seqW / seqH) : (9 / 16);
   let w = avW, h = w / ar;
   if (h > avH) { h = avH; w = h * ar; }
 
@@ -1518,87 +1548,25 @@ function tabStyle() {
       <button class="cc-btn cc-small" data-act="save-user-preset" title="Save your current look as a reusable preset" style="padding:2px 8px; font-size:11px; height:24px;">+ Save Look</button>
     </div>`;
 
+  const curY = S.settings.layout ? S.settings.layout.posY : 72;
+  const isTop = curY <= 30;
+  const isCenter = curY > 30 && curY < 65;
+  const isBottom = curY >= 65;
+
   return `
-    ${section('Look', `${lookExtra}<div class="cc-tiles">${tiles}</div>`)}
-    ${section('Font', `
-      <div class="cc-ctl"><label class="cc-lbl">Family</label><select class="cc-select" data-bind="style.fontFamily" data-kind="text">${fontOptions()}</select></div>
+    ${section('Presets & Style', `${lookExtra}<div class="cc-tiles">${tiles}</div>`)}
+    ${section('Essential Typography', `
+      <div class="cc-ctl"><label class="cc-lbl">Font Family</label><select class="cc-select" data-bind="style.fontFamily" data-kind="text">${fontOptions()}</select></div>
       <p class="cc-warn${S.fontOk ? ' hidden' : ''}" id="cc-font-warn">This font isn't available to the panel — pick another, or install it in Windows and reopen the panel.</p>
       ${ctlSeg('style.fontWeight', 'Weight', ws.map((w) => [w, weightName(w)]))}
-      ${ctlNum('style.fontSize', 'Size', 24, 220, 1, 'px')}
-      ${ctlSeg('style.textCase', 'Case', [['as_is', 'As spoken'], ['upper', 'UPPER'], ['title', 'Title Case'], ['lower', 'lower']])}
-      ${ctlSeg('style.punctuation', 'Punctuation', [
-        ['no_dots', 'No dots', 'Keep commas & pauses, drop ending dots (.)'],
-        ['keep', 'Keep all', 'Keep all punctuation as spoken'],
-        ['soft', 'Clean', 'Hide commas and full stops, keep ? and !'],
-        ['none', 'None', 'Strip all punctuation'],
-        ['custom', 'Custom', 'Choose specifically which punctuation to keep'],
-      ])}
-      <div class="cc-punct-sub cc-sub-ctls${st.punctuation === 'custom' ? '' : ' hidden'}" style="margin: 6px 0 6px 8px; padding-left: 10px; border-left: 2px solid rgba(255,255,255,0.12);">
-        ${ctlToggle('style.punctCommas', 'Keep commas & inner pauses', 'Preserves , ; : (and Urdu ، ؛)')}
-        ${ctlToggle('style.punctDots', 'Keep sentence-ending dots', 'Preserves . … (and Urdu ۔)')}
-        ${ctlToggle('style.punctExpressive', 'Keep ? and !', 'Preserves question marks and exclamations')}
-      </div>`)}
-    ${section('Colour', `<div class="cc-swatches">
-      ${ctlColor('style.color', 'Text')}
-      ${M.highlightMode(S.settings.motion) === 'color' ? ctlColor('style.activeColor', 'Active word') : ''}
-      ${ctlColor('style.emphasisColor', 'Emphasis')}</div>
-      ${ctlToggle('style.gradient', 'Gradient fill', '2-colour vertical gradient')}
-      <div class="cc-gradient-sub cc-sub-ctls${st.gradient ? '' : ' hidden'}">
-        <div class="cc-swatches">${ctlColor('style.gradientColor', 'Bottom colour')}</div>
+      ${ctlNum('style.fontSize', 'Font Size', 24, 220, 1, 'px')}
+      <div class="cc-lbl" style="margin-top:6px; margin-bottom:4px;">Position Preset</div>
+      <div class="cc-quick-pos-row">
+        <button class="cc-quick-pos-btn${isTop ? ' active' : ''}" data-act="pos-top" title="Place captions near top of video (18%)">🔝 Top</button>
+        <button class="cc-quick-pos-btn${isCenter ? ' active' : ''}" data-act="pos-center" title="Center captions on screen (50%)">🎯 Center</button>
+        <button class="cc-quick-pos-btn${isBottom ? ' active' : ''}" data-act="pos-bottom" title="Place captions at bottom title-safe margin (76%)">⬇️ Bottom</button>
       </div>
-      ${ctlToggle('style.activeGlow', 'Active word glow', 'Subtle luminance bloom around the spoken word')}
-      <div class="cc-glow-sub cc-sub-ctls${st.activeGlow ? '' : ' hidden'}">
-        <div class="cc-swatches">${ctlColor('style.activeGlowColor', 'Glow colour')}</div>
-        ${ctlNum('style.activeGlowBlur', 'Glow softness', 4, 40, 1, 'px')}
-      </div>
-      ${ctlToggle('style.speakerColoring', 'Multi-speaker coloring', 'Differentiate speakers with distinct colors')}
-      <div class="cc-speaker-sub cc-sub-ctls${st.speakerColoring ? '' : ' hidden'}">
-        <div class="cc-swatches">
-          ${ctlColor('style.speakerColors.0', 'Speaker 1')}
-          ${ctlColor('style.speakerColors.1', 'Speaker 2')}
-        </div>
-      </div>
-      ${ctlSeg('style.emphasis', 'Emphasised words get', [['color', 'Colour'], ['pill', 'Pill'], ['both', 'Both']])}
-      <div class="cc-emphasis-sub cc-sub-ctls${st.emphasis !== 'color' ? '' : ' hidden'}">
-        <div class="cc-swatches">${ctlColor('style.pillColor', 'Pill')}</div>${ctlNum('style.pillOpacity', 'Pill opacity', 0, 100, 1, '%', 100)}
-      </div>`)}
-    ${section('Outline', `${ctlNum('style.strokeWidth', 'Thickness', 0, 20, 0.5, 'px')}
-      <div class="cc-swatches">${ctlColor('style.strokeColor', 'Outline colour')}</div>`)}
-    ${section('Shadow', `${ctlToggle('style.shadow', 'Drop shadow')}
-      <div class="cc-shadow-sub cc-sub-ctls${st.shadow ? '' : ' hidden'}">
-        <div class="cc-swatches">${ctlColor('style.shadowColor', 'Shadow colour')}</div>
-        ${ctlNum('style.shadowOpacity', 'Opacity', 0, 100, 1, '%', 100)}
-        ${ctlNum('style.shadowBlur', 'Softness', 0, 60, 1, 'px')}
-        ${ctlNum('style.shadowDistance', 'Distance', 0, 40, 1, 'px')}
-      </div>`)}
-    ${section('Background', `${ctlSeg('style.background', 'Behind the text', [['none', 'None'], ['box', 'Box', 'A rounded box per line'], ['block', 'Block', 'One box for the whole caption'], ['pills', 'Pills', 'A pill behind every word']])}
-      <div class="cc-bg-sub cc-sub-ctls${st.background !== 'none' ? '' : ' hidden'}">
-        <div class="cc-swatches">${ctlColor('style.bgColor', 'Box colour')}</div>
-        ${ctlNum('style.bgOpacity', 'Opacity', 0, 100, 1, '%', 100)}
-        ${ctlNum('style.bgRadius', 'Roundness', 0, 100, 1, '%', 100)}
-        <div style="display:flex;gap:6px">
-          <div style="flex:1">${ctlNum('style.bgPad', 'Horizontal padding', 0, 60, 1, '%', 100)}</div>
-          <div style="flex:1">${ctlNum('style.bgPadY', 'Vertical padding', 0, 60, 1, '%', 100)}</div>
-        </div>
-      </div>`)}
-    ${section('Emojis', `
-      ${ctlToggle('style.emojiEnabled', 'Dynamic Emojis', 'Display contextual emojis on spoken keywords')}
-      <div class="cc-emoji-sub cc-sub-ctls${st.emojiEnabled ? '' : ' hidden'}">
-        <div style="margin-top:6px">
-          ${ctlSeg('style.emojiPlacement', 'Placement', [['above', 'Above word'], ['inline', 'Inline with text']])}
-          ${ctlNum('style.emojiScale', 'Emoji size', 0.6, 2.0, 0.1, '×')}
-        </div>
-      </div>`)}
-    ${section('Position', `
-      ${ctlNum('layout.posY', 'Height on screen', 5, 95, 0.5, '%')}
-      <div style="display:flex;align-items:center;gap:6px">
-        <div style="flex:1">${ctlNum('layout.posX', 'Left / right', 5, 95, 0.5, '%')}</div>
-        <button class="cc-btn cc-small" data-act="center-x" title="Reset horizontal position to exact center (50%)" style="flex:none;height:24px;margin-top:2px">Center 50%</button>
-      </div>
-      ${ctlNum('layout.rotation', 'Tilt angle', -15, 15, 0.5, '°')}
-      ${ctlNum('layout.boxWidth', 'Caption width', 20, 100, 1, '%')}
-      ${ctlNum('layout.lineHeight', 'Vertical box height / line spacing', 0.8, 2.5, 0.02, '×')}
-      ${ctlSeg('grouping.maxWords', 'Words on screen', [
+      ${ctlSeg('grouping.maxWords', 'Cadence / Words on screen', [
         [1, '1 word', '1 word at a time — maximum retention pop'],
         [3, '2-3 words', '2 to 3 words — Hormozi viral cadence'],
         [5, '4-5 words', '4 to 5 words — standard balanced caption'],
@@ -1611,9 +1579,98 @@ function tabStyle() {
         if (optVal === 8 && cv >= 7) return true;
         return false;
       })}
-      ${ctlSeg('grouping.maxLines', 'Lines', [[1, '1 line'], [2, '2 lines'], [3, '3 lines']])}
-      ${ctlSeg('layout.align', 'Align', [['left', 'Left'], ['center', 'Centre'], ['right', 'Right']])}
-      <p class="cc-hint">Tip: drag caption to move. Drag left/right handles for width, top/bottom handles for height.</p>`)}`;
+      <div class="cc-swatches" style="margin-top:8px;">
+        ${ctlColor('style.color', 'Text Color')}
+        ${M.highlightMode(S.settings.motion) === 'color' ? ctlColor('style.activeColor', 'Spoken Word') : ''}
+        ${ctlColor('style.emphasisColor', 'Emphasis Color')}
+      </div>
+    `)}
+
+    <details class="cc-disclosure">
+      <summary class="cc-summary"><span>⚡ Advanced Styling (Outlines, Shadows, Box, Emojis, Angles)</span></summary>
+      <div class="cc-disclosure-content">
+        ${section('Outline & Borders', `
+          ${ctlNum('style.strokeWidth', 'Outline Thickness', 0, 20, 0.5, 'px')}
+          <div class="cc-swatches">${ctlColor('style.strokeColor', 'Outline Color')}</div>
+        `)}
+        ${section('Gradient & Color Fill', `
+          ${ctlToggle('style.gradient', 'Vertical Linear Gradient', 'Blend two colors vertically across words')}
+          <div class="cc-gradient-sub cc-sub-ctls${st.gradient ? '' : ' hidden'}">
+            <div class="cc-swatches" style="margin-top:6px;">${ctlColor('style.gradientColor', 'Bottom Color')}</div>
+          </div>
+        `)}
+        ${section('Drop Shadow', `
+          ${ctlToggle('style.shadow', 'Drop Shadow')}
+          <div class="cc-shadow-sub cc-sub-ctls${st.shadow ? '' : ' hidden'}">
+            <div class="cc-swatches">${ctlColor('style.shadowColor', 'Shadow Color')}</div>
+            ${ctlNum('style.shadowOpacity', 'Shadow Opacity', 0, 100, 1, '%', 100)}
+            ${ctlNum('style.shadowBlur', 'Shadow Blur / Softness', 0, 60, 1, 'px')}
+            ${ctlNum('style.shadowDistance', 'Shadow Distance', 0, 40, 1, 'px')}
+          </div>
+        `)}
+        ${section('Box Background Highlight', `
+          ${ctlSeg('style.background', 'Box Style', [['none', 'None'], ['box', 'Box', 'A rounded box per line'], ['block', 'Block', 'One box for the whole caption'], ['pills', 'Pills', 'A pill behind every word']])}
+          <div class="cc-bg-sub cc-sub-ctls${st.background !== 'none' ? '' : ' hidden'}">
+            <div class="cc-swatches">${ctlColor('style.bgColor', 'Box Color')}</div>
+            ${ctlNum('style.bgOpacity', 'Box Opacity', 0, 100, 1, '%', 100)}
+            ${ctlNum('style.bgRadius', 'Corner Roundness', 0, 100, 1, '%', 100)}
+            <div style="display:flex;gap:6px">
+              <div style="flex:1">${ctlNum('style.bgPad', 'Horizontal Padding', 0, 60, 1, '%', 100)}</div>
+              <div style="flex:1">${ctlNum('style.bgPadY', 'Vertical Padding', 0, 60, 1, '%', 100)}</div>
+            </div>
+          </div>
+        `)}
+        ${section('Dynamic Emojis', `
+          ${ctlToggle('style.emojiEnabled', 'Auto-Keyword Emojis', 'Display contextual emojis on spoken keywords')}
+          <div class="cc-emoji-sub cc-sub-ctls${st.emojiEnabled ? '' : ' hidden'}">
+            <div style="margin-top:6px">
+              ${ctlSeg('style.emojiPlacement', 'Placement', [['above', 'Above word'], ['inline', 'Inline with text']])}
+              ${ctlNum('style.emojiScale', 'Emoji Size', 0.6, 2.0, 0.1, '×')}
+            </div>
+          </div>
+        `)}
+        ${section('Glow & Speaker Colors', `
+          ${ctlToggle('style.activeGlow', 'Spoken Word Glow Bloom', 'Subtle luminance bloom around the spoken word')}
+          <div class="cc-glow-sub cc-sub-ctls${st.activeGlow ? '' : ' hidden'}">
+            <div class="cc-swatches">${ctlColor('style.activeGlowColor', 'Glow Color')}</div>
+            ${ctlNum('style.activeGlowBlur', 'Glow Softness', 4, 40, 1, 'px')}
+          </div>
+          ${ctlToggle('style.speakerColoring', 'Multi-Speaker Coloring', 'Differentiate speakers with distinct colors')}
+          <div class="cc-speaker-sub cc-sub-ctls${st.speakerColoring ? '' : ' hidden'}">
+            <div class="cc-swatches">
+              ${ctlColor('style.speakerColors.0', 'Speaker 1')}
+              ${ctlColor('style.speakerColors.1', 'Speaker 2')}
+            </div>
+          </div>
+        `)}
+        ${section('Text Case & Punctuation Rules', `
+          ${ctlSeg('style.textCase', 'Letter Case', [['as_is', 'As spoken'], ['upper', 'UPPER'], ['title', 'Title Case'], ['lower', 'lower']])}
+          ${ctlSeg('style.punctuation', 'Punctuation Cleanliness', [
+            ['no_dots', 'No dots', 'Keep commas & pauses, drop ending dots (.)'],
+            ['keep', 'Keep all', 'Keep all punctuation as spoken'],
+            ['soft', 'Clean', 'Hide commas and full stops, keep ? and !'],
+            ['none', 'None', 'Strip all punctuation'],
+            ['custom', 'Custom', 'Choose specifically which punctuation to keep'],
+          ])}
+          <div class="cc-punct-sub cc-sub-ctls${st.punctuation === 'custom' ? '' : ' hidden'}" style="margin: 6px 0 6px 8px; padding-left: 10px; border-left: 2px solid rgba(255,255,255,0.12);">
+            ${ctlToggle('style.punctCommas', 'Keep commas & pauses', 'Preserves , ; : (and Urdu ، ؛)')}
+            ${ctlToggle('style.punctDots', 'Keep ending dots', 'Preserves . … (and Urdu ۔)')}
+            ${ctlToggle('style.punctExpressive', 'Keep ? and !', 'Preserves question marks and exclamations')}
+          </div>
+        `)}
+        ${section('Fine Position & Angle', `
+          ${ctlNum('layout.posY', 'Vertical Position (Y)', 5, 95, 0.5, '%')}
+          <div style="display:flex;align-items:center;gap:6px">
+            <div style="flex:1">${ctlNum('layout.posX', 'Horizontal Position (X)', 5, 95, 0.5, '%')}</div>
+            <button class="cc-btn cc-small" data-act="center-x" title="Reset horizontal position to exact center (50%)" style="flex:none;height:24px;margin-top:2px">Center 50%</button>
+          </div>
+          ${ctlNum('layout.rotation', 'Tilt Angle', -15, 15, 0.5, '°')}
+          ${ctlNum('layout.boxWidth', 'Max Box Width', 20, 100, 1, '%')}
+          ${ctlNum('layout.lineHeight', 'Line Spacing', 0.8, 2.5, 0.02, '×')}
+          ${ctlSeg('layout.align', 'Alignment', [['left', 'Left'], ['center', 'Center'], ['right', 'Right']])}
+        `)}
+      </div>
+    </details>`;
 }
 
 const SAMPLE = [['Make', 0.0, 0.3], ['every', 0.3, 0.6], ['word', 0.6, 0.9], ['count', 0.9, 1.4]];
@@ -2356,6 +2413,33 @@ function onAction(act, el) {
       }).catch((e) => {
         setStatus('Could not read sequence: ' + formatUserError(e), 'error');
       });
+      break;
+        case 'pos-top':
+      if (!S.settings.layout) S.settings.layout = {};
+      S.settings.layout.posY = 18;
+      saveSettingsSoon();
+      rebuildScene();
+      renderBody();
+      requestDraw();
+      setStatus('Captions positioned at Top (18%).', 'ok');
+      break;
+    case 'pos-center':
+      if (!S.settings.layout) S.settings.layout = {};
+      S.settings.layout.posY = 50;
+      saveSettingsSoon();
+      rebuildScene();
+      renderBody();
+      requestDraw();
+      setStatus('Captions positioned at Center (50%).', 'ok');
+      break;
+    case 'pos-bottom':
+      if (!S.settings.layout) S.settings.layout = {};
+      S.settings.layout.posY = 76;
+      saveSettingsSoon();
+      rebuildScene();
+      renderBody();
+      requestDraw();
+      setStatus('Captions positioned at Bottom safe area (76%).', 'ok');
       break;
     case 'center-x':
       S.settings.layout.posX = 50;

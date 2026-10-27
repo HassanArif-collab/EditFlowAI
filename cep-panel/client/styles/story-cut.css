@@ -5,28 +5,28 @@
    ================================================================ */
 
 .sc-view {
-  --sc-bg: #1e1e1e;
-  --sc-surface: #252525;
-  --sc-surface-elevated: #2b2b2b;
-  --sc-surface-hover: #323232;
-  --sc-border: #333333;
-  --sc-border-subtle: #292929;
-  --sc-line: #2e2e2e;
+  --sc-bg: var(--ef-bg-app, #1e1e1e);
+  --sc-surface: var(--ef-bg-surface, #252525);
+  --sc-surface-elevated: var(--ef-bg-elevated, #2e2e2e);
+  --sc-surface-hover: var(--ef-bg-hover, #363636);
+  --sc-border: var(--ef-border, #383838);
+  --sc-border-subtle: var(--ef-border-subtle, #2b2b2b);
+  --sc-line: var(--ef-border, #383838);
   
-  --sc-text-primary: #f0f0f0;
-  --sc-text-secondary: #999999;
-  --sc-text-muted: #666666;
+  --sc-text-primary: var(--ef-text-primary, #f5f5f5);
+  --sc-text-secondary: var(--ef-text-secondary, #9e9e9e);
+  --sc-text-muted: var(--ef-text-muted, #686868);
   
-  --sc-accent: #1473e6;
-  --sc-accent-hover: #0d66d0;
-  --sc-accent-subtle: rgba(20, 115, 230, 0.12);
-  --sc-accent-border: rgba(20, 115, 230, 0.35);
+  --sc-accent: var(--ef-accent, #1473e6);
+  --sc-accent-hover: var(--ef-accent-hover, #0d66d0);
+  --sc-accent-subtle: var(--ef-accent-subtle, rgba(20, 115, 230, 0.14));
+  --sc-accent-border: var(--ef-accent-border, rgba(20, 115, 230, 0.35));
 
-  --sc-ok: #2d9d78;
-  --sc-ok-subtle: rgba(45, 157, 120, 0.15);
-  --sc-warn: #e68619;
-  --sc-err: #e34850;
-  --sc-err-subtle: rgba(227, 72, 80, 0.15);
+  --sc-ok: var(--ef-ok, #2d9d78);
+  --sc-ok-subtle: var(--ef-ok-subtle, rgba(45, 157, 120, 0.15));
+  --sc-warn: var(--ef-warn, #e68619);
+  --sc-err: var(--ef-err, #e34850);
+  --sc-err-subtle: var(--ef-err-subtle, rgba(227, 72, 80, 0.15));
 
   position: absolute;
   inset: 0;
@@ -93,12 +93,16 @@
 .sc-seg-btn {
   background: transparent;
   border: none;
-  border-radius: 3px;
-  padding: 3px 9px;
-  font-size: 11px;
+  border-radius: var(--ef-radius-sm, 4px);
+  min-height: 28px;
+  padding: 4px 12px;
+  font-size: 11.5px;
   font-weight: 500;
   color: var(--sc-text-secondary);
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   transition: all 0.12s ease;
   display: flex;
   align-items: center;
@@ -125,15 +129,17 @@
 .sc-header-spacer { flex: 1; }
 
 .sc-icon-btn {
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  min-height: 28px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   background: transparent;
   border: 1px solid transparent;
   color: var(--sc-text-secondary);
-  border-radius: 4px;
+  border-radius: var(--ef-radius-sm, 4px);
   cursor: pointer;
   transition: all 0.12s ease;
 }
@@ -1126,3 +1132,30 @@
 .sc-status-strip.info svg { fill: var(--sc-accent); }
 .sc-status-strip.success svg { fill: #4caf50; }
 .sc-status-strip.error svg { fill: #f44336; }
+
+/* ── Visual Library Empty State Card ────────────────────────── */
+.sc-vl-empty-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 24px 20px;
+  margin: 12px 16px;
+  border: 1px dashed var(--ef-border, #383838);
+  border-radius: var(--ef-radius-md, 6px);
+  background: rgba(255, 255, 255, 0.02);
+  gap: 8px;
+}
+.sc-vl-empty-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: rgba(20, 115, 230, 0.12);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ef-text-accent, #4b9cf5);
+}
+.sc-vl-empty-icon svg { width: 20px; height: 20px; fill: currentColor; }
+.sc-vl-empty-title { font-size: 13px; font-weight: 600; color: var(--ef-text-primary, #f5f5f5); }
+.sc-vl-empty-desc { font-size: 11px; color: var(--ef-text-secondary, #9e9e9e); max-width: 320px; line-height: 1.4; }
