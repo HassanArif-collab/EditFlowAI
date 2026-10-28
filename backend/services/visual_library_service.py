@@ -632,7 +632,7 @@ class VisualLibraryService:
 
             # Text query match
             if tokens:
-                search_corpus = f"{item.filename.lower()} {item.stem.lower()} {' '.join(item.tags)}".lower()
+                search_corpus = f"{item.path.lower()} {item.folder_path.lower()} {item.filename.lower()} {item.stem.lower()} {' '.join(item.tags)}".lower()
                 matches = sum(1 for tok in tokens if tok in search_corpus)
                 if matches == 0:
                     continue

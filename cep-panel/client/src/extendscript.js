@@ -91,23 +91,17 @@ async function callExtendScript(fnName, ...args) {
 function _buildScript(fnName, args) {
   const serializedArgs = args.map(a => JSON.stringify(a)).join(', ');
 
-  // Dispatch through the central editflowDispatch router if available,
-  // otherwise call the function directly (for backward compat).
-  if (['scanProject', 'scanProjectMedia', 'getSequenceState', 'processEDL',
-       'addMediaToTimeline', 'createSequence', 'getSelectedProjectItems',
-       'probeCapabilities', 'undoLastAction', 'removeTimelineClips',
-       'clearTimelineLabels', 'addMarker', 'removeTimelineRanges',
-       'importFiles', 'getMarkers', 'importCaptionsFromSRT', 'callModule'
-      ].includes(fnName)) {
-    // These are dispatched through the index.jsx router
-    const command = fnName;
-    const payload = args[0] || '';
-    const payloadStr = typeof payload === 'string' ? payload : JSON.stringify(payload);
-    return `editflowDispatch("${command}", ${JSON.stringify(payloadStr)})`;
+  // Direct setup / bootstrapping functions take raw positional arguments
+  if (fnName === 'editflowConfigureExtensionRoot') {
+    return `${fnName}(${serializedArgs})`;
   }
 
-  // Direct function call
-  return `${fnName}(${serializedArgs})`;
+  const payload = (args.length > 0 && args[0] !== undefined) ? args[0] : '';
+  const payloadStr = typeof payload === 'string' ? payload : JSON.stringify(payload);
+
+  // Universal dispatch through the central editflowDispatch router in index.jsx.
+  // index.jsx handles all command routing, module execution, and global fallbacks safely.
+  return `(typeof editflowDispatch === "function" ? editflowDispatch(${JSON.stringify(fnName)}, ${JSON.stringify(payloadStr)}) : ${fnName}(${serializedArgs}))`;
 }
 
 /**

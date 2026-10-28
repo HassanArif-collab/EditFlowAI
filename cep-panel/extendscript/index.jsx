@@ -265,6 +265,11 @@ function editflowDispatch(command, payloadData) {
             result = editflowUtils.safeStringify(result);
             break;
 
+        
+        case "openSequence":
+            result = clipManager.openSequence(options);
+            break;
+
         case "createSequence":
             result = clipManager.createNewSequence(options);
             break;
@@ -426,10 +431,19 @@ function editflowDispatch(command, payloadData) {
             break;
 
         default:
-            result = editflowUtils.safeStringify({
-                success: false,
-                error: "Unknown command: " + command
-            });
+            if (typeof $.global[command] === "function") {
+                try {
+                    var directRes = $.global[command](options);
+                    result = (typeof directRes === "string") ? directRes : editflowUtils.safeStringify(directRes);
+                } catch (eDirect) {
+                    result = editflowUtils.safeStringify({ success: false, error: eDirect.toString() });
+                }
+            } else {
+                result = editflowUtils.safeStringify({
+                    success: false,
+                    error: "Unknown command: " + command
+                });
+            }
     }
 
         // Track undo level for timeline-modifying operations

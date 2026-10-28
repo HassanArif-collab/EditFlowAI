@@ -442,6 +442,15 @@ clipManager = (function() {
                 requested_out: outPoint
             };
 
+            var explicitDuration = editflowUtils.getParam(options, 'duration', 'length');
+            if (explicitDuration !== undefined && explicitDuration !== null) {
+                var parsedDur = parseFloat(explicitDuration);
+                if (!isNaN(parsedDur) && parsedDur > 0 && outSec <= inSec) {
+                    outSec = inSec + parsedDur;
+                }
+            }
+            var targetTimelineDuration = (outSec > inSec) ? (outSec - inSec) : 0;
+
             if (placedClip) {
                 try {
                     diag.placed_in_ticks    = String(placedClip.inPoint.ticks || "");
@@ -456,6 +465,15 @@ clipManager = (function() {
                 if (outSec > inSec) {
                     try { placedClip.outPoint = editflowUtils.secondsToTicksString(outSec); } catch (e) { diag.out_err = e.toString(); }
                 }
+                if (targetTimelineDuration > 0) {
+                    try {
+                        var clipEndT = new Time();
+                        clipEndT.seconds = startSec + targetTimelineDuration;
+                        placedClip.end = clipEndT;
+                    } catch (eEnd1) {
+                        try { placedClip.end = editflowUtils.secondsToTicksString(startSec + targetTimelineDuration); } catch (_) {}
+                    }
+                }
             }
 
             if (placedAudio) {
@@ -464,6 +482,15 @@ clipManager = (function() {
                 }
                 if (outSec > inSec) {
                     try { placedAudio.outPoint = editflowUtils.secondsToTicksString(outSec); } catch (e) {}
+                }
+                if (targetTimelineDuration > 0) {
+                    try {
+                        var audioEndT = new Time();
+                        audioEndT.seconds = startSec + targetTimelineDuration;
+                        placedAudio.end = audioEndT;
+                    } catch (eEnd2) {
+                        try { placedAudio.end = editflowUtils.secondsToTicksString(startSec + targetTimelineDuration); } catch (_) {}
+                    }
                 }
             }
 
@@ -955,7 +982,15 @@ clipManager = (function() {
 
     function createNewSequence(options) {
         var res = createSequenceFromOps(options);
-        return editflowUtils.safeStringify(res);
+        if (!res) return editflowUtils.safeStringify({ success: false, error: "Sequence creation failed" });
+        var clean = {
+            success: !!res.success,
+            name: res.name || "",
+            id: res.id || "",
+            bin: res.bin || "",
+            error: res.error || null
+        };
+        return editflowUtils.safeStringify(clean);
     }
 
     function organizeIntoBins(options) {
@@ -1328,25 +1363,39 @@ clipManager = (function() {
             } catch (err) {}
         }
 
-        // Ensure newly created sequence is open and active
-        try {
-            if (typeof app.project.openSequence === 'function') {
-                app.project.openSequence(newSeq);
-            }
-        } catch (e1) {
+        // Move sequence into target bin if requested (prevents root clutter)
+        var targetBinName = editflowUtils.getParam(options, 'bin_name', 'bin');
+        if (targetBinName && newSeq.projectItem && app.project && app.project.rootItem) {
             try {
-                if (newSeq.sequenceID && typeof app.project.openSequence === 'function') {
-                    app.project.openSequence(newSeq.sequenceID);
+                var binRes = _resolveOrCreateBinPath(app.project.rootItem, targetBinName);
+                if (binRes && binRes.bin && typeof newSeq.projectItem.moveBin === 'function') {
+                    newSeq.projectItem.moveBin(binRes.bin);
+                }
+            } catch (bErr) {}
+        }
+
+        // Ensure newly created sequence is open and active in the Timeline panel
+        var seqOpened = false;
+        try {
+            if (newSeq.sequenceID && typeof app.project.openSequence === 'function') {
+                seqOpened = app.project.openSequence(newSeq.sequenceID);
+            }
+        } catch (e1) {}
+        if (!seqOpened) {
+            try {
+                if (typeof app.project.openSequence === 'function') {
+                    app.project.openSequence(newSeq);
                 }
             } catch (e2) {}
         }
-        try { app.project.activeSequence = newSeq; } catch (e) {}
+        try { app.project.activeSequence = newSeq; } catch (e3) {}
 
         return {
             success: true,
             name: name,
             id: newSeq.sequenceID || "",
-            sequence: newSeq
+            sequence: newSeq,
+            bin: targetBinName || ""
         };
     }
 
@@ -1543,8 +1592,43 @@ clipManager = (function() {
         });
     }
 
+
+    function openSequence(options) {
+        var targetName = editflowUtils.getParam(options, "name") || editflowUtils.getParam(options, "sequence_name");
+        var targetId = editflowUtils.getParam(options, "id") || editflowUtils.getParam(options, "sequenceID");
+        var foundSeq = null;
+        if (app.project && app.project.sequences) {
+            for (var s = 0; s < app.project.sequences.numSequences; s++) {
+                var curSeq = app.project.sequences[s];
+                if (!curSeq) continue;
+                if (targetId && curSeq.sequenceID === targetId) {
+                    foundSeq = curSeq;
+                    break;
+                }
+                if (targetName && (curSeq.name === targetName || curSeq.name.indexOf(targetName) !== -1)) {
+                    foundSeq = curSeq;
+                    break;
+                }
+            }
+        }
+        if (foundSeq) {
+            var opened = false;
+            try {
+                if (foundSeq.sequenceID && typeof app.project.openSequence === 'function') {
+                    opened = app.project.openSequence(foundSeq.sequenceID);
+                }
+            } catch (e1) {}
+            if (!opened) {
+                try { app.project.openSequence(foundSeq); } catch (e2) {}
+            }
+            try { app.project.activeSequence = foundSeq; } catch (e3) {}
+            return editflowUtils.safeStringify({ success: true, opened: foundSeq.name, id: foundSeq.sequenceID });
+        }
+        return editflowUtils.safeStringify({ success: false, error: "Sequence not found: " + (targetName || targetId) });
+    }
     return {
         processEDL: processEDL,
+        openSequence: openSequence,
         processEDLOps: processEDLOps,
         addClipToSequence: addClipToSequence,
         removeClipFromSequence: removeClipFromSequence,
