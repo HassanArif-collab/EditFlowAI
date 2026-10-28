@@ -279,6 +279,19 @@ async def _transcribe_wav(wav_path, fingerprint: str, language: Optional[str], e
         )
         engine_used = result.engine
 
+    # Cache parity: ensure transcript result is committed to the cache registry
+    if result is not None and fingerprint:
+        try:
+            if not getattr(result, "content_hash", None):
+                result.content_hash = fingerprint
+            if not getattr(result, "model", None):
+                result.model = active_model
+            if not getattr(result, "engine", None):
+                result.engine = engine_used or "whisperx"
+            whisper_service._save_transcript_cache(fingerprint, result)
+        except Exception as cache_exc:  # noqa: BLE001
+            logger.warning("captions: failed to save transcript cache: %s", cache_exc)
+
     # Flatten segments → word list. sanitize_words guards against overlaps,
     # zero durations and missing timestamps.
     words_out: list[dict] = []

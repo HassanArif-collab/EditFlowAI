@@ -51,29 +51,117 @@ export const STYLE_DEFAULTS = {
   emojiScale: 1.0,          // relative emoji size
 };
 
+export const UNIVERSAL_FONT_FALLBACKS =
+  '"Noto Nastaliq Urdu", "Urdu Typesetting", "Jameel Noori Nastaliq", "Segoe UI Historic", "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", Arial, sans-serif';
+
 export function fontString(style, size) {
   const fam = String(style.fontFamily || 'Montserrat').replace(/"/g, '');
-  const fallbacks = /urdu|nastaliq|arabic/i.test(fam)
+  const fallbacks = /urdu|nastaliq/i.test(fam)
     ? '"Noto Nastaliq Urdu", "Urdu Typesetting", "Jameel Noori Nastaliq", "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", Arial, sans-serif'
-    : '"Arial Black", "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", Arial, sans-serif';
+    : /arabic/i.test(fam)
+      ? '"Geeza Pro", "Traditional Arabic", "Noto Nastaliq Urdu", "Urdu Typesetting", "Jameel Noori Nastaliq", "Segoe UI", "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", Arial, sans-serif'
+      : UNIVERSAL_FONT_FALLBACKS;
   return `${style.fontWeight || 700} ${size || style.fontSize || 80}px "${fam}", ${fallbacks}`;
 }
 
 /* ── colour helpers ── */
 
+const _normHexCache = new Map();
+
+/**
+ * Normalizes any hex, shorthand, or rgb() color string into standard #RRGGBB.
+ * Returns fallback if invalid.
+ *
+ * @param {string} val
+ * @param {string|null} fallback
+ * @returns {string|null}
+ */
+export function normalizeHex(val, fallback = '#ffffff') {
+  if (val == null) return fallback;
+  const s = String(val).trim().toLowerCase();
+  if (!s) return fallback;
+
+  let cached = _normHexCache.get(s);
+  if (cached !== undefined) return cached;
+
+  let result = null;
+
+  // Fast path: exact 7-char standard hex '#rrggbb'
+  if (/^#[0-9a-f]{6}$/.test(s)) {
+    result = s;
+  } else if (/^[0-9a-f]{6}$/.test(s)) {
+    result = '#' + s;
+  } else if (/^#[0-9a-f]{3}$/.test(s)) {
+    result = `#${s[1]}${s[1]}${s[2]}${s[2]}${s[3]}${s[3]}`;
+  } else if (/^[0-9a-f]{3}$/.test(s)) {
+    result = `#${s[0]}${s[0]}${s[1]}${s[1]}${s[2]}${s[2]}`;
+  } else if (/^#[0-9a-f]{4}$/.test(s)) {
+    result = `#${s[1]}${s[1]}${s[2]}${s[2]}${s[3]}${s[3]}`;
+  } else if (/^#[0-9a-f]{8}$/.test(s)) {
+    result = s.slice(0, 7);
+  } else if (/^[0-9a-f]{8}$/.test(s)) {
+    result = '#' + s.slice(0, 6);
+  } else {
+    const rgbMatch = s.match(/^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})/);
+    if (rgbMatch) {
+      const r = Math.min(255, parseInt(rgbMatch[1], 10)).toString(16).padStart(2, '0');
+      const g = Math.min(255, parseInt(rgbMatch[2], 10)).toString(16).padStart(2, '0');
+      const b = Math.min(255, parseInt(rgbMatch[3], 10)).toString(16).padStart(2, '0');
+      result = `#${r}${g}${b}`;
+    }
+  }
+
+  if (!result) return fallback;
+  if (_normHexCache.size > 512) _normHexCache.clear();
+  _normHexCache.set(s, result);
+  return result;
+}
+
+const _hexRgbCache = new Map();
+
+export function sanitizeColor(c, fallback = '#ffffff') {
+  if (typeof c !== 'string') return fallback;
+  const s = c.trim();
+  if (!s) return fallback;
+  // Valid hex: #fff, #ffff, #ffffff, #ffffffff, or without leading '#'
+  if (/^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(s)) {
+    return s.startsWith('#') ? s : '#' + s;
+  }
+  // Valid rgb / rgba
+  if (/^rgba?\(\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+(\s*,\s*[\d.]+\s*)?\)$/i.test(s)) {
+    return s;
+  }
+  // Valid hsl / hsla
+  if (/^hsla?\(\s*[\d.]+\s*,\s*[\d.]+%?\s*,\s*[\d.]+%?(\s*,\s*[\d.]+\s*)?\)$/i.test(s)) {
+    return s;
+  }
+  // Named CSS colors (alphabetic only, e.g. transparent, white, red, black)
+  if (/^[a-zA-Z]+$/.test(s)) {
+    return s;
+  }
+  return fallback;
+}
+
 function hexRgb(hex) {
-  let h = String(hex || '#ffffff').replace('#', '');
-  if (h.length === 3) h = h.split('').map((c) => c + c).join('');
-  const n = parseInt((h + '000000').slice(0, 6), 16);
-  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  const safe = normalizeHex(hex, '#ffffff');
+  let cached = _hexRgbCache.get(safe);
+  if (cached) return cached;
+  const n = parseInt(safe.slice(1), 16);
+  cached = isNaN(n) ? [255, 255, 255] : [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  if (_hexRgbCache.size > 256) _hexRgbCache.clear();
+  _hexRgbCache.set(safe, cached);
+  return cached;
 }
 export function rgba(hex, a) {
   const [r, g, b] = hexRgb(hex);
-  return `rgba(${r},${g},${b},${a == null ? 1 : Math.max(0, Math.min(1, a))})`;
+  const numA = Number(a);
+  const safeA = isFinite(numA) ? Math.max(0, Math.min(1, numA)) : 1;
+  return `rgba(${r},${g},${b},${safeA})`;
 }
 function mixHex(a, b, k) {
   const x = hexRgb(a), y = hexRgb(b);
-  const c = x.map((v, i) => Math.round(v + (y[i] - v) * clamp01(k)));
+  const safeK = isFinite(Number(k)) ? clamp01(Number(k)) : 0;
+  const c = x.map((v, i) => Math.round(v + (y[i] - v) * safeK));
   return `rgb(${c[0]},${c[1]},${c[2]})`;
 }
 
@@ -91,46 +179,60 @@ function roundRectPath(ctx, x, y, w, h, r) {
 }
 
 function fillRound(ctx, x, y, w, h, radiusK, color, alpha) {
-  if (alpha <= 0.002 || w <= 0 || h <= 0) return;
+  const a = Number(alpha);
+  if (!isFinite(a) || a <= 0.002 || !isFinite(w) || !isFinite(h) || w <= 0 || h <= 0) return;
+  if (!isFinite(x) || !isFinite(y)) return;
   ctx.save();
-  ctx.shadowColor = 'transparent';
-  ctx.fillStyle = rgba(color, alpha);
-  roundRectPath(ctx, x, y, w, h, (h / 2) * radiusK);
-  ctx.fill();
+  try {
+    ctx.shadowColor = 'transparent';
+    ctx.fillStyle = rgba(color, a);
+    const r = (isFinite(radiusK) && radiusK > 0) ? (h / 2) * radiusK : 0;
+    roundRectPath(ctx, x, y, w, h, r);
+    ctx.fill();
+  } catch (_) {}
   ctx.restore();
 }
 
 /* ── text ── */
 
 function drawText(ctx, text, x, y, color, st, devScale, asc, desc) {
-  const safeColor = (typeof color === 'string' && color.trim()) ? color.trim() : '#ffffff';
+  const safeColor = sanitizeColor(color, '#ffffff');
   const stroke = (Number(st.strokeWidth) || 0) > 0;
   if (st.shadow && (Number(st.shadowOpacity) || 0) > 0) {
     try {
-      ctx.shadowColor = rgba(st.shadowColor || '#000000', st.shadowOpacity);
-      ctx.shadowBlur = Math.max(0, Number(st.shadowBlur) || 0);
+      const op = Number(st.shadowOpacity);
+      const safeOp = isFinite(op) ? Math.max(0, Math.min(1, op)) : 0.6;
+      ctx.shadowColor = rgba(st.shadowColor || '#000000', safeOp);
+      const blur = Number(st.shadowBlur);
+      ctx.shadowBlur = (isFinite(blur) && blur >= 0) ? blur : 0;
       ctx.shadowOffsetX = 0;
-      ctx.shadowOffsetY = Number(st.shadowDistance) || 0;
+      const dist = Number(st.shadowDistance);
+      ctx.shadowOffsetY = isFinite(dist) ? dist : 0;
     } catch (_) {}
   }
   if (stroke) {
     ctx.lineJoin = 'round';
     ctx.miterLimit = 2;
-    ctx.lineWidth = (Number(st.strokeWidth) || 0) * 2;      // half is hidden under the fill
-    ctx.strokeStyle = st.strokeColor || '#000000';
+    ctx.lineWidth = Math.max(0, (Number(st.strokeWidth) || 0) * 2);      // half is hidden under the fill
+    ctx.strokeStyle = sanitizeColor(st.strokeColor, '#000000');
     try { ctx.strokeText(text, x, y); } catch (_) {}
     ctx.shadowColor = 'transparent';         // one shadow, under the outline
   }
   let fillApplied = false;
   if (st.gradient && st.gradientColor && typeof ctx.createLinearGradient === 'function') {
     try {
-      const a = Number(asc) || 60;
-      const d = Number(desc) || 20;
-      const y0 = isFinite(y - a) ? (y - a) : (y - 60);
-      const y1 = isFinite(y + d) ? (y + d) : (y + 20);
+      const a = Number(asc);
+      const d = Number(desc);
+      const safeAsc = (isFinite(a) && a > 0) ? a : 60;
+      const safeDesc = (isFinite(d) && d >= 0) ? d : 20;
+      const safeY = isFinite(y) ? y : 0;
+      const y0 = safeY - safeAsc;
+      let y1 = safeY + safeDesc;
+      if (Math.abs(y1 - y0) < 1) y1 = y0 + 1; // Prevent zero-dimension gradient bounds
       const grad = ctx.createLinearGradient(0, y0, 0, y1);
-      grad.addColorStop(0, safeColor);
-      const gradBottom = (typeof st.gradientColor === 'string' && st.gradientColor.trim()) ? st.gradientColor.trim() : '#ffea00';
+      const gradTop = sanitizeColor(safeColor, '#ffffff');
+      const gradBottom = sanitizeColor(st.gradientColor, '#ffea00');
+      grad.addColorStop(0, gradTop);
       grad.addColorStop(1, gradBottom);
       ctx.fillStyle = grad;
       fillApplied = true;
@@ -245,8 +347,9 @@ function drawCaption(ctx, c, scene, st, motion, lay, t, sc) {
         const spkIdx = (w.speaker != null && isFinite(w.speaker)) ? Math.max(0, Math.floor(w.speaker)) : 0;
         color = st.speakerColors[spkIdx % st.speakerColors.length] || st.color;
       }
+      color = sanitizeColor(color, '#ffffff');
       const emph = w.emphasis;
-      if (emph && (st.emphasis === 'color' || st.emphasis === 'both')) color = st.emphasisColor;
+      if (emph && (st.emphasis === 'color' || st.emphasis === 'both')) color = sanitizeColor(st.emphasisColor, '#ffd84d');
       if (s.hi > 0 && mode === 'color') color = mixHex(color, st.activeColor, s.hi);
       if (motion.spokenDim) alpha *= (0.4 + 0.6 * s.spoken);
 
@@ -268,14 +371,21 @@ function drawCaption(ctx, c, scene, st, motion, lay, t, sc) {
       ctx.translate(ox, cy);
       if (scale !== 1) ctx.scale(scale, scale);
       if (st.activeGlow && s.hi > 0) {
-        ctx.save();
-        ctx.shadowColor = st.activeGlowColor || '#00f0ff';
-        ctx.shadowBlur = (st.activeGlowBlur || 16) * s.hi;
-        ctx.shadowOffsetX = 0;
-        ctx.shadowOffsetY = 0;
-        ctx.fillStyle = st.activeGlowColor || '#00f0ff';
-        ctx.fillText(text, -w.w / 2, (asc - desc) / 2);
-        ctx.restore();
+        try {
+          ctx.save();
+          const glowColor = sanitizeColor(st.activeGlowColor, '#00f0ff');
+          const blur = Number(st.activeGlowBlur);
+          const safeBlur = (isFinite(blur) && blur >= 0) ? blur : 16;
+          ctx.shadowColor = glowColor;
+          ctx.shadowBlur = Math.max(0, safeBlur * s.hi);
+          ctx.shadowOffsetX = 0;
+          ctx.shadowOffsetY = 0;
+          ctx.fillStyle = glowColor;
+          ctx.fillText(text, -w.w / 2, (asc - desc) / 2);
+          ctx.restore();
+        } catch (_) {
+          try { ctx.restore(); } catch (_) {}
+        }
       }
       if (w.emoji && (st.emojiPlacement || 'above') === 'above') {
         ctx.save();
@@ -308,6 +418,16 @@ export function captionBand(scene, settings) {
   let top = Infinity, bot = -Infinity;
   for (const c of scene.captions) {
     const scaleK = c.fit;
+    const asc = c.ascent || (fs * 0.78);
+    const desc = c.descent || (fs * 0.22);
+    if (Array.isArray(c.lines)) {
+      for (const l of c.lines) {
+        const lineTop = c.cy + (l.y - asc - c.cy) * scaleK;
+        const lineBot = c.cy + (l.y + desc - c.cy) * scaleK;
+        if (lineTop < top) top = lineTop;
+        if (lineBot > bot) bot = lineBot;
+      }
+    }
     const y0 = c.cy + (c.box.y - c.cy) * scaleK;
     const y1 = c.cy + (c.box.y + c.box.h - c.cy) * scaleK;
     if (y0 < top) top = y0;
@@ -319,8 +439,17 @@ export function captionBand(scene, settings) {
   const rot = lay.rotation || 0;
   const rotPad = rot ? Math.abs(Math.sin((rot * Math.PI) / 180)) * (scene.width * 0.45) : 0;
   const emojiPad = ((st.emojiPlacement || 'above') === 'above') ? (fs * 0.85 * (st.emojiScale || 1.0)) : 0;
-  const fx = st.strokeWidth + (st.shadow ? st.shadowBlur * 1.5 + st.shadowDistance : 0) + (st.activeGlow ? (st.activeGlowBlur || 16) * 1.5 : 0) + (st.bgPad || 0.22) * fs + 16;
-  let y = Math.floor(top - travel - fx - rotPad - emojiPad), h = Math.ceil(bot + travel + fx + rotPad) - y;
+  const padY = (st.bgPadY != null ? st.bgPadY : (st.bgPad != null ? st.bgPad * 0.75 : 0.165)) * fs;
+  const fx = st.strokeWidth + (st.shadow ? st.shadowBlur * 1.5 + st.shadowDistance : 0) + (st.activeGlow ? (st.activeGlowBlur || 16) * 1.5 : 0) + padY + 16;
+
+  // RTL / Nastaliq descender headroom: allocate at least 0.52 * fontSize
+  const hasRtl = scene && scene.captions && scene.captions.some((c) =>
+    (c.descent >= fs * 0.50) ||
+    (c.lines && c.lines.some((l) => l.rtl || (l.words && l.words.some((w) => w.rtl))))
+  );
+  const rtlDescPad = hasRtl ? Math.ceil(fs * 0.52) : 0;
+  const rtlAscPad = hasRtl ? Math.ceil(fs * 0.20) : 0;
+  let y = Math.floor(top - travel - fx - rotPad - emojiPad - rtlAscPad), h = Math.ceil(bot + travel + fx + rotPad + rtlDescPad) - y;
   y = Math.max(0, y);
   h = Math.min(scene.height - y, h);
   // even rows: ProRes 4:4:4 is fine with odd sizes, but keep the pad simple

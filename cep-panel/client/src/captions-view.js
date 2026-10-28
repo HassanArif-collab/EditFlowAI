@@ -15,7 +15,7 @@
 import { apiGet, apiPost, apiUpload, getBaseUrl } from './api.js';
 import { isExtendScriptAvailable, callExtendScript } from './extendscript.js';
 import * as M from './captions/model.js';
-import { drawFrame, STYLE_DEFAULTS } from './captions/render.js';
+import { drawFrame, STYLE_DEFAULTS, normalizeHex as _importedNormalizeHex } from './captions/render.js';
 import { BUNDLED, ensureFont, makeMeasurer, listSystemFonts, injectFontStyles, weightName } from './captions/fonts.js';
 import { PRESETS, findPreset, getAllPresets, saveUserPreset, deleteUserPreset } from './captions/presets.js';
 import { renderOverlay } from './captions/export.js';
@@ -111,7 +111,7 @@ function getPath(obj, path) { return path.split('.').reduce((o, k) => (o == null
 function setPath(obj, path, v) {
   const ks = path.split('.');
   let o = obj;
-  for (let i = 0; i < ks.length - 1; i++) o = o[ks[i]] = o[ks[i]] || {};
+  for (let i = 0; i < ks.length - 1; i++) o = o[ks[i]] = o[ks[i]] || (/^\d+$/.test(ks[i + 1]) ? [] : {});
   o[ks[ks.length - 1]] = v;
 }
 function fmtTime(s) {
@@ -133,12 +133,41 @@ function deepMerge(base, over) {
 }
 function inCEP() { return isExtendScriptAvailable(); }
 
+function normalizeHex(val, fallback = '#ffffff') {
+  try {
+    if (typeof _importedNormalizeHex === 'function') {
+      const res = _importedNormalizeHex(val, fallback);
+      if (res != null) return res;
+    }
+  } catch (_) {}
+  if (val == null) return fallback;
+  const s = String(val).trim().toLowerCase();
+  if (!s) return fallback;
+  if (/^#[0-9a-f]{6}$/.test(s)) return s;
+  if (/^[0-9a-f]{6}$/.test(s)) return '#' + s;
+  if (/^#[0-9a-f]{3}$/.test(s)) return `#${s[1]}${s[1]}${s[2]}${s[2]}${s[3]}${s[3]}`;
+  if (/^[0-9a-f]{3}$/.test(s)) return `#${s[0]}${s[0]}${s[1]}${s[1]}${s[2]}${s[2]}`;
+  if (/^#[0-9a-f]{4}$/.test(s)) return `#${s[1]}${s[1]}${s[2]}${s[2]}${s[3]}${s[3]}`;
+  if (/^[0-9a-f]{4}$/.test(s)) return `#${s[0]}${s[0]}${s[1]}${s[1]}${s[2]}${s[2]}`;
+  if (/^#[0-9a-f]{8}$/.test(s)) return s.slice(0, 7);
+  if (/^[0-9a-f]{8}$/.test(s)) return '#' + s.slice(0, 6);
+  const rgbMatch = s.match(/^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})/);
+  if (rgbMatch) {
+    const r = Math.min(255, parseInt(rgbMatch[1], 10)).toString(16).padStart(2, '0');
+    const g = Math.min(255, parseInt(rgbMatch[2], 10)).toString(16).padStart(2, '0');
+    const b = Math.min(255, parseInt(rgbMatch[3], 10)).toString(16).padStart(2, '0');
+    return `#${r}${g}${b}`;
+  }
+  return fallback;
+}
+
 const ICONS = {
   play: '<path d="M8 5v14l11-7z"/>',
   pause: '<path d="M7 5h4v14H7zM13 5h4v14h-4z"/>',
   undo: '<path d="M12.5 8C9.9 8 7.5 9 5.7 10.6L2 7v9h9l-3.6-3.6A7 7 0 0 1 19.3 15l2.4-.8A9.5 9.5 0 0 0 12.5 8z"/>',
   redo: '<path d="M18.4 10.6A9.4 9.4 0 0 0 11.5 8a9.5 9.5 0 0 0-9.2 6.2l2.4.8A7 7 0 0 1 16.6 12.4L13 16h9V7z"/>',
   eye: '<path d="M12 5C6.5 5 2.7 9.3 1.5 12c1.2 2.7 5 7 10.5 7s9.3-4.3 10.5-7C21.3 9.3 17.5 5 12 5zm0 11a4 4 0 1 1 0-8 4 4 0 0 1 0 8z"/>',
+  eyeOff: '<path d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.44-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.47-1.8c.22 0 .44.03.65.08l-2.08 2.08c-.05-.21-.08-.43-.08-.65 0-1.66 1.34-3 3-3z"/>',
   bg: '<path d="M3 3h8v8H3zM13 13h8v8h-8z"/><path d="M13 3h8v8h-8zM3 13h8v8H3z" opacity=".35"/>',
   camera: '<path d="M9 3L7.17 5H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2h-3.17L15 3H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>',
   volume: '<path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>',
@@ -160,7 +189,24 @@ function loadSettings() {
       saved = JSON.parse(localStorage.getItem(SETTINGS_KEY_V2) || 'null');
     }
   } catch (_) { saved = null; }
-  return deepMerge(DEFAULTS, saved || {});
+  const merged = deepMerge(DEFAULTS, saved || {});
+  if (merged.style) {
+    const s = merged.style;
+    const colorProps = [
+      'color', 'activeColor', 'emphasisColor', 'pillColor',
+      'strokeColor', 'shadowColor', 'bgColor', 'hlBoxColor',
+      'gradientColor', 'activeGlowColor'
+    ];
+    for (const p of colorProps) {
+      if (s[p] != null) s[p] = normalizeHex(s[p], STYLE_DEFAULTS[p] || '#ffffff');
+    }
+    if (Array.isArray(s.speakerColors)) {
+      s.speakerColors = s.speakerColors.map((c, i) =>
+        normalizeHex(c, (STYLE_DEFAULTS.speakerColors && STYLE_DEFAULTS.speakerColors[i]) || '#ffffff')
+      );
+    }
+  }
+  return merged;
 }
 function saveSettingsSoon() {
   clearTimeout(saveTimer);
@@ -427,7 +473,7 @@ function renderShell() {
         <option value="off">Safe zone</option>
         ${Object.keys(SAFE_ZONES).map((k) => `<option value="${k}">${SAFE_ZONES[k].label}</option>`).join('')}
       </select>
-      <button class="cc-icon-btn" data-act="toggle-preview" title="Hide / show the preview">${icon('eye')}</button>
+      <button class="cc-icon-btn${S.previewOpen ? '' : ' cc-on'}" data-act="toggle-preview" title="${S.previewOpen ? 'Hide preview' : 'Show preview'}">${icon(S.previewOpen ? 'eye' : 'eyeOff')}</button>
     </div>
     <div class="cc-tabs" role="tablist">${TABS.map(([id, label]) =>
       `<button class="cc-tab" role="tab" data-tab="${id}">${label}</button>`).join('')}</div>
@@ -442,8 +488,16 @@ function renderShell() {
       const w = Math.round(entries[0].contentRect.width);
       if (w === lastW) return;
       lastW = w;
-      requestAnimationFrame(layoutPreview);
+      if (S.previewOpen) requestAnimationFrame(layoutPreview);
     }).observe($('#cc-stage'));
+  }
+  const stageEl = $('#cc-stage');
+  if (stageEl) {
+    stageEl.addEventListener('transitionend', (e) => {
+      if (e.target === stageEl && S.previewOpen) {
+        requestAnimationFrame(layoutPreview);
+      }
+    });
   }
   window.addEventListener('resize', () => requestAnimationFrame(layoutPreview));
   bindResizer();
@@ -453,22 +507,40 @@ function renderShell() {
 
 /* ── preview & zoom ───────────────────────────────────────────── */
 
+function updatePreviewToggleBtn() {
+  const btn = $('[data-act="toggle-preview"]');
+  if (!btn) return;
+  btn.classList.toggle('cc-on', !S.previewOpen);
+  btn.title = S.previewOpen ? 'Hide preview' : 'Show preview';
+  btn.innerHTML = icon(S.previewOpen ? 'eye' : 'eyeOff');
+}
+
 function layoutPreview() {
   const stage = $('#cc-stage');
   const cv = $('#cc-canvas');
   if (!stage || !cv) return;
-  stage.classList.toggle('hidden', !S.previewOpen);
+
+  stage.classList.remove('hidden');
+  stage.classList.toggle('cc-stage-collapsed', !S.previewOpen);
   const resizer = $('#cc-stage-resizer');
   if (resizer) resizer.classList.toggle('hidden', !S.previewOpen);
-  if (!S.previewOpen) return;
+
+  updatePreviewToggleBtn();
+
+  if (!S.previewOpen) {
+    stage.style.height = '0px';
+    return;
+  }
 
   const rootH = (root && root.clientHeight > 0) ? root.clientHeight : (window.innerHeight || 600);
   const userH = S.previewHeight || (S.settings && S.settings.previewHeight);
-  const baseH = userH ? Math.max(90, Math.min(rootH * 0.78, userH))
-                      : Math.max(120, Math.min(560, rootH * 0.34));
+  const numUserH = Number(userH);
+  const validUserH = (isFinite(numUserH) && numUserH >= 80) ? numUserH : null;
+  const baseH = validUserH ? Math.max(90, Math.min(rootH * 0.78, validUserH))
+                           : Math.max(120, Math.min(560, rootH * 0.34));
   stage.style.height = Math.round(baseH) + 'px';
 
-  const avW = Math.max(120, (stage.clientWidth || 300) - 16);
+  const avW = Math.max(120, (stage.clientWidth || (root && root.clientWidth) || 300) - 16);
   const avH = Math.max(80, baseH - 16);
   const seqW = (S.seq && S.seq.width > 0) ? S.seq.width : 1080;
   const seqH = (S.seq && S.seq.height > 0) ? S.seq.height : 1920;
@@ -496,6 +568,7 @@ function bindResizer() {
   const resizer = $('#cc-stage-resizer');
   if (!resizer) return;
   let startY = 0, startH = 0;
+  const stage = $('#cc-stage');
   const onMove = (e) => {
     const dy = e.clientY - startY;
     const newH = Math.max(90, Math.min((root.clientHeight || 600) * 0.78, startH + dy));
@@ -507,6 +580,7 @@ function bindResizer() {
     window.removeEventListener('pointermove', onMove);
     window.removeEventListener('pointerup', onUp);
     resizer.classList.remove('cc-resizing');
+    if (stage) stage.style.transition = '';
     saveSettingsSoon();
   };
   resizer.addEventListener('pointerdown', (e) => {
@@ -514,6 +588,7 @@ function bindResizer() {
     startY = e.clientY;
     startH = ($('#cc-stage') || {}).clientHeight || (root.clientHeight * 0.34);
     resizer.classList.add('cc-resizing');
+    if (stage) stage.style.transition = 'none';
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
   });
@@ -995,8 +1070,15 @@ function ctlSeg(path, label, options, matchFn) {
   </div></div>`;
 }
 function ctlColor(path, label) {
-  const v = getPath(S.settings, path) || '#ffffff';
-  return `<label class="cc-color"><input type="color" value="${esc(v)}" data-bind="${path}" data-kind="text"><span>${label}</span></label>`;
+  const raw = getPath(S.settings, path);
+  const hex = normalizeHex(raw, '#ffffff');
+  return `<div class="cc-color cc-color-group">
+    <div class="cc-color-ctrl">
+      <input type="color" class="cc-color-swatch" value="${esc(hex)}" data-bind="${path}" data-kind="color" aria-label="${esc(label)} color swatch">
+      <input type="text" class="cc-hex-input cc-color-hex" value="${esc(hex)}" data-bind="${path}" data-kind="hex" maxlength="24" spellcheck="false" autocomplete="off" aria-label="${esc(label)} hex code" placeholder="#FFFFFF">
+    </div>
+    <span class="cc-color-lbl">${label}</span>
+  </div>`;
 }
 function section(title, inner, extra) {
   return `<section class="cc-sec"><h4>${title}${extra || ''}</h4>${inner}</section>`;
@@ -1533,7 +1615,7 @@ function tabStyle() {
         ['none', 'None', 'Strip all punctuation'],
         ['custom', 'Custom', 'Choose specifically which punctuation to keep'],
       ])}
-      <div class="cc-punct-sub cc-sub-ctls${st.punctuation === 'custom' ? '' : ' hidden'}" style="margin: 6px 0 6px 8px; padding-left: 10px; border-left: 2px solid rgba(255,255,255,0.12);">
+      <div class="cc-punct-sub cc-sub-ctls${st.punctuation === 'custom' ? '' : ' hidden'}">
         ${ctlToggle('style.punctCommas', 'Keep commas & inner pauses', 'Preserves , ; : (and Urdu ، ؛)')}
         ${ctlToggle('style.punctDots', 'Keep sentence-ending dots', 'Preserves . … (and Urdu ۔)')}
         ${ctlToggle('style.punctExpressive', 'Keep ? and !', 'Preserves question marks and exclamations')}
@@ -1964,6 +2046,19 @@ function applyPreset(id) {
   const p = findPreset(id);
   if (!p) return;
   S.settings.style = Object.assign({}, S.settings.style, p.style);
+  const colorProps = [
+    'color', 'activeColor', 'emphasisColor', 'pillColor',
+    'strokeColor', 'shadowColor', 'bgColor', 'hlBoxColor',
+    'gradientColor', 'activeGlowColor'
+  ];
+  for (const k of colorProps) {
+    if (S.settings.style[k] != null) S.settings.style[k] = normalizeHex(S.settings.style[k], STYLE_DEFAULTS[k] || '#ffffff');
+  }
+  if (Array.isArray(S.settings.style.speakerColors)) {
+    S.settings.style.speakerColors = S.settings.style.speakerColors.map((c, i) =>
+      normalizeHex(c, (STYLE_DEFAULTS.speakerColors && STYLE_DEFAULTS.speakerColors[i]) || '#ffffff')
+    );
+  }
   S.settings.motion = Object.assign({}, M.MOTION_DEFAULTS, p.motion);
   if (p.grouping) S.settings.grouping = Object.assign({}, S.settings.grouping, p.grouping);
   if (p.layout) S.settings.layout = Object.assign({}, S.settings.layout, p.layout);
@@ -1980,7 +2075,6 @@ const RELAYOUT = /^(style\.(fontFamily|fontWeight|fontSize|textCase|punctuation|
 // Note: Inline sub-controls (gradient, shadow, emoji, glow, etc.) are toggled in place
 // without destroying the active DOM or re-rendering all preset tiles.
 const STRUCTURAL = {
-  'grouping.maxLines': 1,
   previewAspect: 1
 };
 
@@ -1991,38 +2085,53 @@ const ENABLE_ON_COLOR = {
 };
 
 function updateSubControls(path) {
-  if (path === 'style.gradient') {
+  if (!S.settings) return;
+  const all = !path;
+  const st = S.settings.style || {};
+  const m = S.settings.motion || {};
+  const tm = S.settings.timing || {};
+
+  if (all || path === 'style.gradient') {
     const box = $('.cc-gradient-sub');
-    if (box) box.classList.toggle('hidden', !S.settings.style.gradient);
-  } else if (path === 'style.activeGlow') {
+    if (box) box.classList.toggle('hidden', !st.gradient);
+  }
+  if (all || path === 'style.activeGlow') {
     const box = $('.cc-glow-sub');
-    if (box) box.classList.toggle('hidden', !S.settings.style.activeGlow);
-  } else if (path === 'style.speakerColoring') {
+    if (box) box.classList.toggle('hidden', !st.activeGlow);
+  }
+  if (all || path === 'style.speakerColoring') {
     const box = $('.cc-speaker-sub');
-    if (box) box.classList.toggle('hidden', !S.settings.style.speakerColoring);
-  } else if (path === 'style.shadow') {
+    if (box) box.classList.toggle('hidden', !st.speakerColoring);
+  }
+  if (all || path === 'style.shadow') {
     const box = $('.cc-shadow-sub');
-    if (box) box.classList.toggle('hidden', !S.settings.style.shadow);
-  } else if (path === 'style.emojiEnabled') {
+    if (box) box.classList.toggle('hidden', !st.shadow);
+  }
+  if (all || path === 'style.emojiEnabled') {
     const box = $('.cc-emoji-sub');
-    if (box) box.classList.toggle('hidden', !S.settings.style.emojiEnabled);
-  } else if (path === 'style.background') {
+    if (box) box.classList.toggle('hidden', !st.emojiEnabled);
+  }
+  if (all || path === 'style.background') {
     const box = $('.cc-bg-sub');
-    if (box) box.classList.toggle('hidden', S.settings.style.background === 'none');
-  } else if (path === 'style.emphasis') {
+    if (box) box.classList.toggle('hidden', st.background === 'none');
+  }
+  if (all || path === 'style.emphasis') {
     const box = $('.cc-emphasis-sub');
-    if (box) box.classList.toggle('hidden', S.settings.style.emphasis === 'color');
-  } else if (path === 'style.punctuation') {
+    if (box) box.classList.toggle('hidden', st.emphasis === 'color');
+  }
+  if (all || path === 'style.punctuation') {
     const box = $('.cc-punct-sub');
-    if (box) box.classList.toggle('hidden', S.settings.style.punctuation !== 'custom');
-  } else if (path === 'motion.highlight') {
+    if (box) box.classList.toggle('hidden', st.punctuation !== 'custom');
+  }
+  if (all || path === 'motion.highlight') {
     const boxBox = $('.cc-hl-box-sub');
-    if (boxBox) boxBox.classList.toggle('hidden', S.settings.motion.highlight !== 'box');
+    if (boxBox) boxBox.classList.toggle('hidden', m.highlight !== 'box');
     const boxColor = $('.cc-hl-color-sub');
-    if (boxColor) boxColor.classList.toggle('hidden', M.highlightMode(S.settings.motion) !== 'color');
-  } else if (path === 'timing.exit') {
+    if (boxColor) boxColor.classList.toggle('hidden', M.highlightMode(m) !== 'color');
+  }
+  if (all || path === 'timing.exit') {
     const box = $('.cc-exit-fade-sub');
-    if (box) box.classList.toggle('hidden', S.settings.timing.exit !== 'fade');
+    if (box) box.classList.toggle('hidden', tm.exit !== 'fade');
   }
 }
 
@@ -2034,7 +2143,10 @@ function onSetting(path) {
       $$(`[data-bind="${fix[0]}"]`).forEach((o) => { o.value = fmtNum(fix[1]); });
     }
   }
-  if (/^(style|motion)\./.test(path) && path !== 'style.fontSize') S.settings.preset = 'custom';
+  if (/^(style|motion)\./.test(path) && path !== 'style.fontSize') {
+    S.settings.preset = 'custom';
+    $$('.cc-tile').forEach((btn) => btn.classList.remove('cc-on'));
+  }
   if (path === 'layout.align' && S.settings.layout.align === 'center') {
     S.settings.layout.posX = 50;
     $$('[data-bind="layout.posX"]').forEach((o) => { o.value = 50; });
@@ -2073,10 +2185,42 @@ function readControl(el) {
   return el.value;
 }
 
+function syncColorControls(path, norm, excludeEl) {
+  $$(`input[type="color"][data-bind="${path}"]`).forEach((swatch) => {
+    if (swatch !== excludeEl) swatch.value = norm;
+  });
+  $$(`.cc-hex-input[data-bind="${path}"], input[data-kind="hex"][data-bind="${path}"], input[data-kind="color-hex"][data-bind="${path}"]`).forEach((txt) => {
+    if (txt !== excludeEl) txt.value = norm;
+  });
+}
+
 function onBoundInput(el) {
+  const kind = el.dataset.kind;
+  const path = el.dataset.bind;
+  if (!path) return;
+
+  if (kind === 'hex' || kind === 'color-hex') {
+    const raw = el.value.trim();
+    const norm = normalizeHex(raw, null);
+    if (!norm) return;
+    syncColorControls(path, norm, el);
+    if (getPath(S.settings, path) === norm) return;
+    setPath(S.settings, path, norm);
+    onSetting(path);
+    return;
+  }
+
+  if (kind === 'color') {
+    const norm = normalizeHex(el.value, '#ffffff');
+    syncColorControls(path, norm, el);
+    if (getPath(S.settings, path) === norm) return;
+    setPath(S.settings, path, norm);
+    onSetting(path);
+    return;
+  }
+
   const v = readControl(el);
   if (v === undefined) return;
-  const path = el.dataset.bind;
   if (getPath(S.settings, path) === v) return;
   setPath(S.settings, path, v);
   $$(`[data-bind="${path}"]`).forEach((o) => {           // keep slider + number box in step
@@ -2084,6 +2228,34 @@ function onBoundInput(el) {
     o.value = fmtNum(el.dataset.scale ? v * parseFloat(el.dataset.scale) : v);
   });
   onSetting(path);
+}
+
+function commitHexInput(el) {
+  if (!el || !el.dataset) return;
+  const kind = el.dataset.kind;
+  if (kind !== 'hex' && kind !== 'color-hex' && !el.classList?.contains('cc-hex-input')) return;
+  const path = el.dataset.bind;
+  if (!path) return;
+  const norm = normalizeHex(el.value, null);
+  if (norm) {
+    el.value = norm;
+    syncColorControls(path, norm, el);
+    const changed = getPath(S.settings, path) !== norm;
+    setPath(S.settings, path, norm);
+    if (changed) {
+      onSetting(path);
+    } else {
+      saveSettingsSoon();
+    }
+  } else {
+    const current = normalizeHex(getPath(S.settings, path), '#ffffff');
+    el.value = current;
+    syncColorControls(path, current, el);
+  }
+}
+
+function commitPendingHexInputs() {
+  $$('#cc-body .cc-hex-input, #cc-body input[data-kind="hex"], #cc-body input[data-kind="color-hex"]').forEach(commitHexInput);
 }
 
 function bindEvents() {
@@ -2102,9 +2274,36 @@ function bindEvents() {
   window.addEventListener('blur', () => {
     // When the panel loses focus (user clicked timeline, source monitor, etc.)
     setPlaying(false);
+    commitPendingHexInputs();
   });
   window.addEventListener('pagehide', () => {
     setPlaying(false);
+    commitPendingHexInputs();
+  });
+  root.addEventListener('blur', (e) => {
+    const el = e.target;
+    if (el && el.dataset && (el.dataset.kind === 'hex' || el.dataset.kind === 'color-hex' || (el.classList && el.classList.contains('cc-hex-input')))) {
+      commitHexInput(el);
+    }
+  }, true);
+  root.addEventListener('paste', (e) => {
+    const el = e.target;
+    if (el && el.dataset && (el.dataset.kind === 'hex' || el.dataset.kind === 'color-hex' || (el.classList && el.classList.contains('cc-hex-input')))) {
+      const text = (e.clipboardData || window.clipboardData)?.getData('text');
+      if (text) {
+        const norm = normalizeHex(text, null);
+        if (norm) {
+          e.preventDefault();
+          el.value = norm;
+          const path = el.dataset.bind;
+          if (path) {
+            syncColorControls(path, norm, el);
+            setPath(S.settings, path, norm);
+            onSetting(path);
+          }
+        }
+      }
+    }
   });
   root.addEventListener('input', (e) => {
     const el = e.target;
@@ -2136,9 +2335,11 @@ function bindEvents() {
     }, { passive: false });
   }
   root.addEventListener('click', (e) => {
+    commitPendingHexInputs();
     const t = e.target;
     const tab = t.closest('[data-tab]');
     if (tab) {
+      commitPendingHexInputs();
       S.tab = tab.dataset.tab;
       S.editing = -1;
       if (S.tab === 'transcript' && inCEP()) {
@@ -2192,6 +2393,21 @@ function bindEvents() {
       else if (e.key === 'Escape') { S.editing = -1; renderTranscriptList(); }
       return;
     }
+    if (el && el.dataset && (el.dataset.kind === 'hex' || el.dataset.kind === 'color-hex' || (el.classList && el.classList.contains('cc-hex-input')))) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        commitHexInput(el);
+        el.blur();
+        return;
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        const current = normalizeHex(getPath(S.settings, el.dataset.bind), '#ffffff');
+        el.value = current;
+        syncColorControls(el.dataset.bind, current, el);
+        el.blur();
+        return;
+      }
+    }
     if (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return;
     const k = e.key.toLowerCase();
     if ((e.ctrlKey || e.metaKey) && k === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
@@ -2226,6 +2442,10 @@ function bindEvents() {
   });
   root.addEventListener('focusout', (e) => {
     if (e.target.id === 'cc-w-edit' && S.editing >= 0) commitEdit(e.target.value);
+    const el = e.target;
+    if (el && el.dataset && (el.dataset.kind === 'hex' || el.dataset.kind === 'color-hex' || (el.classList && el.classList.contains('cc-hex-input')))) {
+      commitHexInput(el);
+    }
   });
   // drag the caption in the preview to move it; drag its sides to resize
   const cvWrap = $('#cc-canvas-wrap');

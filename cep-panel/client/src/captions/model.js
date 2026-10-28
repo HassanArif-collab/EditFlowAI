@@ -504,9 +504,149 @@ export function captionTiming(groups, opts, fps) {
   });
 }
 
-const RTL_REGEX = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/;
+// Arabic, Urdu, Hebrew, and related RTL Unicode ranges
+const RTL_REGEX = /[\u0590-\u05FF\u0600-\u06FF\u0750-\u077F\u0870-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/;
 export function isRTLText(text) {
   return RTL_REGEX.test(String(text || ''));
+}
+
+// Latin, Greek, Cyrillic strong LTR letters
+const LTR_REGEX = /[A-Za-z\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF]/;
+// Digits and numbers (weak LTR)
+const NUM_REGEX = /[0-9]/;
+
+/** Classify character directionality: 'rtl' | 'ltr' | 'neutral' */
+export function getWordDirection(text) {
+  const s = String(text || '');
+  if (RTL_REGEX.test(s)) return 'rtl';
+  if (LTR_REGEX.test(s) || NUM_REGEX.test(s)) return 'ltr';
+  return 'neutral';
+}
+
+/** Determine the paragraph / line embedding base direction from the first strong token */
+export function getLineBaseDirection(words) {
+  for (const w of words) {
+    const s = String((w && (w.display != null ? w.display : w.text)) || '');
+    if (RTL_REGEX.test(s)) return 'rtl';
+    if (LTR_REGEX.test(s)) return 'ltr';
+  }
+  for (const w of words) {
+    const s = String((w && (w.display != null ? w.display : w.text)) || '');
+    if (isRTLText(s)) return 'rtl';
+  }
+  return 'ltr';
+}
+
+/**
+ * Bidirectional (BiDi) line coordinate resolver conforming to Unicode Standard Annex #9.
+ * Segments the line into directional runs (RTL runs vs LTR runs), resolves neutral tokens,
+ * and calculates bounding box coordinates so that:
+ * - Embedded English/Latin phrases in RTL sentences maintain Left-to-Right word reading order.
+ * - Surrounding Urdu/Arabic sentences flow Right-to-Left.
+ * - Words within each run exhibit monotonic X coordinates.
+ * - All word bounding boxes are strictly non-overlapping.
+ *
+ * Returns { wordX: number[], wordRtl: boolean[], baseDir: 'rtl'|'ltr' }
+ */
+export function layoutBidiLine(ws, ww, spaceW, x0, lineWidth) {
+  const n = ws.length;
+  if (!n) return { wordX: [], wordRtl: [], baseDir: 'ltr' };
+
+  const baseDir = getLineBaseDirection(ws);
+  const types = ws.map((w) => getWordDirection(w.display != null ? w.display : w.text));
+
+  // Resolve neutral tokens according to Unicode rules N1 / N2
+  const resolved = types.slice();
+  let i = 0;
+  while (i < resolved.length) {
+    if (resolved[i] === 'neutral') {
+      let j = i;
+      while (j < resolved.length && resolved[j] === 'neutral') j++;
+      const prevDir = i > 0 ? resolved[i - 1] : null;
+      const nextDir = j < resolved.length ? resolved[j] : null;
+      let targetDir = baseDir;
+      if (prevDir && nextDir && prevDir === nextDir && prevDir !== 'neutral') {
+        targetDir = prevDir;
+      }
+      for (let k = i; k < j; k++) {
+        resolved[k] = targetDir;
+      }
+      i = j;
+    } else {
+      i++;
+    }
+  }
+
+  // Segment into contiguous directional runs
+  const runs = [];
+  let runStart = 0;
+  while (runStart < resolved.length) {
+    let runEnd = runStart;
+    const dir = resolved[runStart];
+    while (runEnd + 1 < resolved.length && resolved[runEnd + 1] === dir) {
+      runEnd++;
+    }
+    const indices = [];
+    let runW = 0;
+    for (let k = runStart; k <= runEnd; k++) {
+      indices.push(k);
+      runW += ww[k];
+    }
+    runW += spaceW * (indices.length - 1);
+    runs.push({ dir, indices, width: runW });
+    runStart = runEnd + 1;
+  }
+
+  const wordX = new Array(n);
+  const wordRtl = resolved.map((dir) => dir === 'rtl');
+
+  if (baseDir === 'rtl') {
+    // In RTL base direction, runs flow Right to Left starting from line right edge (x0 + lineWidth)
+    let currentRight = x0 + lineWidth;
+    for (const run of runs) {
+      const runLeft = currentRight - run.width;
+      if (run.dir === 'rtl') {
+        // Words inside RTL run flow Right to Left
+        let rx = currentRight;
+        for (const idx of run.indices) {
+          wordX[idx] = rx - ww[idx];
+          rx -= (ww[idx] + spaceW);
+        }
+      } else {
+        // Embedded English / Latin / numbers flow Left to Right within their run
+        let lx = runLeft;
+        for (const idx of run.indices) {
+          wordX[idx] = lx;
+          lx += (ww[idx] + spaceW);
+        }
+      }
+      currentRight = runLeft - spaceW;
+    }
+  } else {
+    // In LTR base direction, runs flow Left to Right starting from x0
+    let currentLeft = x0;
+    for (const run of runs) {
+      const runRight = currentLeft + run.width;
+      if (run.dir === 'ltr') {
+        // Words inside LTR run flow Left to Right
+        let lx = currentLeft;
+        for (const idx of run.indices) {
+          wordX[idx] = lx;
+          lx += (ww[idx] + spaceW);
+        }
+      } else {
+        // Embedded RTL run flows Right to Left within the run
+        let rx = runRight;
+        for (const idx of run.indices) {
+          wordX[idx] = rx - ww[idx];
+          rx -= (ww[idx] + spaceW);
+        }
+      }
+      currentLeft = runRight + spaceW;
+    }
+  }
+
+  return { wordX, wordRtl, baseDir };
 }
 
 /**
@@ -538,10 +678,10 @@ export function buildScene(rawWords, settings, env) {
   const maxWidth = W * ((lay.boxWidth || 86) / 100);
   const groups = groupWords(words, s.grouping, measure ? { measure, spaceW, maxWidth } : null);
   const timing = captionTiming(groups, s.timing, env.fps);
-  const lineH = fontSize * (lay.lineHeight || 1.12);
   const hasRtl = words.some((w) => isRTLText(w.display || w.text));
-  const asc = (env.fontMetrics && env.fontMetrics.ascent) || (hasRtl ? fontSize * 0.92 : fontSize * 0.78);
-  const desc = (env.fontMetrics && env.fontMetrics.descent) || (hasRtl ? fontSize * 0.38 : fontSize * 0.22);
+  const lineH = fontSize * (hasRtl ? Math.max(lay.lineHeight || 1.12, 1.35) : (lay.lineHeight || 1.12));
+  const asc = Math.max((env.fontMetrics && env.fontMetrics.ascent) || 0, hasRtl ? fontSize * 0.96 : fontSize * 0.78);
+  const desc = Math.max((env.fontMetrics && env.fontMetrics.descent) || 0, hasRtl ? fontSize * 0.52 : fontSize * 0.22);
   const align = lay.align || 'center';
   const ax = W * ((lay.posX != null ? lay.posX : 50) / 100);
   const margin = H * 0.03;
@@ -568,16 +708,13 @@ export function buildScene(rawWords, settings, env) {
       let x0 = align === 'left' ? ax - maxWidth / 2
         : align === 'right' ? ax + maxWidth / 2 - l.width : ax - l.width / 2;
       const baseline = top + li * lineH + (lineH - (asc + desc)) / 2 + asc;
-      const isRtl = l.ws.some((w) => isRTLText(w.display || w.text));
-      let x = isRtl ? (x0 + l.width) : x0;
+      const bidi = layoutBidiLine(l.ws, l.ww, spaceW, x0, l.width);
+      const isRtl = bidi.baseDir === 'rtl';
       const lw = l.ws.map((w, k) => {
-        const itemX = isRtl ? (x - l.ww[k]) : x;
-        const item = { text: w.display, src: w.text, x: itemX, w: l.ww[k], start: w.start + ((s.timing && s.timing.offset) || 0),
-                       end: w.end + ((s.timing && s.timing.offset) || 0), emphasis: w.emphasis, id: w.id, gi: gi++, rtl: isRtl,
+        const item = { text: w.display, src: w.text, x: bidi.wordX[k], w: l.ww[k], start: w.start + ((s.timing && s.timing.offset) || 0),
+                       end: w.end + ((s.timing && s.timing.offset) || 0), emphasis: w.emphasis, id: w.id, gi: gi++, rtl: bidi.wordRtl[k],
                        speaker: w.speaker !== undefined ? w.speaker : undefined,
                        emoji: w.emoji || undefined };
-        if (isRtl) x -= (l.ww[k] + spaceW);
-        else x += (l.ww[k] + spaceW);
         return item;
       });
       return { y: baseline, x: x0, width: l.width, words: lw, rtl: isRtl };

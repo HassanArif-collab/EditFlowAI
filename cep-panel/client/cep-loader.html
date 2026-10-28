@@ -96,29 +96,72 @@
 
       function findPython(req, root) {
         var fs = req('fs'), path = req('path');
-        try { var ov = localStorage.getItem('editflow_python_path'); if (ov && fs.existsSync(ov)) return ov; } catch (e) {}
-        // On Windows, prefer pythonw.exe so Windows never allocates a CMD / Windows Terminal console window
-        var venvW = path.join(root, '.venv', 'Scripts', 'pythonw.exe');
-        if (fs.existsSync(venvW)) return venvW;
-        var venv = path.join(root, '.venv', 'Scripts', 'python.exe');
-        if (fs.existsSync(venv)) return venv;
-        try {
-          var out = req('child_process').execSync('where pythonw', { encoding: 'utf8', windowsHide: true });
-          var lines = out.split(/\r?\n/);
-          for (var i = 0; i < lines.length; i++) {
-            var c = lines[i].trim();
-            if (c && c.toLowerCase().indexOf('windowsapps') === -1 && fs.existsSync(c)) return c;
+        // 1. Manual user override
+        try { var ov = localStorage.getItem('editflow_python_path'); if (ov && fs.existsSync(ov)) return Promise.resolve(ov); } catch (e) {}
+        // 2. Fast cached probe from previous runs
+        try { var cached = localStorage.getItem('editflow_cached_python'); if (cached && fs.existsSync(cached)) return Promise.resolve(cached); } catch (e) {}
+        // 3. Known workspace venv paths (Windows pythonw.exe preferred for hidden console)
+        var candidates = [
+          path.join(root, '.venv', 'Scripts', 'pythonw.exe'),
+          path.join(root, '.venv', 'Scripts', 'python.exe'),
+          path.join(root, '..', '.venv', 'Scripts', 'pythonw.exe'),
+          path.join(root, '..', '.venv', 'Scripts', 'python.exe')
+        ];
+        // Standard user / global installs on Windows
+        if (typeof process !== 'undefined' && process.platform === 'win32') {
+          var localApp = (process.env && process.env.LOCALAPPDATA) || '';
+          if (localApp) {
+            candidates.push(path.join(localApp, 'Programs', 'Python', 'Python312', 'pythonw.exe'));
+            candidates.push(path.join(localApp, 'Programs', 'Python', 'Python311', 'pythonw.exe'));
+            candidates.push(path.join(localApp, 'Programs', 'Python', 'Python310', 'pythonw.exe'));
+            candidates.push(path.join(localApp, 'Programs', 'Python', 'Python312', 'python.exe'));
+            candidates.push(path.join(localApp, 'Programs', 'Python', 'Python311', 'python.exe'));
           }
-        } catch (e) {}
-        try {
-          var out = req('child_process').execSync('where python', { encoding: 'utf8', windowsHide: true });
-          var lines = out.split(/\r?\n/);
-          for (var i = 0; i < lines.length; i++) {
-            var c = lines[i].trim();
-            if (c && c.toLowerCase().indexOf('windowsapps') === -1 && fs.existsSync(c)) return c;
+        }
+        for (var i = 0; i < candidates.length; i++) {
+          if (fs.existsSync(candidates[i])) {
+            try { localStorage.setItem('editflow_cached_python', candidates[i]); } catch (e) {}
+            return Promise.resolve(candidates[i]);
           }
-        } catch (e) {}
-        return (typeof process !== 'undefined' && process.platform === 'win32') ? 'pythonw' : 'python';
+        }
+        // 4. Non-blocking asynchronous probing via child_process.exec (never execSync on UI thread)
+        var defaultFallback = (typeof process !== 'undefined' && process.platform === 'win32') ? 'pythonw' : 'python';
+        var cp = req('child_process');
+        if (!cp || typeof cp.exec !== 'function') return Promise.resolve(defaultFallback);
+
+        function execProbe(cmd) {
+          return new Promise(function (resolve) {
+            try {
+              cp.exec(cmd, { encoding: 'utf8', windowsHide: true, timeout: 3000 }, function (err, stdout) {
+                if (err || !stdout) return resolve(null);
+                var lines = stdout.split(/\r?\n/);
+                for (var j = 0; j < lines.length; j++) {
+                  var c = lines[j].trim();
+                  if (c && c.toLowerCase().indexOf('windowsapps') === -1 && fs.existsSync(c)) {
+                    return resolve(c);
+                  }
+                }
+                resolve(null);
+              });
+            } catch (e) {
+              resolve(null);
+            }
+          });
+        }
+
+        return execProbe('where pythonw').then(function (res) {
+          if (res) {
+            try { localStorage.setItem('editflow_cached_python', res); } catch (e) {}
+            return res;
+          }
+          return execProbe('where python').then(function (res2) {
+            if (res2) {
+              try { localStorage.setItem('editflow_cached_python', res2); } catch (e) {}
+              return res2;
+            }
+            return defaultFallback;
+          });
+        });
       }
 
       function spawnBackend(req, root, python) {
@@ -178,30 +221,36 @@
           return;
         }
 
-        var root, python, logPath;
-        try { root = repoRoot(req); python = findPython(req, root); }
+        var root;
+        try { root = repoRoot(req); }
         catch (e) { showErr('Could not locate the backend launcher: ' + e.message +
           '. Run "python run.py" manually and reload.'); return; }
 
-        // Spawn at most once per panel session (we only reload after a confirmed
-        // /api/ping, so a re-spawn on the reloaded page can't normally happen —
-        // this is belt-and-suspenders against a transient ping flake).
-        var tried = false;
-        try { tried = sessionStorage.getItem('editflow_spawned') === '1'; } catch (e) {}
-        if (!tried) {
-          try { sessionStorage.setItem('editflow_spawned', '1'); } catch (e) {}
-          setTop('Backend not running — starting it...');
-          logPath = spawnBackend(req, root, python);
-        } else {
-          setTop('Waiting for backend...');
-        }
+        findPython(req, root).then(function (python) {
+          // Spawn at most once per panel session (we only reload after a confirmed
+          // /api/ping, so a re-spawn on the reloaded page can't normally happen —
+          // this is belt-and-suspenders against a transient ping flake).
+          var tried = false;
+          try { tried = sessionStorage.getItem('editflow_spawned') === '1'; } catch (e) {}
+          var logPath;
+          if (!tried) {
+            try { sessionStorage.setItem('editflow_spawned', '1'); } catch (e) {}
+            setTop('Backend not running — starting it...');
+            logPath = spawnBackend(req, root, python);
+          } else {
+            setTop('Waiting for backend...');
+          }
 
-        pollUntilUp(90000, function (s) { setTop('Starting backend... ' + s + 's'); }).then(function (ok) {
-          if (ok) { setTop('Backend up. Reloading panel...'); window.location.reload(); return; }
-          var tail = logPath ? tailLog(req, logPath) : '';
-          showErr('Backend did not become ready in 90s. ' +
-            (tail ? ('Last log: ' + tail) : ('Check ' + root + '\\data\\backend.log')) +
-            ' — or run "python run.py" manually.');
+          pollUntilUp(90000, function (s) { setTop('Starting backend... ' + s + 's'); }).then(function (ok) {
+            if (ok) { setTop('Backend up. Reloading panel...'); window.location.reload(); return; }
+            var tail = logPath ? tailLog(req, logPath) : '';
+            showErr('Backend did not become ready in 90s. ' +
+              (tail ? ('Last log: ' + tail) : ('Check ' + root + '\\data\\backend.log')) +
+              ' — or run "python run.py" manually.');
+          });
+        }).catch(function (e) {
+          showErr('Could not locate python: ' + e.message +
+            '. Set localStorage.editflow_python_path to your python.exe and reload.');
         });
       });
 

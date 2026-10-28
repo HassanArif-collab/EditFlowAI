@@ -43,16 +43,10 @@ async def lifespan(app: FastAPI):
     await provider_service.initialize()
     logger.info("Provider service initialized")
 
-    # Check provider health
-    health = await provider_service.health_check()
-    for pid, info in health.items():
-        status = "connected" if info.get("connected") else f"unavailable ({info.get('error', 'unknown')})"
-        logger.info(f"Provider '{pid}': {status}")
-
-    # Background model discovery — keep a strong reference so the task
-    # isn't garbage-collected and so we can cancel it on shutdown.
+    # Non-blocking background health check and model discovery:
+    # keeps startup under 10ms so /api/ping responds immediately.
     import asyncio
-    discovery_task = asyncio.create_task(_background_discover())
+    discovery_task = asyncio.create_task(_background_provider_startup())
     app.state.discovery_task = discovery_task
 
     # Background media resolver indexing
@@ -97,6 +91,19 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Provider service shutdown error: {e}")
 
     logger.info("EditFlow AI shutting down...")
+
+
+async def _background_provider_startup():
+    """Run provider health check and discovery asynchronously in background."""
+    try:
+        from .services.provider_service import provider_service
+        health = await provider_service.health_check()
+        for pid, info in health.items():
+            status = "connected" if info.get("connected") else f"unavailable ({info.get('error', 'unknown')})"
+            logger.info(f"Provider '{pid}': {status}")
+        await _background_discover()
+    except Exception as e:
+        logger.warning(f"Background provider startup check failed: {e}")
 
 
 async def _background_discover():
