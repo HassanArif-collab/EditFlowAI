@@ -1408,6 +1408,10 @@ class WhisperService:
             logger.warning(f"Failed to cache transcript for {file_fingerprint[:16]}...: {e}")
 
         self._write_transcript_sidecar(result)
+        try:
+            self._persist_transcript_to_db(result, file_fingerprint)
+        except Exception as e:
+            logger.debug(f"SQLite transcript persistence note: {e}")
 
     async def transcribe_fingerprinted(
         self,

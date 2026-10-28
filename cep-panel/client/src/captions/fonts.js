@@ -17,6 +17,7 @@ export const BUNDLED = [
   { family: 'Inter', weights: [700, 800, 900], note: 'Modern, neutral' },
   { family: 'Anton', weights: [400], note: 'Tall & punchy' },
   { family: 'Bebas Neue', weights: [400], note: 'All-caps display' },
+  { family: 'Noto Nastaliq Urdu', weights: [400, 700], note: 'Authentic Urdu Calligraphy' },
 ];
 
 const WEIGHT_NAMES = { 100: 'Thin', 200: 'ExtraLight', 300: 'Light', 400: 'Regular', 500: 'Medium',
@@ -27,25 +28,45 @@ export function isBundled(family) {
   return BUNDLED.some((f) => f.family.toLowerCase() === String(family || '').toLowerCase());
 }
 
+export const UNIVERSAL_FONT_FALLBACKS =
+  '"Noto Nastaliq Urdu", "Urdu Typesetting", "Jameel Noori Nastaliq", "Segoe UI Historic", "Arabic Typesetting", "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", Arial, sans-serif';
+
+/** Robust fallback stack supporting Nastaliq Urdu and Arabic calligraphy */
+export function getFontFallback(family) {
+  const fam = String(family || '').replace(/"/g, '');
+  if (/urdu|nastaliq/i.test(fam)) {
+    return '"Noto Nastaliq Urdu", "Urdu Typesetting", "Jameel Noori Nastaliq", "Segoe UI Historic", "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", Arial, sans-serif';
+  }
+  if (/arabic/i.test(fam)) {
+    return '"Geeza Pro", "Traditional Arabic", "Noto Nastaliq Urdu", "Urdu Typesetting", "Jameel Noori Nastaliq", "Segoe UI", "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", Arial, sans-serif';
+  }
+  return UNIVERSAL_FONT_FALLBACKS;
+}
+
 let _fontCss = null;
 /**
- * Inject the bundled @font-face rules once. Resolves when the stylesheet
- * has loaded — before that, document.fonts.load() finds no faces and a
+ * Inject the bundled @font-face rules once. Resolves when the stylesheets
+ * have loaded — before that, document.fonts.load() finds no faces and a
  * bundled font would wrongly look "missing".
  */
 export function injectFontStyles() {
   if (_fontCss) return _fontCss;
   if (typeof document === 'undefined') return (_fontCss = Promise.resolve());
-  _fontCss = new Promise((resolve) => {
+  const inject = (id, href) => new Promise((resolve) => {
+    if (document.getElementById(id)) return resolve();
     const link = document.createElement('link');
-    link.id = 'cc-font-link';
+    link.id = id;
     link.rel = 'stylesheet';
     link.onload = () => resolve();
     link.onerror = () => resolve();
     setTimeout(resolve, 5000);
-    link.href = 'styles/caption-fonts.css?v=1';
+    link.href = href;
     document.head.appendChild(link);
   });
+  _fontCss = Promise.all([
+    inject('cc-font-link', 'styles/caption-fonts.css?v=1'),
+    inject('cc-urdu-font-link', 'styles/fonts.css?v=1'),
+  ]);
   return _fontCss;
 }
 
@@ -75,9 +96,14 @@ export function isFontAvailable(family, weight) {
 export async function ensureFont(family, weight) {
   if (typeof document === 'undefined' || !document.fonts) return true;
   await injectFontStyles();
+  const fam = String(family || '').replace(/"/g, '');
   try {
+    const loads = [
+      document.fonts.load(`${weight || 400} 64px "${fam}"`, 'AaBbHgWq0 ابپتٹث'),
+      document.fonts.load('400 64px "Noto Nastaliq Urdu"', 'ابپتٹثجچحخدڈذرڑزژسشصضطظعغفقکگلمنووہھیئے'),
+    ];
     await Promise.race([
-      document.fonts.load(`${weight || 400} 64px "${String(family).replace(/"/g, '')}"`, 'AaBbHgWq0 ابپتٹث'),
+      Promise.all(loads),
       new Promise((r) => setTimeout(r, 4000)),
     ]);
   } catch (_) { /* fall through to the availability check */ }
@@ -90,14 +116,16 @@ export async function ensureFont(family, weight) {
  */
 export function makeMeasurer(style) {
   const ctx = document.createElement('canvas').getContext('2d');
-  ctx.font = fontString(style, style.fontSize);
+  const size = style.fontSize || 80;
+  const fam = String(style.fontFamily || 'Montserrat').replace(/"/g, '');
+  const fallbacks = getFontFallback(fam);
+  ctx.font = `${style.fontWeight || 700} ${size}px "${fam}", ${fallbacks}`;
   const cache = new Map();
   const measure = (t) => {
     let v = cache.get(t);
     if (v === undefined) { v = ctx.measureText(t).width; cache.set(t, v); }
     return v;
   };
-  const size = style.fontSize || 80;
   const mH = ctx.measureText('H');
   const mg = ctx.measureText('gjpqy');
   const mUrdu = ctx.measureText('ٹآقےجالْحَمْدُ');
@@ -105,7 +133,16 @@ export function makeMeasurer(style) {
   if (mUrdu && mUrdu.actualBoundingBoxAscent > capH) capH = mUrdu.actualBoundingBoxAscent;
   let desc = mg.actualBoundingBoxDescent > 0 ? mg.actualBoundingBoxDescent : size * 0.2;
   if (mUrdu && mUrdu.actualBoundingBoxDescent > desc) desc = mUrdu.actualBoundingBoxDescent;
-  if (style.textCase === 'upper') desc *= 0.3;      // no descenders in caps
+
+  const isRtl = /urdu|nastaliq|arabic/i.test(fam) || (mUrdu && mUrdu.actualBoundingBoxDescent > size * 0.25);
+  if (isRtl) {
+    if (capH < size * 0.96) capH = size * 0.96;
+    if (desc < size * 0.52) desc = size * 0.52;
+  }
+  // Uppercase reduction applies ONLY to pure Latin text without RTL/Arabic/Urdu fonts
+  if (style.textCase === 'upper' && !isRtl) {
+    desc *= 0.3;      // no descenders in caps
+  }
   return { measure, fontMetrics: { ascent: capH, descent: desc } };
 }
 

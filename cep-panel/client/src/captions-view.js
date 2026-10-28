@@ -1,13 +1,13 @@
-/**
- * captions-view.js — EditFlow Captions Studio for Premiere Pro.
+﻿/**
+ * captions-view.js ΓÇö EditFlow Captions Studio for Premiere Pro.
  *
- *   Transcript → Style → Motion → Export
+ *   Transcript ΓåÆ Style ΓåÆ Motion ΓåÆ Export
  *
  * The live preview is drawn by the SAME renderer as the exported video
  * (captions/render.js), at the sequence's real size and frame rate, so the
  * preview is the output. Export streams frames to the backend encoder and
  * places the file with captionsManager.placeOverlay (overwrite onto a free
- * track, replacing earlier EditFlow captions — never a ripple insert).
+ * track, replacing earlier EditFlow captions ΓÇö never a ripple insert).
  *
  * Every control is declared with data-bind="section.key" and handled by ONE
  * input handler, so a control cannot silently do nothing.
@@ -15,7 +15,7 @@
 import { apiGet, apiPost, apiUpload, getBaseUrl } from './api.js';
 import { isExtendScriptAvailable, callExtendScript } from './extendscript.js';
 import * as M from './captions/model.js';
-import { drawFrame, STYLE_DEFAULTS } from './captions/render.js';
+import { drawFrame, STYLE_DEFAULTS, normalizeHex as _importedNormalizeHex } from './captions/render.js';
 import { BUNDLED, ensureFont, makeMeasurer, listSystemFonts, injectFontStyles, weightName } from './captions/fonts.js';
 import { PRESETS, findPreset, getAllPresets, saveUserPreset, deleteUserPreset } from './captions/presets.js';
 import { renderOverlay } from './captions/export.js';
@@ -99,7 +99,7 @@ let rafId = 0;
 let lastTick = 0;
 let saveTimer = 0;
 
-/* ── tiny helpers ─────────────────────────────────────────────── */
+/* ΓöÇΓöÇ tiny helpers ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
 
 const $ = (sel, r) => (r || root || document).querySelector(sel);
 const $$ = (sel, r) => Array.prototype.slice.call((r || root || document).querySelectorAll(sel));
@@ -111,7 +111,7 @@ function getPath(obj, path) { return path.split('.').reduce((o, k) => (o == null
 function setPath(obj, path, v) {
   const ks = path.split('.');
   let o = obj;
-  for (let i = 0; i < ks.length - 1; i++) o = o[ks[i]] = o[ks[i]] || {};
+  for (let i = 0; i < ks.length - 1; i++) o = o[ks[i]] = o[ks[i]] || (/^\d+$/.test(ks[i + 1]) ? [] : {});
   o[ks[ks.length - 1]] = v;
 }
 function fmtTime(s) {
@@ -133,13 +133,41 @@ function deepMerge(base, over) {
 }
 function inCEP() { return isExtendScriptAvailable(); }
 
+function normalizeHex(val, fallback = '#ffffff') {
+  try {
+    if (typeof _importedNormalizeHex === 'function') {
+      const res = _importedNormalizeHex(val, fallback);
+      if (res != null) return res;
+    }
+  } catch (_) {}
+  if (val == null) return fallback;
+  const s = String(val).trim().toLowerCase();
+  if (!s) return fallback;
+  if (/^#[0-9a-f]{6}$/.test(s)) return s;
+  if (/^[0-9a-f]{6}$/.test(s)) return '#' + s;
+  if (/^#[0-9a-f]{3}$/.test(s)) return `#${s[1]}${s[1]}${s[2]}${s[2]}${s[3]}${s[3]}`;
+  if (/^[0-9a-f]{3}$/.test(s)) return `#${s[0]}${s[0]}${s[1]}${s[1]}${s[2]}${s[2]}`;
+  if (/^#[0-9a-f]{4}$/.test(s)) return `#${s[1]}${s[1]}${s[2]}${s[2]}${s[3]}${s[3]}`;
+  if (/^[0-9a-f]{4}$/.test(s)) return `#${s[0]}${s[0]}${s[1]}${s[1]}${s[2]}${s[2]}`;
+  if (/^#[0-9a-f]{8}$/.test(s)) return s.slice(0, 7);
+  if (/^[0-9a-f]{8}$/.test(s)) return '#' + s.slice(0, 6);
+  const rgbMatch = s.match(/^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})/);
+  if (rgbMatch) {
+    const r = Math.min(255, parseInt(rgbMatch[1], 10)).toString(16).padStart(2, '0');
+    const g = Math.min(255, parseInt(rgbMatch[2], 10)).toString(16).padStart(2, '0');
+    const b = Math.min(255, parseInt(rgbMatch[3], 10)).toString(16).padStart(2, '0');
+    return `#${r}${g}${b}`;
+  }
+  return fallback;
+}
+
 const ICONS = {
   play: '<path d="M8 5v14l11-7z"/>',
   pause: '<path d="M7 5h4v14H7zM13 5h4v14h-4z"/>',
   undo: '<path d="M12.5 8C9.9 8 7.5 9 5.7 10.6L2 7v9h9l-3.6-3.6A7 7 0 0 1 19.3 15l2.4-.8A9.5 9.5 0 0 0 12.5 8z"/>',
   redo: '<path d="M18.4 10.6A9.4 9.4 0 0 0 11.5 8a9.5 9.5 0 0 0-9.2 6.2l2.4.8A7 7 0 0 1 16.6 12.4L13 16h9V7z"/>',
   eye: '<path d="M12 5C6.5 5 2.7 9.3 1.5 12c1.2 2.7 5 7 10.5 7s9.3-4.3 10.5-7C21.3 9.3 17.5 5 12 5zm0 11a4 4 0 1 1 0-8 4 4 0 0 1 0 8z"/>',
-  eyeOff: '<path d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.44-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78l3.15 3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z"/>',
+  eyeOff: '<path d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.44-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.47-1.8c.22 0 .44.03.65.08l-2.08 2.08c-.05-.21-.08-.43-.08-.65 0-1.66 1.34-3 3-3z"/>',
   bg: '<path d="M3 3h8v8H3zM13 13h8v8h-8z"/><path d="M13 3h8v8h-8zM3 13h8v8H3z" opacity=".35"/>',
   camera: '<path d="M9 3L7.17 5H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2h-3.17L15 3H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>',
   volume: '<path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>',
@@ -151,7 +179,7 @@ const ICONS = {
 };
 const icon = (n) => `<svg class="cc-ico" viewBox="0 0 24 24" aria-hidden="true">${ICONS[n]}</svg>`;
 
-/* ── settings + words persistence ─────────────────────────────── */
+/* ΓöÇΓöÇ settings + words persistence ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
 
 function loadSettings() {
   let saved = null;
@@ -161,7 +189,24 @@ function loadSettings() {
       saved = JSON.parse(localStorage.getItem(SETTINGS_KEY_V2) || 'null');
     }
   } catch (_) { saved = null; }
-  return deepMerge(DEFAULTS, saved || {});
+  const merged = deepMerge(DEFAULTS, saved || {});
+  if (merged.style) {
+    const s = merged.style;
+    const colorProps = [
+      'color', 'activeColor', 'emphasisColor', 'pillColor',
+      'strokeColor', 'shadowColor', 'bgColor', 'hlBoxColor',
+      'gradientColor', 'activeGlowColor'
+    ];
+    for (const p of colorProps) {
+      if (s[p] != null) s[p] = normalizeHex(s[p], STYLE_DEFAULTS[p] || '#ffffff');
+    }
+    if (Array.isArray(s.speakerColors)) {
+      s.speakerColors = s.speakerColors.map((c, i) =>
+        normalizeHex(c, (STYLE_DEFAULTS.speakerColors && STYLE_DEFAULTS.speakerColors[i]) || '#ffffff')
+      );
+    }
+  }
+  return merged;
 }
 function saveSettingsSoon() {
   clearTimeout(saveTimer);
@@ -175,7 +220,7 @@ function saveWords() {
   try {
     if (S.words.length) localStorage.setItem(wordsKey(), JSON.stringify(S.words));
     else localStorage.removeItem(wordsKey());
-  } catch (_) { /* quota — words still live in memory */ }
+  } catch (_) { /* quota ΓÇö words still live in memory */ }
 }
 function saveAudio() {
   try {
@@ -226,7 +271,7 @@ function loadWords() {
   loadChapters();
 }
 
-/* ── effective settings (style scaled to the sequence) ────────── */
+/* ΓöÇΓöÇ effective settings (style scaled to the sequence) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
 
 function scaleK() { return Math.min(S.seq.width, S.seq.height) / REF; }
 function effSettings() {
@@ -240,7 +285,7 @@ function effSettings() {
            grouping: S.settings.grouping, timing: S.settings.timing };
 }
 
-/* ── scene ────────────────────────────────────────────────────── */
+/* ΓöÇΓöÇ scene ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
 
 async function rebuildScene() {
   const gen = ++S.sceneGen;
@@ -270,23 +315,22 @@ function scheduleScene() {
   sceneTimer = setTimeout(() => { rebuildScene(); }, 16);
 }
 
-/* ── open / close ─────────────────────────────────────────────── */
+/* ΓöÇΓöÇ open / close ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
 
 function openCaptions() {
   injectFontStyles();
   ensureStyles();
-  S.previewOpen = true;
   const view = ensureContainer();
   const hero = document.getElementById('hero');
   const chat = document.getElementById('chat-scroll');
   const footer = document.getElementById('app-footer');
-  const sc = document.getElementById('story-cut-view');
-  const rv = document.getElementById('review-view');
   S.prevView = {
     hero: hero ? hero.classList.contains('hidden') : true,
     chat: chat ? chat.classList.contains('hidden') : true,
     footer: footer ? footer.classList.contains('hidden') : true,
   };
+  const sc = document.getElementById('story-cut-view');
+  const rv = document.getElementById('review-view');
   [hero, chat, footer, sc, rv].forEach((el) => el && el.classList.add('hidden'));
   view.classList.remove('hidden');
   if (!S.settings) {
@@ -342,7 +386,7 @@ function ensureContainer() {
   return v;
 }
 
-/* ── sequence ─────────────────────────────────────────────────── */
+/* ΓöÇΓöÇ sequence ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
 
 async function callCM(fn, args) {
   return callExtendScript('callModule', Object.assign({ module: 'captionsManager', fn }, args || {}));
@@ -388,26 +432,27 @@ function renderSeqChip() {
   const f = S.seq.fps;
   const fps = Math.round((f.num / f.den) * 1000) / 1000;
   const inOutBadge = S.seq.hasInOut
-    ? ` · <span style="color:var(--cc-accent-2,#69a9ff)">In/Out: ${fmtTime(S.seq.inPoint)}–${fmtTime(S.seq.outPoint)}</span>`
+    ? ` ┬╖ <span style="color:var(--cc-accent-2,#69a9ff)">In/Out: ${fmtTime(S.seq.inPoint)}ΓÇô${fmtTime(S.seq.outPoint)}</span>`
     : '';
   el.innerHTML = S.seq.live
-    ? `<b>${esc(S.seq.name)}</b> · ${S.seq.width}×${S.seq.height} · ${fps} fps${inOutBadge}`
+    ? `<b>${esc(S.seq.name)}</b> ┬╖ ${S.seq.width}├ù${S.seq.height} ┬╖ ${fps} fps${inOutBadge}`
     : (S.seq.error ? '<span class="cc-warn-text">No sequence open</span>'
       : '<span class="cc-dim">Preview mode</span>');
   el.title = S.seq.error || (S.seq.live ? (S.seq.hasInOut ? `Sequence has In/Out set: ${fmtTime(S.seq.inPoint)} to ${fmtTime(S.seq.outPoint)}` : '')
-    : 'Not connected to Premiere — rendering works, placing on the timeline does not.');
+    : 'Not connected to Premiere ΓÇö rendering works, placing on the timeline does not.');
 }
 
-/* ── shell ────────────────────────────────────────────────────── */
+/* ΓöÇΓöÇ shell ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
 
 const TABS = [['transcript', 'Transcript'], ['style', 'Style'], ['motion', 'Motion'], ['export', 'Export']];
 
 function renderShell() {
   root.innerHTML = `
-    <div class="cc-seq-bar">
-      <span class="cc-seq-lbl">Sequence:</span>
+    <div class="cc-top">
+      <div class="cc-title">Captions 3.0</div>
       <div class="cc-seq" id="cc-seq"></div>
-      <button class="cc-icon-btn cc-small" data-act="refresh-seq" title="Re-read the active sequence">${icon('refresh')}</button>
+      <button class="cc-icon-btn" data-act="refresh-seq" title="Re-read the active sequence">${icon('refresh')}</button>
+      <button class="cc-icon-btn" data-act="close" title="Close captions">${icon('close')}</button>
     </div>
     <div class="cc-stage" id="cc-stage">
       <div class="cc-canvas-wrap" id="cc-canvas-wrap"><canvas id="cc-canvas"></canvas></div>
@@ -422,7 +467,7 @@ function renderShell() {
       <button class="cc-icon-btn" data-act="capture-frame" title="Grab current sequence frame as background">${icon('camera')}</button>
       <button class="cc-icon-btn" data-act="bg" title="Cycle preview background (Frame / Dark / Checker)">${icon('bg')}</button>
       <div class="cc-zoom-wrap">
-        <button class="cc-icon-btn cc-small" data-act="zoom-out" title="Zoom out">−</button>
+        <button class="cc-icon-btn cc-small" data-act="zoom-out" title="Zoom out">ΓêÆ</button>
         <span class="cc-zoom-val" id="cc-zoom-val" data-act="zoom-reset" title="Click to reset zoom (Fit)">Fit</span>
         <button class="cc-icon-btn cc-small" data-act="zoom-in" title="Zoom in">+</button>
       </div>
@@ -430,7 +475,7 @@ function renderShell() {
         <option value="off">Safe zone</option>
         ${Object.keys(SAFE_ZONES).map((k) => `<option value="${k}">${SAFE_ZONES[k].label}</option>`).join('')}
       </select>
-      <button class="cc-icon-btn" data-act="toggle-preview" title="Hide / show the preview">${icon('eye')}</button>
+      <button class="cc-icon-btn${S.previewOpen ? '' : ' cc-on'}" data-act="toggle-preview" title="${S.previewOpen ? 'Hide preview' : 'Show preview'}">${icon(S.previewOpen ? 'eye' : 'eyeOff')}</button>
     </div>
     <div class="cc-tabs" role="tablist">${TABS.map(([id, label]) =>
       `<button class="cc-tab" role="tab" data-tab="${id}">${label}</button>`).join('')}</div>
@@ -445,8 +490,16 @@ function renderShell() {
       const w = Math.round(entries[0].contentRect.width);
       if (w === lastW) return;
       lastW = w;
-      requestAnimationFrame(layoutPreview);
+      if (S.previewOpen) requestAnimationFrame(layoutPreview);
     }).observe($('#cc-stage'));
+  }
+  const stageEl = $('#cc-stage');
+  if (stageEl) {
+    stageEl.addEventListener('transitionend', (e) => {
+      if (e.target === stageEl && S.previewOpen) {
+        requestAnimationFrame(layoutPreview);
+      }
+    });
   }
   window.addEventListener('resize', () => requestAnimationFrame(layoutPreview));
   bindResizer();
@@ -454,56 +507,46 @@ function renderShell() {
   updateAudioBtn();
 }
 
-/* ── preview & zoom ───────────────────────────────────────────── */
+/* ΓöÇΓöÇ preview & zoom ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
+
+function updatePreviewToggleBtn() {
+  const btn = $('[data-act="toggle-preview"]');
+  if (!btn) return;
+  btn.classList.toggle('cc-on', !S.previewOpen);
+  btn.title = S.previewOpen ? 'Hide preview' : 'Show preview';
+  btn.innerHTML = icon(S.previewOpen ? 'eye' : 'eyeOff');
+}
 
 function layoutPreview() {
   const stage = $('#cc-stage');
   const cv = $('#cc-canvas');
   if (!stage || !cv) return;
-  const wrap = $('#cc-canvas-wrap');
+
+  stage.classList.remove('hidden');
+  stage.classList.toggle('cc-stage-collapsed', !S.previewOpen);
   const resizer = $('#cc-stage-resizer');
-  const prevBtn = $('[data-act="toggle-preview"]');
+  if (resizer) resizer.classList.toggle('hidden', !S.previewOpen);
 
-  if (prevBtn) {
-    prevBtn.innerHTML = icon(S.previewOpen ? 'eye' : 'eyeOff');
-    prevBtn.classList.toggle('cc-on', !S.previewOpen);
-    prevBtn.title = S.previewOpen ? "Collapse preview canvas" : "Expand preview canvas";
-  }
+  updatePreviewToggleBtn();
 
-  let banner = $('#cc-preview-banner');
   if (!S.previewOpen) {
-    stage.style.height = '36px';
-    stage.classList.add('cc-stage-collapsed');
-    if (wrap) wrap.style.display = 'none';
-    if (resizer) resizer.style.display = 'none';
-    if (!banner) {
-      banner = document.createElement('div');
-      banner.id = 'cc-preview-banner';
-      banner.className = 'cc-preview-collapsed-banner';
-      banner.innerHTML = `<button class="cc-btn cc-small cc-accent-pill" data-act="toggle-preview" style="height:26px;font-size:11px;cursor:pointer;">👁️ Preview Collapsed — Click to Show Preview</button>`;
-      stage.appendChild(banner);
-    } else {
-      banner.style.display = 'flex';
-    }
+    stage.style.height = '0px';
     return;
   }
 
-  stage.classList.remove('cc-stage-collapsed');
-  if (banner) banner.style.display = 'none';
-  if (wrap) wrap.style.display = 'block';
-  if (resizer) resizer.style.display = 'flex';
-
   const rootH = (root && root.clientHeight > 0) ? root.clientHeight : (window.innerHeight || 600);
   const userH = S.previewHeight || (S.settings && S.settings.previewHeight);
-  const baseH = userH ? Math.max(90, Math.min(rootH * 0.78, userH))
-                      : Math.max(120, Math.min(560, rootH * 0.34));
+  const numUserH = Number(userH);
+  const validUserH = (isFinite(numUserH) && numUserH >= 80) ? numUserH : null;
+  const baseH = validUserH ? Math.max(90, Math.min(rootH * 0.78, validUserH))
+                           : Math.max(120, Math.min(560, rootH * 0.34));
   stage.style.height = Math.round(baseH) + 'px';
 
-  const avW = Math.max(120, (stage.clientWidth || 300) - 16);
+  const avW = Math.max(120, (stage.clientWidth || (root && root.clientWidth) || 300) - 16);
   const avH = Math.max(80, baseH - 16);
   const seqW = (S.seq && S.seq.width > 0) ? S.seq.width : 1080;
   const seqH = (S.seq && S.seq.height > 0) ? S.seq.height : 1920;
-  const ar = (seqW && seqH) ? (seqW / seqH) : (9 / 16);
+  const ar = seqW / seqH;
   let w = avW, h = w / ar;
   if (h > avH) { h = avH; w = h * ar; }
 
@@ -527,6 +570,7 @@ function bindResizer() {
   const resizer = $('#cc-stage-resizer');
   if (!resizer) return;
   let startY = 0, startH = 0;
+  const stage = $('#cc-stage');
   const onMove = (e) => {
     const dy = e.clientY - startY;
     const newH = Math.max(90, Math.min((root.clientHeight || 600) * 0.78, startH + dy));
@@ -538,6 +582,7 @@ function bindResizer() {
     window.removeEventListener('pointermove', onMove);
     window.removeEventListener('pointerup', onUp);
     resizer.classList.remove('cc-resizing');
+    if (stage) stage.style.transition = '';
     saveSettingsSoon();
   };
   resizer.addEventListener('pointerdown', (e) => {
@@ -545,6 +590,7 @@ function bindResizer() {
     startY = e.clientY;
     startH = ($('#cc-stage') || {}).clientHeight || (root.clientHeight * 0.34);
     resizer.classList.add('cc-resizing');
+    if (stage) stage.style.transition = 'none';
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
   });
@@ -570,7 +616,7 @@ async function captureSequenceFrame(usePlayhead) {
     setStatus('Frame capture requires an active Premiere Pro sequence.', 'info');
     return;
   }
-  setStatus('Grabbing sequence frame…', 'info');
+  setStatus('Grabbing sequence frameΓÇª', 'info');
   try {
     let targetTime = null;
     if (usePlayhead) {
@@ -702,7 +748,7 @@ function drawPreview() {
   }
 }
 
-/* ── audio player & playback sync ────────────────────────────── */
+/* ΓöÇΓöÇ audio player & playback sync ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
 
 function initAudio(url, rangeIn) {
   if (S.audio) {
@@ -898,7 +944,7 @@ function highlightPlayingWord() {
   lastPlayingWord = idx;
 }
 
-/* ── status + footer ──────────────────────────────────────────── */
+/* ΓöÇΓöÇ status + footer ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
 
 function formatUserError(err) {
   if (!err) return 'An unknown error occurred.';
@@ -921,8 +967,8 @@ function formatUserError(err) {
     msg = detailMatch[1];
   }
 
-  // Strip HTTP method and status prefix if present (e.g. 'POST /api/... → 404: ...')
-  msg = msg.replace(/^(?:GET|POST|PUT|DELETE)\s+\S+\s+→\s+\d+:\s*/i, '');
+  // Strip HTTP method and status prefix if present (e.g. 'POST /api/... ΓåÆ 404: ...')
+  msg = msg.replace(/^(?:GET|POST|PUT|DELETE)\s+\S+\s+ΓåÆ\s+\d+:\s*/i, '');
 
   // Strip raw FFmpeg hex pointers and bracketed stream tags
   msg = msg.replace(/\[[a-zA-Z0-9_#:\/\.\s\-]+@\s*(?:0x)?[0-9a-fA-F]+\]/g, '');
@@ -942,7 +988,7 @@ function formatUserError(err) {
   msg = msg.replace(/\s+/g, ' ').trim();
 
   if (!msg) return 'Operation failed.';
-  return msg.length > 260 ? msg.slice(0, 257) + '…' : msg;
+  return msg.length > 260 ? msg.slice(0, 257) + 'ΓÇª' : msg;
 }
 
 let statusTimer = 0;
@@ -970,13 +1016,13 @@ function updateFooter() {
   }
   const n = S.scene ? S.scene.captions.length : 0;
   el.innerHTML = `<button class="cc-btn cc-primary cc-wide" data-act="export" ${n ? '' : 'disabled'}
-      title="${n ? `${n} caption${n === 1 ? '' : 's'} · ${fmtTime(S.scene.duration)}` : 'Transcribe or paste words first'}">
+      title="${n ? `${n} caption${n === 1 ? '' : 's'} ┬╖ ${fmtTime(S.scene.duration)}` : 'Transcribe or paste words first'}">
       ${inCEP() ? 'Add captions to timeline' : 'Render caption video'}</button>`;
 }
 
 function setBusy(b) { S.busy = b; updateFooter(); }
 
-/* ── tabs ─────────────────────────────────────────────────────── */
+/* ΓöÇΓöÇ tabs ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
 
 function renderBody() {
   if (!root || !$('#cc-body')) return;
@@ -994,7 +1040,7 @@ function renderBody() {
   updateFooter();
 }
 
-/* ── controls (declarative: data-bind + one handler) ──────────── */
+/* ΓöÇΓöÇ controls (declarative: data-bind + one handler) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
 
 function ctlNum(path, label, min, max, step, unit, scale) {
   const raw = getPath(S.settings, path);
@@ -1026,14 +1072,21 @@ function ctlSeg(path, label, options, matchFn) {
   </div></div>`;
 }
 function ctlColor(path, label) {
-  const v = getPath(S.settings, path) || '#ffffff';
-  return `<label class="cc-color"><input type="color" value="${esc(v)}" data-bind="${path}" data-kind="text"><span>${label}</span></label>`;
+  const raw = getPath(S.settings, path);
+  const hex = normalizeHex(raw, '#ffffff');
+  return `<div class="cc-color cc-color-group">
+    <div class="cc-color-ctrl">
+      <input type="color" class="cc-color-swatch" value="${esc(hex)}" data-bind="${path}" data-kind="color" aria-label="${esc(label)} color swatch">
+      <input type="text" class="cc-hex-input cc-color-hex" value="${esc(hex)}" data-bind="${path}" data-kind="hex" maxlength="24" spellcheck="false" autocomplete="off" aria-label="${esc(label)} hex code" placeholder="#FFFFFF">
+    </div>
+    <span class="cc-color-lbl">${label}</span>
+  </div>`;
 }
 function section(title, inner, extra) {
   return `<section class="cc-sec"><h4>${title}${extra || ''}</h4>${inner}</section>`;
 }
 
-/* ── Transcript tab ───────────────────────────────────────────── */
+/* ΓöÇΓöÇ Transcript tab ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
 
 const LANGS = [['en', 'English'], ['auto', 'Auto-detect'], ['ur', 'Urdu'], ['hi', 'Hindi'], ['ar', 'Arabic'],
   ['es', 'Spanish'], ['fr', 'French'], ['de', 'German']];
@@ -1045,9 +1098,9 @@ function sourceCard() {
   const seqDur = S.seq && S.seq.duration ? S.seq.duration : 0;
   const outPt = S.seq && S.seq.outPoint != null ? S.seq.outPoint : seqDur;
   const inOutSpan = fmtTime(Math.max(0, outPt - inPt));
-  const inOutText = `${fmtTime(inPt)} – ${fmtTime(outPt)}`;
+  const inOutText = `${fmtTime(inPt)} ΓÇô ${fmtTime(outPt)}`;
   const fullSpan = fmtTime(seqDur);
-  const fullText = `0:00.0 – ${fullSpan}`;
+  const fullText = `0:00.0 ΓÇô ${fullSpan}`;
 
   const isInOut = S.transcribeScope === 'inout';
   const currentSpanText = isInOut ? inOutText : fullText;
@@ -1074,11 +1127,11 @@ function sourceCard() {
       </div>
       <div style="display:flex; justify-content:space-between; align-items:center; font-size: 11px; color: var(--cc-dim, #aaa);">
         <span>Region: <b style="color:var(--cc-accent-2, #69a9ff)">${currentSpanText}</b> (${currentSpanDuration})</span>
-        ${hasInOut ? '<span style="color:#7ee787; font-size: 10.5px;">● In/Out marked</span>' : '<span style="font-size: 10.5px; opacity: 0.8;">(no markers set)</span>'}
+        ${hasInOut ? '<span style="color:#7ee787; font-size: 10.5px;">ΓùÅ In/Out marked</span>' : '<span style="font-size: 10.5px; opacity: 0.8;">(no markers set)</span>'}
       </div>
     </div>
     <button class="cc-btn cc-primary cc-wide" data-act="transcribe-seq" ${live && !S.busy ? '' : 'disabled'}>${btnLabel}</button>
-    <p class="cc-hint">${live ? 'Uses timeline audio as cut, so captions line up with your edit. Muted tracks are skipped — mute music first.'
+    <p class="cc-hint">${live ? 'Uses timeline audio as cut, so captions line up with your edit. Muted tracks are skipped ΓÇö mute music first.'
       : 'Open the panel inside Premiere to transcribe the sequence. You can still upload a file or paste a transcript.'}</p>
     <div class="cc-row2">
       ${ctlSelect('transcribe.language', 'Language', LANGS)}
@@ -1091,8 +1144,8 @@ function sourceCard() {
       </label>
     </div>
     <div class="cc-row2">
-      <button class="cc-btn" data-act="upload" ${S.busy ? 'disabled' : ''}>Upload audio / video…</button>
-      <button class="cc-btn" data-act="paste-toggle">${S.pasteOpen ? 'Hide paste box' : 'Paste transcript…'}</button>
+      <button class="cc-btn" data-act="upload" ${S.busy ? 'disabled' : ''}>Upload audio / videoΓÇª</button>
+      <button class="cc-btn" data-act="paste-toggle">${S.pasteOpen ? 'Hide paste box' : 'Paste transcriptΓÇª'}</button>
     </div>
     ${S.pasteOpen ? `<textarea class="cc-text" id="cc-paste" placeholder="Paste SRT, JSON [{word,start,end}], or plain text"></textarea>
       <button class="cc-btn cc-wide" data-act="paste-use">Use this transcript</button>` : ''}
@@ -1104,7 +1157,7 @@ function tabTranscript() {
   const vis = S.scene ? S.scene.captions.length : 0;
   const hideF = S.settings.grouping.hideFillers !== false;
   const hidden = S.words.filter((w) => !M.isVisible(w, hideF)).length;
-  const sourceLabel = S.sourceName ? ` · <span title="${esc(S.sourceName)}">${esc(S.sourceName)}</span>` : '';
+  const sourceLabel = S.sourceName ? ` ┬╖ <span title="${esc(S.sourceName)}">${esc(S.sourceName)}</span>` : '';
   const fillers = M.findFillerRanges(S.words);
   const silences = M.findSilenceRanges(S.words, 0.6, 0.2);
   const totalSilenceSaved = silences.reduce((acc, s) => acc + s.saved, 0);
@@ -1122,8 +1175,8 @@ function tabTranscript() {
       <button class="cc-icon-btn" data-act="undo" title="Undo (Ctrl+Z)" ${S.history.length ? '' : 'disabled'}>${icon('undo')}</button>
       <button class="cc-icon-btn" data-act="redo" title="Redo (Ctrl+Shift+Z)" ${S.future.length ? '' : 'disabled'}>${icon('redo')}</button>
       <button class="cc-icon-btn${S.findOpen ? ' cc-on' : ''}" data-act="find-toggle" title="Find & replace">${icon('search')}</button>
-      <span class="cc-dim cc-grow" id="cc-txcount">${S.words.length} words · ${vis} captions${hidden ? ` · ${hidden} hidden` : ''}${sourceLabel}</span>
-      <button class="cc-btn cc-small" data-act="source-toggle">${S.showSource ? 'Done' : 'Re-transcribe…'}</button>
+      <span class="cc-dim cc-grow" id="cc-txcount">${S.words.length} words ┬╖ ${vis} captions${hidden ? ` ┬╖ ${hidden} hidden` : ''}${sourceLabel}</span>
+      <button class="cc-btn cc-small" data-act="source-toggle">${S.showSource ? 'Done' : 'Re-transcribeΓÇª'}</button>
       <button class="cc-btn cc-small" data-act="clear-tx" title="Clear current transcript and start fresh">Clear</button>
     </div>
     ${cutBar}
@@ -1134,7 +1187,7 @@ function tabTranscript() {
       <button class="cc-btn cc-small" data-act="replace-all">Replace all</button></div>` : ''}
     <div class="cc-selbar hidden" id="cc-selbar"></div>
     <div class="cc-tx" id="cc-tx" tabindex="0"></div>
-    <p class="cc-hint">Click a word to jump to it · double-click to fix it · <kbd>H</kbd> hide · <kbd>E</kbd> emphasise · <kbd>B</kbd> new caption here · <kbd>←</kbd><kbd>→</kbd> move</p>`;
+    <p class="cc-hint">Click a word to jump to it ┬╖ double-click to fix it ┬╖ <kbd>H</kbd> hide ┬╖ <kbd>E</kbd> emphasise ┬╖ <kbd>B</kbd> new caption here ┬╖ <kbd>ΓåÉ</kbd><kbd>ΓåÆ</kbd> move</p>`;
 }
 
 function renderTranscriptList() {
@@ -1167,9 +1220,9 @@ function renderTranscriptList() {
     } else {
       let emojiBadge = '';
       if (w.emoji) {
-        emojiBadge = `<span class="cc-emoji-pill cc-emoji-active" data-act="w-remove-emoji" data-i="${i}" title="Remove ${w.emoji}">${w.emoji}<small>✕</small></span>`;
+        emojiBadge = `<span class="cc-emoji-pill cc-emoji-active" data-act="w-remove-emoji" data-i="${i}" title="Remove ${w.emoji}">${w.emoji}<small>Γ£ò</small></span>`;
       }
-      html += `<span class="${cls.join(' ')}" data-i="${i}" title="${fmtTime(w.start)}${!visible && w.hidden !== true ? ' · filler, hidden automatically' : ''}">${esc(w.text)}${emojiBadge}</span>`;
+      html += `<span class="${cls.join(' ')}" data-i="${i}" title="${fmtTime(w.start)}${!visible && w.hidden !== true ? ' ┬╖ filler, hidden automatically' : ''}">${esc(w.text)}${emojiBadge}</span>`;
     }
     if (open && i + 1 < S.words.length) html += ' ';
   });
@@ -1178,7 +1231,7 @@ function renderTranscriptList() {
   const count = $('#cc-txcount');
   if (count && S.scene) {
     const hidden = S.words.filter((w) => !M.isVisible(w, hideF)).length;
-    count.textContent = `${S.words.length} words · ${S.scene.captions.length} captions${hidden ? ` · ${hidden} hidden` : ''}`;
+    count.textContent = `${S.words.length} words ┬╖ ${S.scene.captions.length} captions${hidden ? ` ┬╖ ${hidden} hidden` : ''}`;
   }
   renderSelBar();
   const ed = $('#cc-w-edit');
@@ -1196,19 +1249,19 @@ function renderSelBar() {
   const curSpk = (w.speaker != null && isFinite(w.speaker)) ? Number(w.speaker) : 0;
   const sugg = (!w.emoji && S.settings.style.emojiEnabled) ? getEmojiSuggestion(w.text) : null;
   bar.classList.remove('hidden');
-  bar.innerHTML = `<span class="cc-selword">“${esc(w.text)}” <span class="cc-dim">${fmtTime(w.start)}</span></span>
+  bar.innerHTML = `<span class="cc-selword">ΓÇ£${esc(w.text)}ΓÇ¥ <span class="cc-dim">${fmtTime(w.start)}</span></span>
     <button class="cc-btn cc-small" data-act="w-hide" title="Hide / show this word (H)">${vis ? 'Hide' : 'Show'}</button>
     <button class="cc-btn cc-small${w.emphasis ? ' cc-on' : ''}" data-act="w-emph" title="Emphasise (E)">Emphasis</button>
     <button class="cc-btn cc-small${w.speaker ? ' cc-on' : ''}" data-act="w-speaker" title="Toggle speaker assignment (Speaker 1 / Speaker 2)">Speaker ${curSpk + 1}</button>
     ${sugg ? `<button class="cc-btn cc-small" data-act="w-apply-emoji" data-i="${S.sel}" data-emoji="${sugg}" title="Add suggested ${sugg}">+ ${sugg}</button>` : ''}
-    <button class="cc-btn cc-small${w.emoji ? ' cc-on' : ''}" data-act="w-custom-emoji" title="Set emoji for this word">${w.emoji ? `${w.emoji} Emoji` : 'Emoji…'}</button>
+    <button class="cc-btn cc-small${w.emoji ? ' cc-on' : ''}" data-act="w-custom-emoji" title="Set emoji for this word">${w.emoji ? `${w.emoji} Emoji` : 'EmojiΓÇª'}</button>
     <button class="cc-btn cc-small${w.breakBefore ? ' cc-on' : ''}" data-act="w-break" title="Start a new caption at this word (B)">New caption</button>
     <button class="cc-btn cc-small" data-act="w-edit" title="Fix the spelling (Enter)">Edit</button>
     <button class="cc-btn cc-small cc-danger" data-act="w-cut" title="Delete word and ripple cut from Premiere timeline (Del / Backspace)">Ripple Cut</button>
-    <span class="cc-nudge"><button class="cc-btn cc-small" data-act="w-earlier" title="Start one frame earlier">−1f</button><button class="cc-btn cc-small" data-act="w-later" title="Start one frame later">+1f</button></span>`;
+    <span class="cc-nudge"><button class="cc-btn cc-small" data-act="w-earlier" title="Start one frame earlier">ΓêÆ1f</button><button class="cc-btn cc-small" data-act="w-later" title="Start one frame later">+1f</button></span>`;
 }
 
-/* ── word edits (with undo) ───────────────────────────────────── */
+/* ΓöÇΓöÇ word edits (with undo) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
 
 function snapshot() {
   S.history.push(JSON.stringify(S.words));
@@ -1272,7 +1325,7 @@ function commitEdit(text) {
   if (parts.length === 1) {
     w.text = parts[0];
   } else {
-    // "gonna" → "going to": share the word's time by letter count
+    // "gonna" ΓåÆ "going to": share the word's time by letter count
     const total = parts.reduce((a, p) => a + p.length, 0);
     let t = w.start;
     const span = w.end - w.start;
@@ -1309,12 +1362,12 @@ function replaceAll() {
       n++;
     }
   }
-  if (!n || !r) { S.history.pop(); setStatus(n ? 'Type the replacement first.' : `No “${f}” in the transcript.`); return; }
-  setStatus(`Replaced ${n} × “${f}”.`, 'ok');
+  if (!n || !r) { S.history.pop(); setStatus(n ? 'Type the replacement first.' : `No ΓÇ£${f}ΓÇ¥ in the transcript.`); return; }
+  setStatus(`Replaced ${n} ├ù ΓÇ£${f}ΓÇ¥.`, 'ok');
   wordsChanged();
 }
 
-/* ── timeline ripple editing (Descript-style text cuts) ────────── */
+/* ΓöÇΓöÇ timeline ripple editing (Descript-style text cuts) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
 
 async function executeTimelineRippleCut(ranges, desc) {
   if (!ranges || !ranges.length) return;
@@ -1326,7 +1379,7 @@ async function executeTimelineRippleCut(ranges, desc) {
     setStatus(`${desc} (preview mode: excised from transcript; connect to Premiere for timeline cut)`, 'info');
     return;
   }
-  setBusy({ kind: 'cut', label: `${desc}…`, progress: null });
+  setBusy({ kind: 'cut', label: `${desc}ΓÇª`, progress: null });
   try {
     const res = await callExtendScript('removeTimelineRanges', { ranges: ranges });
     if (!res || !res.success) {
@@ -1345,7 +1398,7 @@ async function executeTimelineRippleCut(ranges, desc) {
   }
 }
 
-/* ── transcription ────────────────────────────────────────────── */
+/* ΓöÇΓöÇ transcription ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
 
 function setWords(words, note) {
   if (S.words.length) snapshot();
@@ -1389,14 +1442,14 @@ function onWsMessage(ev) {
   const p = d && (d.payload || d);
   if (!S.busy || S.busy.kind !== 'transcribe' || !p || p.task_type !== 'transcribe') return;
   S.busy.progress = typeof p.progress === 'number' ? clamp(p.progress, 0, 1) : null;
-  S.busy.label = p.message ? `Transcribing — ${p.message}` : 'Transcribing…';
+  S.busy.label = p.message ? `Transcribing ΓÇö ${p.message}` : 'TranscribingΓÇª';
   updateFooter();
 }
 
 function transcribeError(e) {
   const msg = formatUserError(e);
   if (/409|no_model/i.test(msg)) {
-    setStatus('No Whisper model installed yet — open Settings (gear icon) to download one, then try again.', 'error');
+    setStatus('No Whisper model installed yet ΓÇö open Settings (gear icon) to download one, then try again.', 'error');
   } else {
     setStatus('Transcription failed: ' + msg, 'error');
   }
@@ -1404,7 +1457,7 @@ function transcribeError(e) {
 
 async function transcribeSequence() {
   if (!inCEP() || S.busy) return;
-  setBusy({ kind: 'transcribe', label: 'Reading the sequence audio…', progress: null });
+  setBusy({ kind: 'transcribe', label: 'Reading the sequence audioΓÇª', progress: null });
   try {
     await refreshSequence(false);
     const scope = S.transcribeScope || 'inout';
@@ -1414,8 +1467,8 @@ async function transcribeSequence() {
     if (!clips.clips || !clips.clips.length) {
       throw new Error('No audio clips on unmuted tracks' + (clips.nested ? ` (${clips.nested} nested-sequence clip(s) are skipped)` : '') + '.');
     }
-    const rangeLabel = clips.rangeIn > 0 ? ` [In/Out: ${fmtTime(clips.rangeIn)} – ${fmtTime(clips.rangeOut)}]` : '';
-    setBusy({ kind: 'transcribe', label: `Transcribing ${clips.clips.length} clip${clips.clips.length === 1 ? '' : 's'}${rangeLabel}… (can take minutes on CPU)`, progress: null });
+    const rangeLabel = clips.rangeIn > 0 ? ` [In/Out: ${fmtTime(clips.rangeIn)} ΓÇô ${fmtTime(clips.rangeOut)}]` : '';
+    setBusy({ kind: 'transcribe', label: `Transcribing ${clips.clips.length} clip${clips.clips.length === 1 ? '' : 's'}${rangeLabel}ΓÇª (can take minutes on CPU)`, progress: null });
     const tr = S.settings.transcribe;
     const force = !!($('#cc-force-transcribe') || {}).checked;
     const res = await apiPost('/api/captions/transcribe-sequence', {
@@ -1425,9 +1478,9 @@ async function transcribeSequence() {
     }, { timeoutMs: 60 * 60 * 1000 });
     const words = (res.words || []).map((w) => ({ text: w.word || w.text, start: w.start, end: w.end }));
     const skipped = (res.skipped || []).length;
-    const modelLabel = res.model ? `${res.model} · ${res.engine || 'faster_whisper'}` : (res.engine || 'whisper');
+    const modelLabel = res.model ? `${res.model} ┬╖ ${res.engine || 'faster_whisper'}` : (res.engine || 'whisper');
     S.sourceName = clips.name || 'Sequence';
-    setWords(words, `${words.length} words from “${clips.name}”${rangeLabel} (${modelLabel})${skipped ? ` — ${skipped} offline clip(s) skipped` : ''}.`);
+    setWords(words, `${words.length} words from ΓÇ£${clips.name}ΓÇ¥${rangeLabel} (${modelLabel})${skipped ? ` ΓÇö ${skipped} offline clip(s) skipped` : ''}.`);
     if (res.audio_url) {
       initAudio(res.audio_url, res.range_in || 0);
     }
@@ -1443,7 +1496,7 @@ async function transcribeSequence() {
 
 async function transcribeFile(file) {
   if (S.busy) return;
-  setBusy({ kind: 'transcribe', label: `Uploading ${file.name}…`, progress: null });
+  setBusy({ kind: 'transcribe', label: `Uploading ${file.name}ΓÇª`, progress: null });
   try {
     const tr = S.settings.transcribe;
     const force = !!($('#cc-force-transcribe') || {}).checked;
@@ -1456,7 +1509,7 @@ async function transcribeFile(file) {
       im.src = getBaseUrl() + res.bg_url;
       S.bgImage = im;
     }
-    const modelLabel = res.model ? `${res.model} · ${res.engine || 'faster_whisper'}` : (res.engine || 'whisper');
+    const modelLabel = res.model ? `${res.model} ┬╖ ${res.engine || 'faster_whisper'}` : (res.engine || 'whisper');
     S.sourceName = file.name;
     setWords(words, `${words.length} words from ${file.name} (${modelLabel}). Times count from the start of the sequence.`);
     if (res.audio_url) {
@@ -1508,11 +1561,11 @@ function parsePasted(raw) {
   return raw.split(/\s+/).filter(Boolean).map((t, i) => ({ text: t, start: i / 2.6, end: (i + 0.9) / 2.6 }));
 }
 
-/* ── Style tab ────────────────────────────────────────────────── */
+/* ΓöÇΓöÇ Style tab ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
 
 function fontOptions() {
   const fam = S.settings.style.fontFamily;
-  const bundled = BUNDLED.map((f) => `<option value="${esc(f.family)}"${f.family === fam ? ' selected' : ''}>${esc(f.family)} — ${esc(f.note)}</option>`).join('');
+  const bundled = BUNDLED.map((f) => `<option value="${esc(f.family)}"${f.family === fam ? ' selected' : ''}>${esc(f.family)} ΓÇö ${esc(f.note)}</option>`).join('');
   const sys = S.systemFonts.filter((f) => !BUNDLED.some((b) => b.family.toLowerCase() === f.family.toLowerCase()));
   const sysHtml = sys.map((f) => `<option value="${esc(f.family)}"${f.family === fam ? ' selected' : ''}>${esc(f.family)}</option>`).join('');
   const known = BUNDLED.some((b) => b.family === fam) || sys.some((f) => f.family === fam);
@@ -1537,7 +1590,7 @@ function tabStyle() {
     if (p.isUser) {
       return `<div class="cc-tile-wrap">
         ${tileBody}
-        <button class="cc-tile-del" data-act="del-preset" data-id="${p.id}" title="Delete preset">✕</button>
+        <button class="cc-tile-del" data-act="del-preset" data-id="${p.id}" title="Delete preset">Γ£ò</button>
       </div>`;
     }
     return tileBody;
@@ -1545,33 +1598,95 @@ function tabStyle() {
 
   const lookExtra = `
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-      <span style="font-size:11px; font-weight:600; color:var(--cc-dim, #aaa);">PRESETS${S.settings.preset === 'custom' ? ' · customised' : ''}</span>
+      <span style="font-size:11px; font-weight:600; color:var(--cc-dim, #aaa);">PRESETS${S.settings.preset === 'custom' ? ' ┬╖ customised' : ''}</span>
       <button class="cc-btn cc-small" data-act="save-user-preset" title="Save your current look as a reusable preset" style="padding:2px 8px; font-size:11px; height:24px;">+ Save Look</button>
     </div>`;
 
-  const curY = S.settings.layout ? S.settings.layout.posY : 72;
-  const isTop = curY <= 30;
-  const isCenter = curY > 30 && curY < 65;
-  const isBottom = curY >= 65;
-
   return `
-    ${section('Presets & Style', `${lookExtra}<div class="cc-tiles">${tiles}</div>`)}
-    ${section('Essential Typography', `
-      <div class="cc-ctl"><label class="cc-lbl">Font Family</label><select class="cc-select" data-bind="style.fontFamily" data-kind="text">${fontOptions()}</select></div>
-      <p class="cc-warn${S.fontOk ? ' hidden' : ''}" id="cc-font-warn">This font isn't available to the panel — pick another, or install it in Windows and reopen the panel.</p>
+    ${section('Look', `${lookExtra}<div class="cc-tiles">${tiles}</div>`)}
+    ${section('Font', `
+      <div class="cc-ctl"><label class="cc-lbl">Family</label><select class="cc-select" data-bind="style.fontFamily" data-kind="text">${fontOptions()}</select></div>
+      <p class="cc-warn${S.fontOk ? ' hidden' : ''}" id="cc-font-warn">This font isn't available to the panel ΓÇö pick another, or install it in Windows and reopen the panel.</p>
       ${ctlSeg('style.fontWeight', 'Weight', ws.map((w) => [w, weightName(w)]))}
-      ${ctlNum('style.fontSize', 'Font Size', 24, 220, 1, 'px')}
-      <div class="cc-lbl" style="margin-top:6px; margin-bottom:4px;">Position Preset</div>
-      <div class="cc-quick-pos-row">
-        <button class="cc-quick-pos-btn${isTop ? ' active' : ''}" data-act="pos-top" title="Place captions near top of video (18%)">🔝 Top</button>
-        <button class="cc-quick-pos-btn${isCenter ? ' active' : ''}" data-act="pos-center" title="Center captions on screen (50%)">🎯 Center</button>
-        <button class="cc-quick-pos-btn${isBottom ? ' active' : ''}" data-act="pos-bottom" title="Place captions at bottom title-safe margin (76%)">⬇️ Bottom</button>
+      ${ctlNum('style.fontSize', 'Size', 24, 220, 1, 'px')}
+      ${ctlSeg('style.textCase', 'Case', [['as_is', 'As spoken'], ['upper', 'UPPER'], ['title', 'Title Case'], ['lower', 'lower']])}
+      ${ctlSeg('style.punctuation', 'Punctuation', [
+        ['no_dots', 'No dots', 'Keep commas & pauses, drop ending dots (.)'],
+        ['keep', 'Keep all', 'Keep all punctuation as spoken'],
+        ['soft', 'Clean', 'Hide commas and full stops, keep ? and !'],
+        ['none', 'None', 'Strip all punctuation'],
+        ['custom', 'Custom', 'Choose specifically which punctuation to keep'],
+      ])}
+      <div class="cc-punct-sub cc-sub-ctls${st.punctuation === 'custom' ? '' : ' hidden'}">
+        ${ctlToggle('style.punctCommas', 'Keep commas & inner pauses', 'Preserves , ; : (and Urdu ╪î ╪¢)')}
+        ${ctlToggle('style.punctDots', 'Keep sentence-ending dots', 'Preserves . ΓÇª (and Urdu █ö)')}
+        ${ctlToggle('style.punctExpressive', 'Keep ? and !', 'Preserves question marks and exclamations')}
+      </div>`)}
+    ${section('Colour', `<div class="cc-swatches">
+      ${ctlColor('style.color', 'Text')}
+      ${M.highlightMode(S.settings.motion) === 'color' ? ctlColor('style.activeColor', 'Active word') : ''}
+      ${ctlColor('style.emphasisColor', 'Emphasis')}</div>
+      ${ctlToggle('style.gradient', 'Gradient fill', '2-colour vertical gradient')}
+      <div class="cc-gradient-sub cc-sub-ctls${st.gradient ? '' : ' hidden'}">
+        <div class="cc-swatches">${ctlColor('style.gradientColor', 'Bottom colour')}</div>
       </div>
-      ${ctlSeg('grouping.maxWords', 'Cadence / Words on screen', [
-        [1, '1 word', '1 word at a time — maximum retention pop'],
-        [3, '2-3 words', '2 to 3 words — Hormozi viral cadence'],
-        [5, '4-5 words', '4 to 5 words — standard balanced caption'],
-        [8, 'Full line', 'Full line — traditional subtitle pacing'],
+      ${ctlToggle('style.activeGlow', 'Active word glow', 'Subtle luminance bloom around the spoken word')}
+      <div class="cc-glow-sub cc-sub-ctls${st.activeGlow ? '' : ' hidden'}">
+        <div class="cc-swatches">${ctlColor('style.activeGlowColor', 'Glow colour')}</div>
+        ${ctlNum('style.activeGlowBlur', 'Glow softness', 4, 40, 1, 'px')}
+      </div>
+      ${ctlToggle('style.speakerColoring', 'Multi-speaker coloring', 'Differentiate speakers with distinct colors')}
+      <div class="cc-speaker-sub cc-sub-ctls${st.speakerColoring ? '' : ' hidden'}">
+        <div class="cc-swatches">
+          ${ctlColor('style.speakerColors.0', 'Speaker 1')}
+          ${ctlColor('style.speakerColors.1', 'Speaker 2')}
+        </div>
+      </div>
+      ${ctlSeg('style.emphasis', 'Emphasised words get', [['color', 'Colour'], ['pill', 'Pill'], ['both', 'Both']])}
+      <div class="cc-emphasis-sub cc-sub-ctls${st.emphasis !== 'color' ? '' : ' hidden'}">
+        <div class="cc-swatches">${ctlColor('style.pillColor', 'Pill')}</div>${ctlNum('style.pillOpacity', 'Pill opacity', 0, 100, 1, '%', 100)}
+      </div>`)}
+    ${section('Outline', `${ctlNum('style.strokeWidth', 'Thickness', 0, 20, 0.5, 'px')}
+      <div class="cc-swatches">${ctlColor('style.strokeColor', 'Outline colour')}</div>`)}
+    ${section('Shadow', `${ctlToggle('style.shadow', 'Drop shadow')}
+      <div class="cc-shadow-sub cc-sub-ctls${st.shadow ? '' : ' hidden'}">
+        <div class="cc-swatches">${ctlColor('style.shadowColor', 'Shadow colour')}</div>
+        ${ctlNum('style.shadowOpacity', 'Opacity', 0, 100, 1, '%', 100)}
+        ${ctlNum('style.shadowBlur', 'Softness', 0, 60, 1, 'px')}
+        ${ctlNum('style.shadowDistance', 'Distance', 0, 40, 1, 'px')}
+      </div>`)}
+    ${section('Background', `${ctlSeg('style.background', 'Behind the text', [['none', 'None'], ['box', 'Box', 'A rounded box per line'], ['block', 'Block', 'One box for the whole caption'], ['pills', 'Pills', 'A pill behind every word']])}
+      <div class="cc-bg-sub cc-sub-ctls${st.background !== 'none' ? '' : ' hidden'}">
+        <div class="cc-swatches">${ctlColor('style.bgColor', 'Box colour')}</div>
+        ${ctlNum('style.bgOpacity', 'Opacity', 0, 100, 1, '%', 100)}
+        ${ctlNum('style.bgRadius', 'Roundness', 0, 100, 1, '%', 100)}
+        <div style="display:flex;gap:6px">
+          <div style="flex:1">${ctlNum('style.bgPad', 'Horizontal padding', 0, 60, 1, '%', 100)}</div>
+          <div style="flex:1">${ctlNum('style.bgPadY', 'Vertical padding', 0, 60, 1, '%', 100)}</div>
+        </div>
+      </div>`)}
+    ${section('Emojis', `
+      ${ctlToggle('style.emojiEnabled', 'Dynamic Emojis', 'Display contextual emojis on spoken keywords')}
+      <div class="cc-emoji-sub cc-sub-ctls${st.emojiEnabled ? '' : ' hidden'}">
+        <div style="margin-top:6px">
+          ${ctlSeg('style.emojiPlacement', 'Placement', [['above', 'Above word'], ['inline', 'Inline with text']])}
+          ${ctlNum('style.emojiScale', 'Emoji size', 0.6, 2.0, 0.1, '├ù')}
+        </div>
+      </div>`)}
+    ${section('Position', `
+      ${ctlNum('layout.posY', 'Height on screen', 5, 95, 0.5, '%')}
+      <div style="display:flex;align-items:center;gap:6px">
+        <div style="flex:1">${ctlNum('layout.posX', 'Left / right', 5, 95, 0.5, '%')}</div>
+        <button class="cc-btn cc-small" data-act="center-x" title="Reset horizontal position to exact center (50%)" style="flex:none;height:24px;margin-top:2px">Center 50%</button>
+      </div>
+      ${ctlNum('layout.rotation', 'Tilt angle', -15, 15, 0.5, '┬░')}
+      ${ctlNum('layout.boxWidth', 'Caption width', 20, 100, 1, '%')}
+      ${ctlNum('layout.lineHeight', 'Vertical box height / line spacing', 0.8, 2.5, 0.02, '├ù')}
+      ${ctlSeg('grouping.maxWords', 'Words on screen', [
+        [1, '1 word', '1 word at a time ΓÇö maximum retention pop'],
+        [3, '2-3 words', '2 to 3 words ΓÇö Hormozi viral cadence'],
+        [5, '4-5 words', '4 to 5 words ΓÇö standard balanced caption'],
+        [8, 'Full line', 'Full line ΓÇö traditional subtitle pacing'],
       ], (optVal, curVal) => {
         const cv = Number(curVal) || 4;
         if (optVal === 1 && cv === 1) return true;
@@ -1580,102 +1695,13 @@ function tabStyle() {
         if (optVal === 8 && cv >= 7) return true;
         return false;
       })}
-      <div class="cc-swatches" style="margin-top:8px;">
-        ${ctlColor('style.color', 'Text Color')}
-        ${M.highlightMode(S.settings.motion) === 'color' ? ctlColor('style.activeColor', 'Spoken Word') : ''}
-        ${ctlColor('style.emphasisColor', 'Emphasis Color')}
-      </div>
-    `)}
-
-    <details class="cc-disclosure">
-      <summary class="cc-summary"><span>⚡ Advanced Styling (Outlines, Shadows, Box, Emojis, Angles)</span></summary>
-      <div class="cc-disclosure-content">
-        ${section('Outline & Borders', `
-          ${ctlNum('style.strokeWidth', 'Outline Thickness', 0, 20, 0.5, 'px')}
-          <div class="cc-swatches">${ctlColor('style.strokeColor', 'Outline Color')}</div>
-        `)}
-        ${section('Gradient & Color Fill', `
-          ${ctlToggle('style.gradient', 'Vertical Linear Gradient', 'Blend two colors vertically across words')}
-          <div class="cc-gradient-sub cc-sub-ctls${st.gradient ? '' : ' hidden'}">
-            <div class="cc-swatches" style="margin-top:6px;">${ctlColor('style.gradientColor', 'Bottom Color')}</div>
-          </div>
-        `)}
-        ${section('Drop Shadow', `
-          ${ctlToggle('style.shadow', 'Drop Shadow')}
-          <div class="cc-shadow-sub cc-sub-ctls${st.shadow ? '' : ' hidden'}">
-            <div class="cc-swatches">${ctlColor('style.shadowColor', 'Shadow Color')}</div>
-            ${ctlNum('style.shadowOpacity', 'Shadow Opacity', 0, 100, 1, '%', 100)}
-            ${ctlNum('style.shadowBlur', 'Shadow Blur / Softness', 0, 60, 1, 'px')}
-            ${ctlNum('style.shadowDistance', 'Shadow Distance', 0, 40, 1, 'px')}
-          </div>
-        `)}
-        ${section('Box Background Highlight', `
-          ${ctlSeg('style.background', 'Box Style', [['none', 'None'], ['box', 'Box', 'A rounded box per line'], ['block', 'Block', 'One box for the whole caption'], ['pills', 'Pills', 'A pill behind every word']])}
-          <div class="cc-bg-sub cc-sub-ctls${st.background !== 'none' ? '' : ' hidden'}">
-            <div class="cc-swatches">${ctlColor('style.bgColor', 'Box Color')}</div>
-            ${ctlNum('style.bgOpacity', 'Box Opacity', 0, 100, 1, '%', 100)}
-            ${ctlNum('style.bgRadius', 'Corner Roundness', 0, 100, 1, '%', 100)}
-            <div style="display:flex;gap:6px">
-              <div style="flex:1">${ctlNum('style.bgPad', 'Horizontal Padding', 0, 60, 1, '%', 100)}</div>
-              <div style="flex:1">${ctlNum('style.bgPadY', 'Vertical Padding', 0, 60, 1, '%', 100)}</div>
-            </div>
-          </div>
-        `)}
-        ${section('Dynamic Emojis', `
-          ${ctlToggle('style.emojiEnabled', 'Auto-Keyword Emojis', 'Display contextual emojis on spoken keywords')}
-          <div class="cc-emoji-sub cc-sub-ctls${st.emojiEnabled ? '' : ' hidden'}">
-            <div style="margin-top:6px">
-              ${ctlSeg('style.emojiPlacement', 'Placement', [['above', 'Above word'], ['inline', 'Inline with text']])}
-              ${ctlNum('style.emojiScale', 'Emoji Size', 0.6, 2.0, 0.1, '×')}
-            </div>
-          </div>
-        `)}
-        ${section('Glow & Speaker Colors', `
-          ${ctlToggle('style.activeGlow', 'Spoken Word Glow Bloom', 'Subtle luminance bloom around the spoken word')}
-          <div class="cc-glow-sub cc-sub-ctls${st.activeGlow ? '' : ' hidden'}">
-            <div class="cc-swatches">${ctlColor('style.activeGlowColor', 'Glow Color')}</div>
-            ${ctlNum('style.activeGlowBlur', 'Glow Softness', 4, 40, 1, 'px')}
-          </div>
-          ${ctlToggle('style.speakerColoring', 'Multi-Speaker Coloring', 'Differentiate speakers with distinct colors')}
-          <div class="cc-speaker-sub cc-sub-ctls${st.speakerColoring ? '' : ' hidden'}">
-            <div class="cc-swatches">
-              ${ctlColor('style.speakerColors.0', 'Speaker 1')}
-              ${ctlColor('style.speakerColors.1', 'Speaker 2')}
-            </div>
-          </div>
-        `)}
-        ${section('Text Case & Punctuation Rules', `
-          ${ctlSeg('style.textCase', 'Letter Case', [['as_is', 'As spoken'], ['upper', 'UPPER'], ['title', 'Title Case'], ['lower', 'lower']])}
-          ${ctlSeg('style.punctuation', 'Punctuation Cleanliness', [
-            ['no_dots', 'No dots', 'Keep commas & pauses, drop ending dots (.)'],
-            ['keep', 'Keep all', 'Keep all punctuation as spoken'],
-            ['soft', 'Clean', 'Hide commas and full stops, keep ? and !'],
-            ['none', 'None', 'Strip all punctuation'],
-            ['custom', 'Custom', 'Choose specifically which punctuation to keep'],
-          ])}
-          <div class="cc-punct-sub cc-sub-ctls${st.punctuation === 'custom' ? '' : ' hidden'}" style="margin: 6px 0 6px 8px; padding-left: 10px; border-left: 2px solid rgba(255,255,255,0.12);">
-            ${ctlToggle('style.punctCommas', 'Keep commas & pauses', 'Preserves , ; : (and Urdu ، ؛)')}
-            ${ctlToggle('style.punctDots', 'Keep ending dots', 'Preserves . … (and Urdu ۔)')}
-            ${ctlToggle('style.punctExpressive', 'Keep ? and !', 'Preserves question marks and exclamations')}
-          </div>
-        `)}
-        ${section('Fine Position & Angle', `
-          ${ctlNum('layout.posY', 'Vertical Position (Y)', 5, 95, 0.5, '%')}
-          <div style="display:flex;align-items:center;gap:6px">
-            <div style="flex:1">${ctlNum('layout.posX', 'Horizontal Position (X)', 5, 95, 0.5, '%')}</div>
-            <button class="cc-btn cc-small" data-act="center-x" title="Reset horizontal position to exact center (50%)" style="flex:none;height:24px;margin-top:2px">Center 50%</button>
-          </div>
-          ${ctlNum('layout.rotation', 'Tilt Angle', -15, 15, 0.5, '°')}
-          ${ctlNum('layout.boxWidth', 'Max Box Width', 20, 100, 1, '%')}
-          ${ctlNum('layout.lineHeight', 'Line Spacing', 0.8, 2.5, 0.02, '×')}
-          ${ctlSeg('layout.align', 'Alignment', [['left', 'Left'], ['center', 'Center'], ['right', 'Right']])}
-        `)}
-      </div>
-    </details>`;
+      ${ctlSeg('grouping.maxLines', 'Lines', [[1, '1 line'], [2, '2 lines'], [3, '3 lines']])}
+      ${ctlSeg('layout.align', 'Align', [['left', 'Left'], ['center', 'Centre'], ['right', 'Right']])}
+      <p class="cc-hint">Tip: drag caption to move. Drag left/right handles for width, top/bottom handles for height.</p>`)}`;
 }
 
 const SAMPLE = [['Make', 0.0, 0.3], ['every', 0.3, 0.6], ['word', 0.6, 0.9], ['count', 0.9, 1.4]];
-const tileScenes = new WeakMap();   // canvas → { scene, settings } (built once per draw request)
+const tileScenes = new WeakMap();   // canvas ΓåÆ { scene, settings } (built once per draw request)
 function drawTileScene(cv, style, motion, t) {
   const W = 540, H = 300;
   const st = Object.assign({}, STYLE_DEFAULTS, style, { fontSize: 66 });
@@ -1705,9 +1731,9 @@ function paintTile(cv, t) {
 }
 function drawPresetTiles() {
   $$('[data-tile]').forEach((cv) => {
-    setupTileHover(cv, true);
     if (cv._painted && cv.width > 0) return;
     const p = findPreset(cv.dataset.tile);
+    // every word on screen, the last one being spoken
     if (p) {
       ensureFont(p.style.fontFamily, p.style.fontWeight).then(() => {
         drawTileScene(cv, p.style, p.motion, 1.15);
@@ -1717,11 +1743,11 @@ function drawPresetTiles() {
   });
 }
 
-// Motion and Preset tiles: static preview by default, animate on hover for zero background CPU load.
+// Motion tiles: static preview by default, animate on hover for zero background CPU load.
 let activeHoverTile = null;
 let hoverTileRaf = 0;
 
-function setupTileHover(cv, isPreset = false) {
+function setupTileHover(cv) {
   const btn = cv.closest('button');
   if (!btn || btn._hasHoverAnim) return;
   btn._hasHoverAnim = true;
@@ -1731,17 +1757,12 @@ function setupTileHover(cv, isPreset = false) {
     if (hoverTileRaf) cancelAnimationFrame(hoverTileRaf);
     const t0 = performance.now();
     const loop = (now) => {
-      if (activeHoverTile !== cv || (S.tab !== 'motion' && S.tab !== 'style') || document.hidden) {
+      if (activeHoverTile !== cv || S.tab !== 'motion' || document.hidden) {
         hoverTileRaf = 0;
         return;
       }
       const t = ((now - t0) / 1000) % 2.2;
-      if (isPreset) {
-        const p = findPreset(cv.dataset.tile);
-        if (p) drawTileScene(cv, p.style, p.motion, Math.min(t, 1.8));
-      } else {
-        paintTile(cv, Math.min(t, 1.9));
-      }
+      paintTile(cv, Math.min(t, 1.9));
       hoverTileRaf = requestAnimationFrame(loop);
     };
     hoverTileRaf = requestAnimationFrame(loop);
@@ -1754,12 +1775,7 @@ function setupTileHover(cv, isPreset = false) {
         cancelAnimationFrame(hoverTileRaf);
         hoverTileRaf = 0;
       }
-      if (isPreset) {
-        const p = findPreset(cv.dataset.tile);
-        if (p) drawTileScene(cv, p.style, p.motion, 1.15);
-      } else {
-        paintTile(cv, 0.68);
-      }
+      paintTile(cv, 0.68);
     }
   });
 }
@@ -1771,7 +1787,7 @@ function animateMotionTiles() {
   });
 }
 
-/* ── Motion tab ───────────────────────────────────────────────── */
+/* ΓöÇΓöÇ Motion tab ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
 
 const MOTIONS = [
   ['fade_up', 'Fade up', 'Each word rises in as it is spoken'],
@@ -1793,7 +1809,7 @@ function tabMotion() {
     ${section('Animation', `<div class="cc-tiles">${tiles}</div>
       ${hasSpeed ? ctlNum('motion.duration', 'Speed', 0.08, 1, 0.01, 's') : ''}
       ${['fade_up', 'slide_up'].indexOf(m.preset) !== -1 ? ctlNum('motion.distance', 'Travel', 0, 1.5, 0.01, 'em') : ''}
-      ${['pop', 'bounce'].indexOf(m.preset) !== -1 ? ctlNum('motion.intensity', 'Strength', 0.2, 2, 0.05, '×') : ''}
+      ${['pop', 'bounce'].indexOf(m.preset) !== -1 ? ctlNum('motion.intensity', 'Strength', 0.2, 2, 0.05, '├ù') : ''}
       ${['fade_up', 'slide_up', 'fade'].indexOf(m.preset) !== -1 ? ctlSelect('motion.easing', 'Easing', [['expo_out', 'Snappy (expo out)'], ['back_out', 'Overshoot (back out)'], ['ease_out', 'Smooth (ease out)'], ['ease_in_out', 'Ease in-out'], ['linear', 'Linear']]) : ''}`)}
     ${section('Active word', `${ctlSeg('motion.highlight', 'Highlight the word being spoken', [['none', 'Off'], ['color', 'Colour'], ['box', 'Box'], ['scale', 'Grow']])}
       <div class="cc-hl-box-sub cc-sub-ctls${m.highlight === 'box' ? '' : ' hidden'}">
@@ -1807,7 +1823,7 @@ function tabMotion() {
       ${ctlNum('grouping.maxWords', 'Words per caption', 1, 10, 1, '')}
       ${ctlNum('grouping.splitGap', 'New caption after a pause of', 0.15, 2, 0.05, 's')}
       ${ctlNum('grouping.maxDuration', 'Longest caption', 1, 8, 0.1, 's')}
-      ${ctlToggle('grouping.hideFillers', 'Hide filler words', '“uh”, “um”, “erm” — un-hide any one in Transcript')}`)}
+      ${ctlToggle('grouping.hideFillers', 'Hide filler words', 'ΓÇ£uhΓÇ¥, ΓÇ£umΓÇ¥, ΓÇ£ermΓÇ¥ ΓÇö un-hide any one in Transcript')}`)}
     ${section('Timing', `
       ${ctlNum('timing.offset', 'Shift all captions', -1, 1, 0.01, 's')}
       ${ctlNum('timing.minDuration', 'Minimum time on screen', 0.2, 2, 0.05, 's')}
@@ -1828,14 +1844,14 @@ function drawMotionTiles() {
   });
 }
 
-/* ── timeline markers & social chapters ───────────────────────── */
+/* ΓöÇΓöÇ timeline markers & social chapters ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
 
 async function sendTimelineMarkers() {
   if (!S.chapters || !S.chapters.length) {
     setStatus('No chapters to send to Premiere timeline.', 'info');
     return;
   }
-  setBusy({ kind: 'markers', label: 'Placing markers on timeline…', progress: null });
+  setBusy({ kind: 'markers', label: 'Placing markers on timelineΓÇª', progress: null });
   try {
     const payload = {
       chapters: S.chapters.map((c) => ({
@@ -1860,7 +1876,7 @@ async function sendTimelineMarkers() {
 }
 
 async function importTimelineMarkers() {
-  setBusy({ kind: 'markers', label: 'Reading timeline markers…', progress: null });
+  setBusy({ kind: 'markers', label: 'Reading timeline markersΓÇª', progress: null });
   try {
     const res = await callExtendScript('getSequenceMarkers');
     if (res && res.markers && res.markers.length) {
@@ -1885,7 +1901,7 @@ async function importTimelineMarkers() {
   }
 }
 
-/* ── Export tab ───────────────────────────────────────────────── */
+/* ΓöÇΓöÇ Export tab ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
 
 function tabExport() {
   const r = S.lastRender;
@@ -1893,13 +1909,13 @@ function tabExport() {
   const ready = S.scene && S.scene.captions.length;
   return `
     ${section('Sequence', S.seq.live
-      ? `<p><b>${esc(S.seq.name)}</b><br><span class="cc-dim">${S.seq.width}×${S.seq.height} · ${Math.round((f.num / f.den) * 1000) / 1000} fps (exactly ${f.num}/${f.den}) · ${fmtTime(S.seq.duration)}</span></p>`
-      : `<p class="cc-dim">Preview mode — not connected to Premiere. Rendering still works; you place the file yourself.</p>
+      ? `<p><b>${esc(S.seq.name)}</b><br><span class="cc-dim">${S.seq.width}├ù${S.seq.height} ┬╖ ${Math.round((f.num / f.den) * 1000) / 1000} fps (exactly ${f.num}/${f.den}) ┬╖ ${fmtTime(S.seq.duration)}</span></p>`
+      : `<p class="cc-dim">Preview mode ΓÇö not connected to Premiere. Rendering still works; you place the file yourself.</p>
          ${ctlSeg('previewAspect', 'Frame', [['9:16', '9:16'], ['1:1', '1:1'], ['4:5', '4:5'], ['16:9', '16:9']])}`)}
-    ${section('Animated captions', `${ctlSeg('output.codec', 'Video format', [['prores', 'ProRes 4444', 'Best compatibility, smaller files'], ['animation', 'Animation', 'Renders about 3× faster; bigger files']])}
-      <p class="cc-hint">Rendered at the sequence's exact frame rate with transparency, then put on the first free video track above V1. Running it again replaces the old captions — nothing else on your timeline moves.</p>
+    ${section('Animated captions', `${ctlSeg('output.codec', 'Video format', [['prores', 'ProRes 4444', 'Best compatibility, smaller files'], ['animation', 'Animation', 'Renders about 3├ù faster; bigger files']])}
+      <p class="cc-hint">Rendered at the sequence's exact frame rate with transparency, then put on the first free video track above V1. Running it again replaces the old captions ΓÇö nothing else on your timeline moves.</p>
       <button class="cc-btn cc-primary cc-wide" data-act="export" ${ready && !S.busy ? '' : 'disabled'}>${inCEP() ? 'Add captions to timeline' : 'Render caption video'}</button>
-      ${r ? `<div class="cc-result"><b>${r.placed ? `On ${esc(r.placed.trackName)}` : 'Rendered'}</b> · ${r.frames} frames · ${fmtTime(r.seconds)} · took ${Math.max(1, Math.round(r.renderSeconds))} s
+      ${r ? `<div class="cc-result"><b>${r.placed ? `On ${esc(r.placed.trackName)}` : 'Rendered'}</b> ┬╖ ${r.frames} frames ┬╖ ${fmtTime(r.seconds)} ┬╖ took ${Math.max(1, Math.round(r.renderSeconds))} s
         ${r.placed && r.placed.removed ? `<br>Replaced ${r.placed.removed} earlier caption clip${r.placed.removed === 1 ? '' : 's'}.` : ''}
         <br><span class="cc-dim cc-path">${esc(r.path)}</span></div>` : ''}`)}
     ${section('Subtitle file', `<p class="cc-hint">Plain SRT for YouTube uploads or Premiere's own caption track (no animation or styling).</p>
@@ -1933,8 +1949,8 @@ function tabExport() {
             ${S.chapters.map((ch, idx) => `
               <div class="cc-chapter-row" data-idx="${idx}">
                 <button class="cc-chapter-time-btn" data-act="seek-chapter" data-t="${ch.time}" title="Seek playhead to ${fmtTimestamp(ch.time)}">${fmtTimestamp(ch.time)}</button>
-                <input type="text" class="cc-chapter-input" data-chapter-field="title" data-idx="${idx}" value="${esc(ch.title)}" placeholder="Chapter title…">
-                <button class="cc-chapter-del" data-act="del-chapter" data-idx="${idx}" title="Remove chapter">✕</button>
+                <input type="text" class="cc-chapter-input" data-chapter-field="title" data-idx="${idx}" value="${esc(ch.title)}" placeholder="Chapter titleΓÇª">
+                <button class="cc-chapter-del" data-act="del-chapter" data-idx="${idx}" title="Remove chapter">Γ£ò</button>
               </div>
             `).join('')}
           </div>
@@ -1947,7 +1963,7 @@ function tabExport() {
     `)}`;
 }
 
-/* ── export ───────────────────────────────────────────────────── */
+/* ΓöÇΓöÇ export ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
 
 async function exportCaptions() {
   if (S.busy || !S.scene || !S.scene.captions.length) return;
@@ -1970,7 +1986,7 @@ async function exportCaptions() {
     duration = Math.max(0.1, duration);
   }
 
-  setBusy({ kind: 'render', label: 'Preparing…', progress: 0, cancel: () => ctrl.abort() });
+  setBusy({ kind: 'render', label: 'PreparingΓÇª', progress: 0, cancel: () => ctrl.abort() });
   try {
     await ensureFont(eff.style.fontFamily, eff.style.fontWeight);
     const res = await renderOverlay(scene, eff, {
@@ -1979,13 +1995,13 @@ async function exportCaptions() {
       onProgress: (done, total, eta) => {
         if (!S.busy) return;
         S.busy.progress = done / total;
-        S.busy.label = `Rendering ${Math.round((done / total) * 100)}%` + (eta > 1 ? ` · about ${Math.ceil(eta)} s left` : '');
+        S.busy.label = `Rendering ${Math.round((done / total) * 100)}%` + (eta > 1 ? ` ┬╖ about ${Math.ceil(eta)} s left` : '');
         updateFooter();
       },
     });
     S.lastRender = res;
     if (inCEP()) {
-      setBusy({ kind: 'render', label: 'Placing on the timeline…', progress: null });
+      setBusy({ kind: 'render', label: 'Placing on the timelineΓÇª', progress: null });
       const placed = await callCM('placeOverlay', { path: res.path, start: tStart, duration: res.seconds });
       if (!placed || !placed.success) {
         throw new Error((placed && placed.error) || 'Failed to place caption overlay on timeline.');
@@ -1994,7 +2010,7 @@ async function exportCaptions() {
       setStatus(`Captions are on ${placed.trackName} at ${fmtTime(tStart)} (${fmtTime(res.seconds)}).` +
         (placed.removed ? ` Replaced ${placed.removed} earlier caption clip${placed.removed === 1 ? '' : 's'}.` : ''), 'ok');
     } else {
-      setStatus(`Rendered ${res.frames} frames → ${res.path}`, 'ok');
+      setStatus(`Rendered ${res.frames} frames ΓåÆ ${res.path}`, 'ok');
     }
   } catch (e) {
     if (e && e.name === 'AbortError') setStatus('Render cancelled.');
@@ -2015,8 +2031,8 @@ async function exportSrt(placeTrack) {
     if (placeTrack && res.srt_path) {
       const r = await callExtendScript('importCaptionsFromSRT', { srt_path: res.srt_path });
       setStatus(r && r.method === 'createCaptionTrack'
-        ? 'Caption track added — style it in Premiere’s Properties panel.'
-        : 'SRT imported to the project bin — drag it onto the timeline.', 'ok');
+        ? 'Caption track added ΓÇö style it in PremiereΓÇÖs Properties panel.'
+        : 'SRT imported to the project bin ΓÇö drag it onto the timeline.', 'ok');
     } else {
       setStatus('SRT saved: ' + S.srtPath, 'ok');
     }
@@ -2026,12 +2042,25 @@ async function exportSrt(placeTrack) {
   if (S.tab === 'export') renderBody();
 }
 
-/* ── presets ──────────────────────────────────────────────────── */
+/* ΓöÇΓöÇ presets ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
 
 function applyPreset(id) {
   const p = findPreset(id);
   if (!p) return;
   S.settings.style = Object.assign({}, S.settings.style, p.style);
+  const colorProps = [
+    'color', 'activeColor', 'emphasisColor', 'pillColor',
+    'strokeColor', 'shadowColor', 'bgColor', 'hlBoxColor',
+    'gradientColor', 'activeGlowColor'
+  ];
+  for (const k of colorProps) {
+    if (S.settings.style[k] != null) S.settings.style[k] = normalizeHex(S.settings.style[k], STYLE_DEFAULTS[k] || '#ffffff');
+  }
+  if (Array.isArray(S.settings.style.speakerColors)) {
+    S.settings.style.speakerColors = S.settings.style.speakerColors.map((c, i) =>
+      normalizeHex(c, (STYLE_DEFAULTS.speakerColors && STYLE_DEFAULTS.speakerColors[i]) || '#ffffff')
+    );
+  }
   S.settings.motion = Object.assign({}, M.MOTION_DEFAULTS, p.motion);
   if (p.grouping) S.settings.grouping = Object.assign({}, S.settings.grouping, p.grouping);
   if (p.layout) S.settings.layout = Object.assign({}, S.settings.layout, p.layout);
@@ -2041,56 +2070,70 @@ function applyPreset(id) {
   rebuildScene();
 }
 
-/* ── events ───────────────────────────────────────────────────── */
+/* ΓöÇΓöÇ events ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
 
 const RELAYOUT = /^(style\.(fontFamily|fontWeight|fontSize|textCase|punctuation|punctCommas|punctDots|punctExpressive|emojiEnabled|emojiPlacement|emojiScale)|layout\.|grouping\.|timing\.)/;
 // Settings that show or hide major tabs or require full structural rebuild.
 // Note: Inline sub-controls (gradient, shadow, emoji, glow, etc.) are toggled in place
 // without destroying the active DOM or re-rendering all preset tiles.
 const STRUCTURAL = {
-  'grouping.maxLines': 1,
   previewAspect: 1
 };
 
-// Picking a colour for something that's switched off switches it on —
+// Picking a colour for something that's switched off switches it on ΓÇö
 // otherwise the swatch looks broken (nothing changes).
 const ENABLE_ON_COLOR = {
   'style.strokeColor': () => { if (!(S.settings.style.strokeWidth > 0)) return ['style.strokeWidth', 4]; return null; },
 };
 
 function updateSubControls(path) {
-  if (path === 'style.gradient') {
+  if (!S.settings) return;
+  const all = !path;
+  const st = S.settings.style || {};
+  const m = S.settings.motion || {};
+  const tm = S.settings.timing || {};
+
+  if (all || path === 'style.gradient') {
     const box = $('.cc-gradient-sub');
-    if (box) box.classList.toggle('hidden', !S.settings.style.gradient);
-  } else if (path === 'style.activeGlow') {
+    if (box) box.classList.toggle('hidden', !st.gradient);
+  }
+  if (all || path === 'style.activeGlow') {
     const box = $('.cc-glow-sub');
-    if (box) box.classList.toggle('hidden', !S.settings.style.activeGlow);
-  } else if (path === 'style.speakerColoring') {
+    if (box) box.classList.toggle('hidden', !st.activeGlow);
+  }
+  if (all || path === 'style.speakerColoring') {
     const box = $('.cc-speaker-sub');
-    if (box) box.classList.toggle('hidden', !S.settings.style.speakerColoring);
-  } else if (path === 'style.shadow') {
+    if (box) box.classList.toggle('hidden', !st.speakerColoring);
+  }
+  if (all || path === 'style.shadow') {
     const box = $('.cc-shadow-sub');
-    if (box) box.classList.toggle('hidden', !S.settings.style.shadow);
-  } else if (path === 'style.emojiEnabled') {
+    if (box) box.classList.toggle('hidden', !st.shadow);
+  }
+  if (all || path === 'style.emojiEnabled') {
     const box = $('.cc-emoji-sub');
-    if (box) box.classList.toggle('hidden', !S.settings.style.emojiEnabled);
-  } else if (path === 'style.background') {
+    if (box) box.classList.toggle('hidden', !st.emojiEnabled);
+  }
+  if (all || path === 'style.background') {
     const box = $('.cc-bg-sub');
-    if (box) box.classList.toggle('hidden', S.settings.style.background === 'none');
-  } else if (path === 'style.emphasis') {
+    if (box) box.classList.toggle('hidden', st.background === 'none');
+  }
+  if (all || path === 'style.emphasis') {
     const box = $('.cc-emphasis-sub');
-    if (box) box.classList.toggle('hidden', S.settings.style.emphasis === 'color');
-  } else if (path === 'style.punctuation') {
+    if (box) box.classList.toggle('hidden', st.emphasis === 'color');
+  }
+  if (all || path === 'style.punctuation') {
     const box = $('.cc-punct-sub');
-    if (box) box.classList.toggle('hidden', S.settings.style.punctuation !== 'custom');
-  } else if (path === 'motion.highlight') {
+    if (box) box.classList.toggle('hidden', st.punctuation !== 'custom');
+  }
+  if (all || path === 'motion.highlight') {
     const boxBox = $('.cc-hl-box-sub');
-    if (boxBox) boxBox.classList.toggle('hidden', S.settings.motion.highlight !== 'box');
+    if (boxBox) boxBox.classList.toggle('hidden', m.highlight !== 'box');
     const boxColor = $('.cc-hl-color-sub');
-    if (boxColor) boxColor.classList.toggle('hidden', M.highlightMode(S.settings.motion) !== 'color');
-  } else if (path === 'timing.exit') {
+    if (boxColor) boxColor.classList.toggle('hidden', M.highlightMode(m) !== 'color');
+  }
+  if (all || path === 'timing.exit') {
     const box = $('.cc-exit-fade-sub');
-    if (box) box.classList.toggle('hidden', S.settings.timing.exit !== 'fade');
+    if (box) box.classList.toggle('hidden', tm.exit !== 'fade');
   }
 }
 
@@ -2102,7 +2145,10 @@ function onSetting(path) {
       $$(`[data-bind="${fix[0]}"]`).forEach((o) => { o.value = fmtNum(fix[1]); });
     }
   }
-  if (/^(style|motion)\./.test(path) && path !== 'style.fontSize') S.settings.preset = 'custom';
+  if (/^(style|motion)\./.test(path) && path !== 'style.fontSize') {
+    S.settings.preset = 'custom';
+    $$('.cc-tile').forEach((btn) => btn.classList.remove('cc-on'));
+  }
   if (path === 'layout.align' && S.settings.layout.align === 'center') {
     S.settings.layout.posX = 50;
     $$('[data-bind="layout.posX"]').forEach((o) => { o.value = 50; });
@@ -2141,10 +2187,42 @@ function readControl(el) {
   return el.value;
 }
 
+function syncColorControls(path, norm, excludeEl) {
+  $$(`input[type="color"][data-bind="${path}"]`).forEach((swatch) => {
+    if (swatch !== excludeEl) swatch.value = norm;
+  });
+  $$(`.cc-hex-input[data-bind="${path}"], input[data-kind="hex"][data-bind="${path}"], input[data-kind="color-hex"][data-bind="${path}"]`).forEach((txt) => {
+    if (txt !== excludeEl) txt.value = norm;
+  });
+}
+
 function onBoundInput(el) {
+  const kind = el.dataset.kind;
+  const path = el.dataset.bind;
+  if (!path) return;
+
+  if (kind === 'hex' || kind === 'color-hex') {
+    const raw = el.value.trim();
+    const norm = normalizeHex(raw, null);
+    if (!norm) return;
+    syncColorControls(path, norm, el);
+    if (getPath(S.settings, path) === norm) return;
+    setPath(S.settings, path, norm);
+    onSetting(path);
+    return;
+  }
+
+  if (kind === 'color') {
+    const norm = normalizeHex(el.value, '#ffffff');
+    syncColorControls(path, norm, el);
+    if (getPath(S.settings, path) === norm) return;
+    setPath(S.settings, path, norm);
+    onSetting(path);
+    return;
+  }
+
   const v = readControl(el);
   if (v === undefined) return;
-  const path = el.dataset.bind;
   if (getPath(S.settings, path) === v) return;
   setPath(S.settings, path, v);
   $$(`[data-bind="${path}"]`).forEach((o) => {           // keep slider + number box in step
@@ -2152,6 +2230,34 @@ function onBoundInput(el) {
     o.value = fmtNum(el.dataset.scale ? v * parseFloat(el.dataset.scale) : v);
   });
   onSetting(path);
+}
+
+function commitHexInput(el) {
+  if (!el || !el.dataset) return;
+  const kind = el.dataset.kind;
+  if (kind !== 'hex' && kind !== 'color-hex' && !el.classList?.contains('cc-hex-input')) return;
+  const path = el.dataset.bind;
+  if (!path) return;
+  const norm = normalizeHex(el.value, null);
+  if (norm) {
+    el.value = norm;
+    syncColorControls(path, norm, el);
+    const changed = getPath(S.settings, path) !== norm;
+    setPath(S.settings, path, norm);
+    if (changed) {
+      onSetting(path);
+    } else {
+      saveSettingsSoon();
+    }
+  } else {
+    const current = normalizeHex(getPath(S.settings, path), '#ffffff');
+    el.value = current;
+    syncColorControls(path, current, el);
+  }
+}
+
+function commitPendingHexInputs() {
+  $$('#cc-body .cc-hex-input, #cc-body input[data-kind="hex"], #cc-body input[data-kind="color-hex"]').forEach(commitHexInput);
 }
 
 function bindEvents() {
@@ -2170,9 +2276,36 @@ function bindEvents() {
   window.addEventListener('blur', () => {
     // When the panel loses focus (user clicked timeline, source monitor, etc.)
     setPlaying(false);
+    commitPendingHexInputs();
   });
   window.addEventListener('pagehide', () => {
     setPlaying(false);
+    commitPendingHexInputs();
+  });
+  root.addEventListener('blur', (e) => {
+    const el = e.target;
+    if (el && el.dataset && (el.dataset.kind === 'hex' || el.dataset.kind === 'color-hex' || (el.classList && el.classList.contains('cc-hex-input')))) {
+      commitHexInput(el);
+    }
+  }, true);
+  root.addEventListener('paste', (e) => {
+    const el = e.target;
+    if (el && el.dataset && (el.dataset.kind === 'hex' || el.dataset.kind === 'color-hex' || (el.classList && el.classList.contains('cc-hex-input')))) {
+      const text = (e.clipboardData || window.clipboardData)?.getData('text');
+      if (text) {
+        const norm = normalizeHex(text, null);
+        if (norm) {
+          e.preventDefault();
+          el.value = norm;
+          const path = el.dataset.bind;
+          if (path) {
+            syncColorControls(path, norm, el);
+            setPath(S.settings, path, norm);
+            onSetting(path);
+          }
+        }
+      }
+    }
   });
   root.addEventListener('input', (e) => {
     const el = e.target;
@@ -2204,9 +2337,11 @@ function bindEvents() {
     }, { passive: false });
   }
   root.addEventListener('click', (e) => {
+    commitPendingHexInputs();
     const t = e.target;
     const tab = t.closest('[data-tab]');
     if (tab) {
+      commitPendingHexInputs();
       S.tab = tab.dataset.tab;
       S.editing = -1;
       if (S.tab === 'transcript' && inCEP()) {
@@ -2260,6 +2395,21 @@ function bindEvents() {
       else if (e.key === 'Escape') { S.editing = -1; renderTranscriptList(); }
       return;
     }
+    if (el && el.dataset && (el.dataset.kind === 'hex' || el.dataset.kind === 'color-hex' || (el.classList && el.classList.contains('cc-hex-input')))) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        commitHexInput(el);
+        el.blur();
+        return;
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        const current = normalizeHex(getPath(S.settings, el.dataset.bind), '#ffffff');
+        el.value = current;
+        syncColorControls(el.dataset.bind, current, el);
+        el.blur();
+        return;
+      }
+    }
     if (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return;
     const k = e.key.toLowerCase();
     if ((e.ctrlKey || e.metaKey) && k === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
@@ -2294,6 +2444,10 @@ function bindEvents() {
   });
   root.addEventListener('focusout', (e) => {
     if (e.target.id === 'cc-w-edit' && S.editing >= 0) commitEdit(e.target.value);
+    const el = e.target;
+    if (el && el.dataset && (el.dataset.kind === 'hex' || el.dataset.kind === 'color-hex' || (el.classList && el.classList.contains('cc-hex-input')))) {
+      commitHexInput(el);
+    }
   });
   // drag the caption in the preview to move it; drag its sides to resize
   const cvWrap = $('#cc-canvas-wrap');
@@ -2420,37 +2574,10 @@ function onAction(act, el) {
     case 'refresh-seq':
       refreshSequence(false).then(() => {
         renderBody();
-        setStatus(inCEP() ? 'Timeline markers refreshed.' : 'Preview mode — not connected to Premiere.', 'ok');
+        setStatus(inCEP() ? 'Timeline markers refreshed.' : 'Preview mode ΓÇö not connected to Premiere.', 'ok');
       }).catch((e) => {
         setStatus('Could not read sequence: ' + formatUserError(e), 'error');
       });
-      break;
-        case 'pos-top':
-      if (!S.settings.layout) S.settings.layout = {};
-      S.settings.layout.posY = 18;
-      saveSettingsSoon();
-      rebuildScene();
-      renderBody();
-      requestDraw();
-      setStatus('Captions positioned at Top (18%).', 'ok');
-      break;
-    case 'pos-center':
-      if (!S.settings.layout) S.settings.layout = {};
-      S.settings.layout.posY = 50;
-      saveSettingsSoon();
-      rebuildScene();
-      renderBody();
-      requestDraw();
-      setStatus('Captions positioned at Center (50%).', 'ok');
-      break;
-    case 'pos-bottom':
-      if (!S.settings.layout) S.settings.layout = {};
-      S.settings.layout.posY = 76;
-      saveSettingsSoon();
-      rebuildScene();
-      renderBody();
-      requestDraw();
-      setStatus('Captions positioned at Bottom safe area (76%).', 'ok');
       break;
     case 'center-x':
       S.settings.layout.posX = 50;
@@ -2492,7 +2619,7 @@ function onAction(act, el) {
     case 'paste-toggle': S.pasteOpen = !S.pasteOpen; renderBody(); break;
     case 'paste-use': {
       const words = parsePasted(($('#cc-paste') || {}).value);
-      if (!words.length) { setStatus('Nothing to use — paste SRT, JSON or plain text.', 'error'); break; }
+      if (!words.length) { setStatus('Nothing to use ΓÇö paste SRT, JSON or plain text.', 'error'); break; }
       setWords(words, `${words.length} words from the pasted transcript.`);
       break;
     }
@@ -2544,7 +2671,7 @@ function onAction(act, el) {
     case 'w-custom-emoji': {
       const w = S.words[S.sel];
       if (!w) break;
-      const val = prompt('Enter an emoji for this word (e.g. 🔥, 💰, 🚀, or leave empty to clear):', w.emoji || '');
+      const val = prompt('Enter an emoji for this word (e.g. ≡ƒöÑ, ≡ƒÆ░, ≡ƒÜÇ, or leave empty to clear):', w.emoji || '');
       if (val !== null) {
         snapshot();
         if (val.trim()) w.emoji = val.trim();

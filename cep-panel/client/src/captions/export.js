@@ -10,6 +10,7 @@
  */
 import { frameCount, frameTime, frameKey } from './model.js';
 import { drawFrame, captionBand } from './render.js';
+import { ensureFont } from './fonts.js';
 
 const BATCH_BYTES = 24 * 1024 * 1024;
 
@@ -45,7 +46,28 @@ export async function renderOverlay(scene, settings, opts) {
   const o = opts || {};
   const fps = scene.fps;
   const W = scene.width, H = scene.height;
-  const band = captionBand(scene, settings);
+
+  // Pre-load bundled/system fonts to ensure identical BiDi shaping and font metrics
+  if (settings && settings.style) {
+    try {
+      await ensureFont(settings.style.fontFamily, settings.style.fontWeight);
+    } catch (_) {}
+  }
+
+  let band = captionBand(scene, settings);
+  const hasRtl = scene && scene.captions && scene.captions.some((c) =>
+    (c.descent >= (scene.fontSize || 80) * 0.50) ||
+    (c.lines && c.lines.some((l) => l.rtl || (l.words && l.words.some((w) => w.rtl))))
+  );
+  if (hasRtl && scene.fontSize) {
+    const rtlPad = Math.ceil(scene.fontSize * 0.52);
+    const y0 = Math.max(0, band.y - Math.ceil(scene.fontSize * 0.20));
+    const h0 = Math.min(H - y0, band.h + (band.y - y0) + rtlPad);
+    let ey = y0, eh = h0;
+    if (ey % 2) { ey -= 1; eh += 1; }
+    if (eh % 2) { eh = Math.min(H - ey, eh + 1); }
+    band = { y: ey, h: Math.max(2, eh) };
+  }
   const tStart = Math.max(0, Number(o.tStart) || 0);
   const duration = Math.max(0.1, Number(o.duration != null ? o.duration : (scene.duration - tStart)));
   const total = Math.max(1, frameCount(duration, fps));

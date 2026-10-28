@@ -10,11 +10,12 @@ let _esLoaded = false;
 
 /**
  * Initialize the CSInterface reference and load the ExtendScript bundle.
- * @param {boolean} force - pass true to force re-evaluation of every
+ * @param {boolean} [forceReload=false] - pass true to force re-evaluation of every
  *   ExtendScript module from disk even when the engine thinks it is current
  *   (panel 🔁 button / dev_reload path — picks up .jsx edits).
  */
-async function initExtendScript(force) {
+async function initExtendScript(forceReload = false) {
+  const force = forceReload;
   try {
     if (typeof CSInterface === 'undefined') {
       console.warn('[extendscript] CSInterface not available — running outside CEP?');
@@ -31,9 +32,9 @@ async function initExtendScript(force) {
     const extensionRoot = _csInterface.getSystemPath(extensionPathKey) ||
                           _csInterface.getSystemPath('extension');
 
-    await callExtendScript('editflowConfigureExtensionRoot', extensionRoot, !!force);
+    await callExtendScript('editflowConfigureExtensionRoot', extensionRoot, !!forceReload);
     _esLoaded = true;
-    console.log('[extendscript] ExtendScript loaded' + (force ? ' (forced)' : ''));
+    console.log('[extendscript] ExtendScript loaded' + (forceReload ? ' (forced)' : ''));
     return true;
   } catch (e) {
     console.warn('[extendscript] Init failed:', e);

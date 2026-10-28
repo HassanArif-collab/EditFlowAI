@@ -506,9 +506,9 @@ test('Urdu / Nastaliq: buildScene applies enhanced calligraphy clearance when RT
   assert.equal(latinScene.captions[0].ascent, fontSize * 0.78);
   assert.equal(latinScene.captions[0].descent, fontSize * 0.22);
 
-  // Urdu Nastaliq has higher vertical span for ligatures and diacritics
-  assert.equal(urduScene.captions[0].ascent, fontSize * 0.92);
-  assert.equal(urduScene.captions[0].descent, fontSize * 0.38);
+  // Urdu Nastaliq has higher vertical span for ligatures and diacritics (>= 0.52 * fontSize descent)
+  assert.equal(urduScene.captions[0].ascent, fontSize * 0.96);
+  assert.equal(urduScene.captions[0].descent, fontSize * 0.52);
 });
 
 test('safe zones: platform safety guides and title safe geometry are defined', () => {
@@ -803,5 +803,200 @@ test('chapters: autoDetectChapters extracts topics from hooks, pauses, and speak
   const valid = CH.validateYouTubeChapters(chapters);
   assert.ok(valid.valid, 'Auto-detected chapters are fully YouTube compliant');
 });
+
+/* ── Multilingual BiDi Layout & Typography (DEF-01, DEF-02) ── */
+
+test('BiDi DEF-01: Mixed Urdu + English sentence ("یہ ایک AI tool ہے") maintains LTR reading order for embedded English phrase', () => {
+  const mixedWords = [
+    { text: 'یہ', start: 0.1, end: 0.4 },
+    { text: 'ایک', start: 0.4, end: 0.7 },
+    { text: 'AI', start: 0.7, end: 1.0 },
+    { text: 'tool', start: 1.0, end: 1.3 },
+    { text: 'ہے', start: 1.3, end: 1.6 },
+  ];
+  const sc = scene(mixedWords, { grouping: { maxWords: 6 } });
+  const line = sc.captions[0].lines[0];
+  assert.equal(line.rtl, true, 'Base line direction must be RTL');
+  assert.equal(line.words.length, 5, 'All 5 words present');
+
+  const wAI = line.words.find((w) => w.text === 'AI');
+  const wTool = line.words.find((w) => w.text === 'tool');
+  const wYeh = line.words.find((w) => w.text === 'یہ');
+  const wEk = line.words.find((w) => w.text === 'ایک');
+  const wHai = line.words.find((w) => w.text === 'ہے');
+
+  // Embedded Latin tokens must be laid out Left-to-Right: x(AI) < x(tool)
+  assert.ok(wAI.x < wTool.x, `x(AI) [${wAI.x}] must be < x(tool) [${wTool.x}]`);
+  assert.ok(wAI.x + wAI.w <= wTool.x, 'AI bounding box does not overlap tool');
+
+  // Urdu tokens flow Right-to-Left: x(یہ) > x(ایک)
+  assert.ok(wYeh.x > wEk.x, `x(یہ) [${wYeh.x}] must be > x(ایک) [${wEk.x}]`);
+
+  // Run 0 ("یہ ایک") is to the right of Run 1 ("AI tool")
+  assert.ok(wEk.x > wTool.x, `Urdu run x(ایک) [${wEk.x}] must be > English run x(tool) [${wTool.x}]`);
+
+  // Run 1 ("AI tool") is to the right of Run 2 ("ہے")
+  assert.ok(wAI.x > wHai.x, `English run x(AI) [${wAI.x}] must be > Urdu run x(ہے) [${wHai.x}]`);
+});
+
+test('BiDi DEF-02: Mixed sentence with alphanumeric phrase ("تصویر 4K ultra hd کوالٹی میں") preserves embedded run order', () => {
+  const mixedWords = [
+    { text: 'تصویر', start: 0.1, end: 0.4 },
+    { text: '4K', start: 0.4, end: 0.7 },
+    { text: 'ultra', start: 0.7, end: 1.0 },
+    { text: 'hd', start: 1.0, end: 1.3 },
+    { text: 'کوالٹی', start: 1.3, end: 1.6 },
+    { text: 'میں', start: 1.6, end: 1.9 },
+  ];
+  // Provide sufficient width so all words fit on one line for full run verification
+  const sc = M.buildScene(mixedWords, { style: { fontSize: 40 }, grouping: { maxWords: 8, maxLines: 1 }, layout: { boxWidth: 95 } }, env({ width: 1920, height: 1080 }));
+  const line = sc.captions[0].lines[0];
+  assert.equal(line.rtl, true, 'Base line direction must be RTL');
+
+  const wTasweer = line.words.find((w) => w.text === 'تصویر');
+  const w4K = line.words.find((w) => w.text === '4K');
+  const wUltra = line.words.find((w) => w.text === 'ultra');
+  const wHd = line.words.find((w) => w.text === 'hd');
+  const wQuality = line.words.find((w) => w.text === 'کوالٹی');
+  const wMein = line.words.find((w) => w.text === 'میں');
+
+  // Embedded alphanumeric run flows Left-to-Right: 4K < ultra < hd
+  assert.ok(w4K.x < wUltra.x, `x(4K) [${w4K.x}] < x(ultra) [${wUltra.x}]`);
+  assert.ok(wUltra.x < wHd.x, `x(ultra) [${wUltra.x}] < x(hd) [${wHd.x}]`);
+  assert.ok(w4K.x + w4K.w <= wUltra.x, '4K bounding box does not overlap ultra');
+  assert.ok(wUltra.x + wUltra.w <= wHd.x, 'ultra bounding box does not overlap hd');
+
+  // Urdu runs flow Right-to-Left surrounding the Latin run
+  assert.ok(wTasweer.x > wHd.x, `x(تصویر) [${wTasweer.x}] > x(hd) [${wHd.x}]`);
+  assert.ok(w4K.x > wQuality.x, `x(4K) [${w4K.x}] > x(کوالٹی) [${wQuality.x}]`);
+  assert.ok(wQuality.x > wMein.x, `x(کوالٹی) [${wQuality.x}] > x(میں) [${wMein.x}]`);
+});
+
+test('BiDi: Embedded RTL run inside LTR sentence preserves RTL word order within run', () => {
+  const words = [
+    { text: 'The', start: 0.1, end: 0.4 },
+    { text: 'words', start: 0.4, end: 0.7 },
+    { text: 'کتاب', start: 0.7, end: 1.0 },
+    { text: 'مقدس', start: 1.0, end: 1.3 },
+    { text: 'are', start: 1.3, end: 1.6 },
+    { text: 'sacred', start: 1.6, end: 1.9 },
+  ];
+  const sc = M.buildScene(words, { style: { fontSize: 40 }, grouping: { maxWords: 8, maxLines: 1 }, layout: { boxWidth: 95 } }, env({ width: 1920, height: 1080 }));
+  const line = sc.captions[0].lines[0];
+  assert.equal(line.rtl, false, 'Base line direction is LTR');
+
+  const wThe = line.words.find((w) => w.text === 'The');
+  const wWords = line.words.find((w) => w.text === 'words');
+  const wKitab = line.words.find((w) => w.text === 'کتاب');
+  const wMuqaddas = line.words.find((w) => w.text === 'مقدس');
+  const wAre = line.words.find((w) => w.text === 'are');
+  const wSacred = line.words.find((w) => w.text === 'sacred');
+
+  // LTR run 0:
+  assert.ok(wThe.x < wWords.x);
+  // Embedded RTL run 1: words flow Right to Left inside the run: x(کتاب) > x(مقدس)
+  assert.ok(wKitab.x > wMuqaddas.x, `RTL run order: x(کتاب) [${wKitab.x}] > x(مقدس) [${wMuqaddas.x}]`);
+  // LTR run 2:
+  assert.ok(wAre.x < wSacred.x);
+  // Overall run progression left-to-right:
+  assert.ok(wWords.x < wMuqaddas.x);
+  assert.ok(wKitab.x < wAre.x);
+});
+
+test('Typography: uppercase preset preserves descenders and ascenders when RTL text is present', () => {
+  const FONT_SIZE = 80;
+  const urduWords = [{ text: 'خوش', start: 0, end: 0.5 }, { text: 'آمدید', start: 0.6, end: 1.0 }];
+  const sceneUpper = M.buildScene(urduWords, { style: { fontSize: FONT_SIZE, textCase: 'upper' } }, env());
+  assert.ok(sceneUpper.captions[0].descent >= FONT_SIZE * 0.38, 'Descent must remain >= 0.38 * fontSize for RTL in uppercase presets');
+  assert.ok(sceneUpper.captions[0].ascent >= FONT_SIZE * 0.92, 'Ascent must remain >= 0.92 * fontSize for RTL in uppercase presets');
+});
+
+/* ── BiDi & Typography Core Unit Tests ── */
+
+test('BiDi: Character classification for RTL, LTR, Alphanumeric, and Neutral tokens', () => {
+  assert.equal(M.isRTLText('یہ'), true);
+  assert.equal(M.isRTLText('مرحبا'), true);
+  assert.equal(M.isRTLText('سلام'), true);
+  assert.equal(M.getWordDirection('یہ'), 'rtl');
+  assert.equal(M.getWordDirection('مرحبا'), 'rtl');
+
+  assert.equal(M.isRTLText('Hello'), false);
+  assert.equal(M.isRTLText('AI'), false);
+  assert.equal(M.getWordDirection('Hello'), 'ltr');
+  assert.equal(M.getWordDirection('AI'), 'ltr');
+
+  assert.equal(M.getWordDirection('4K'), 'ltr');
+  assert.equal(M.getWordDirection('500'), 'ltr');
+  assert.equal(M.getWordDirection('1080p'), 'ltr');
+
+  assert.equal(M.getWordDirection(','), 'neutral');
+  assert.equal(M.getWordDirection('-'), 'neutral');
+  assert.equal(M.getWordDirection('!'), 'neutral');
+  assert.equal(M.getWordDirection(''), 'neutral');
+});
+
+test('BiDi: Base line direction resolution via first strong token', () => {
+  assert.equal(M.getLineBaseDirection([{ text: 'یہ' }, { text: 'AI' }]), 'rtl');
+  assert.equal(M.getLineBaseDirection([{ text: 'تصویر' }, { text: '4K' }]), 'rtl');
+  assert.equal(M.getLineBaseDirection([{ text: 'Hello' }, { text: 'world' }]), 'ltr');
+  assert.equal(M.getLineBaseDirection([{ text: '...' }, { text: '---' }]), 'ltr');
+});
+
+test('BiDi: Pure RTL Urdu line layouts words monotonically right-to-left', () => {
+  const ws = [{ text: 'یہ' }, { text: 'ایک' }, { text: 'کتاب' }, { text: 'ہے' }];
+  const ww = [40, 50, 60, 45];
+  const spaceW = 10;
+  const x0 = 100;
+  const lineWidth = ww.reduce((a, b) => a + b, 0) + spaceW * (ww.length - 1);
+
+  const res = M.layoutBidiLine(ws, ww, spaceW, x0, lineWidth);
+  assert.equal(res.baseDir, 'rtl');
+  assert.ok(res.wordX[0] > res.wordX[1]);
+  assert.ok(res.wordX[1] > res.wordX[2]);
+  assert.ok(res.wordX[2] > res.wordX[3]);
+  assert.equal(res.wordX[0] + ww[0], x0 + lineWidth);
+  assert.equal(res.wordX[3], x0);
+});
+
+test('BiDi: Pure LTR English line layouts words monotonically left-to-right', () => {
+  const ws = [{ text: 'This' }, { text: 'is' }, { text: 'a' }, { text: 'test' }];
+  const ww = [50, 30, 20, 50];
+  const spaceW = 10;
+  const x0 = 100;
+  const lineWidth = ww.reduce((a, b) => a + b, 0) + spaceW * (ww.length - 1);
+
+  const res = M.layoutBidiLine(ws, ww, spaceW, x0, lineWidth);
+  assert.equal(res.baseDir, 'ltr');
+  assert.ok(res.wordX[0] < res.wordX[1]);
+  assert.ok(res.wordX[1] < res.wordX[2]);
+  assert.ok(res.wordX[2] < res.wordX[3]);
+  assert.equal(res.wordX[0], x0);
+  assert.equal(res.wordX[3] + ww[3], x0 + lineWidth);
+});
+
+test('Typography: buildScene allocates descent >= 0.52 * fontSize for RTL text preventing clipping', () => {
+  const FONT_SIZE = 100;
+  const urduWords = [{ text: 'خوشآمدید', start: 0.1, end: 1.0 }];
+  const scene = M.buildScene(urduWords, { style: { fontSize: FONT_SIZE } }, env());
+  const cap = scene.captions[0];
+  assert.ok(cap.descent >= FONT_SIZE * 0.52, `Descent (${cap.descent}) must be >= ${FONT_SIZE * 0.52}`);
+  assert.ok(cap.ascent >= FONT_SIZE * 0.96, `Ascent (${cap.ascent}) must be >= ${FONT_SIZE * 0.96}`);
+});
+
+test('Typography: fontString universal fallbacks and captionBand RTL clearance', () => {
+  const R = loadEsm(path.resolve(__dirname, '..', 'cep-panel', 'client', 'src', 'captions', 'render.js'));
+  const strDefault = R.fontString({ fontFamily: 'Montserrat', fontSize: 80, fontWeight: 800 });
+  assert.match(strDefault, /Noto Nastaliq Urdu/, 'Must include Noto Nastaliq Urdu fallback');
+  assert.match(strDefault, /Urdu Typesetting/, 'Must include Urdu Typesetting fallback');
+  assert.match(strDefault, /Jameel Noori Nastaliq/, 'Must include Jameel Noori Nastaliq fallback');
+
+  // Verify captionBand allocates headroom for RTL
+  const words = [{ text: 'خوشآمدید', start: 0.1, end: 1.0 }];
+  const scene = M.buildScene(words, { style: { fontSize: 100 } }, env());
+  const band = R.captionBand(scene, { style: { fontSize: 100 } });
+  assert.ok(band.h >= 100 * 1.5, `Band height (${band.h}) must accommodate calligraphic vertical extent`);
+});
+
+
 
 

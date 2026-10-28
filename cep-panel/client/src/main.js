@@ -1,80 +1,10 @@
-
-// ── Workspace Navigation & View Switching ─────────────────────
-function _setActiveNav(activeTab) {
-  const tabs = {
-    'chat': document.getElementById('btn-nav-chat'),
-    'story-cut': document.getElementById('btn-story-cut'),
-    'captions': document.getElementById('btn-captions'),
-    'review': document.getElementById('btn-review'),
-  };
-  Object.entries(tabs).forEach(([key, el]) => {
-    if (el) el.classList.toggle('active', key === activeTab);
-  });
-}
-
-function showView(targetView) {
-  _setActiveNav(targetView);
-  try { localStorage.setItem('editflow_home_view', targetView); } catch (_) {}
-
-  const hero = document.getElementById('hero');
-  const chat = document.getElementById('chat-scroll');
-  const footer = document.getElementById('app-footer');
-  const captions = document.getElementById('captions-view');
-  const storyCut = document.getElementById('story-cut-view');
-  const review = document.getElementById('review-view');
-
-  // Unconditionally hide all view containers first to prevent layout collisions
-  [hero, chat, footer, captions, storyCut, review].forEach(el => {
-    if (el) el.classList.add('hidden');
-  });
-
-  if (targetView === 'chat') {
-    if (chat && chat.children.length > 0) {
-      chat.classList.remove('hidden');
-      if (footer) footer.classList.remove('hidden');
-    } else if (hero) {
-      hero.classList.remove('hidden');
-    }
-  } else if (targetView === 'captions') {
-    if (typeof openCaptions === 'function') {
-      openCaptions();
-      const cv = document.getElementById('captions-view');
-      if (cv) cv.classList.remove('hidden');
-    } else {
-      console.warn('[EditFlow] Captions module still loading...');
-    }
-  } else if (targetView === 'story-cut') {
-    if (typeof openStoryCut === 'function') {
-      openStoryCut();
-      const sc = document.getElementById('story-cut-view');
-      if (sc) sc.classList.remove('hidden');
-    } else {
-      console.warn('[EditFlow] Story Cut module still loading...');
-    }
-  } else if (targetView === 'review') {
-    if (typeof openReview === 'function') {
-      openReview();
-      const rv = document.getElementById('review-view');
-      if (rv) rv.classList.remove('hidden');
-    } else {
-      console.warn('[EditFlow] Review module still loading...');
-    }
-  }
-}
-window.__editflowShowView = showView;
-
-function switchToChat() {
-  showView('chat');
-}
-window.__editflowSwitchToChat = switchToChat;
-
 /**
  * main.js — Bootstrap for EditFlow single-chat frontend.
  *
  * Initializes all modules, wires up DOM events, and starts the app.
  * This file owns no business logic — it delegates to the modules.
  */
-const BUILD_TAG = 'v2.0-clean-progress-sync';  // bump when shipping a fix; visible in header
+const BUILD_TAG = 'v2.0-progress-visuals';  // bump when shipping a fix; visible in header
 
 // FIRST thing on parse: clear the inline boot-check banner. If the user sees
 // the banner disappear, we KNOW main.js parsed successfully and modules are
@@ -102,87 +32,193 @@ import { setupDropZone, setupSelectionChip, stopSelectionPoll } from './dnd.js';
 import { pickScriptFile } from './upload.js';
 import { initDiagnostics } from './diagnostics.js';
 import { initSettings, openSettings, onWhisperDownloadProgress } from './settings.js';
-// openReview is loaded DYNAMICALLY (with the BUILD_TAG cache-buster) inside
-// _loadOrchestrator so edits to review-view.js land on reload without a CEP
-// cache wipe. Kept in a module var + on window for the orchestrator's /review.
+// Dynamic module hooks — populated on-demand when views are lazily imported.
 let openReview = null;
-// Same treatment for the Captions tab (captions-view.js).
 let openCaptions = null;
 let openStoryCut = null;
+
 // Feature flag: agent mode vs. legacy orchestrator
 const AGENT_MODE = localStorage.getItem('editflow_agent_mode') === 'on';
 
-// IMPORTANT: do NOT use top-level `await` here. CEP's bundled Chromium can
-// either reject top-level await outright or race with DOMContentLoaded, which
-// kills init() before any button listeners get attached. Instead, we register
-// the DOMContentLoaded listener synchronously and load the orchestrator
-// module inside init() — keeping the top-level code dead simple.
 let onScanClicked, onSourceProvided, onPProItemsProvided, onMediaFileDropped,
     onScriptFileDropped, onUserMessage, onNewEdit, onWsProgress;
 
-async function _loadOrchestrator() {
-  // Append a cache buster tied to BUILD_TAG so every shipped fix forces a
-  // fresh fetch of the orchestrator module. Without this, CEF's HTTP cache
-  // returns the OLD copy of agent-client.js for hours after we deploy a
-  // fix — because the cached response's max-age hasn't expired yet, and
-  // Cache-Control headers on NEW responses can't override an existing
-  // cache entry. The query string makes the URL different → guaranteed
-  // fresh request → my latest agent-client.js actually runs.
-  //
-  // This only busts the dynamic-import URL. Static imports (state.js,
-  // api.js, etc.) still hit the cache, but those modules haven't been
-  // edited recently — the cached versions are correct. The Cache-Control
-  // headers we send now will prevent the same trap from recurring once
-  // those files do change.
-  const bust = '?v=' + encodeURIComponent(BUILD_TAG);
-  const mod = AGENT_MODE
-    ? await import('./agent-client.js' + bust)
-    : await import('./orchestrator.js' + bust);
-  onScanClicked        = mod.onScanClicked;
-  onSourceProvided     = mod.onSourceProvided;
-  onPProItemsProvided  = mod.onPProItemsProvided;
-  onMediaFileDropped   = mod.onMediaFileDropped;
-  onScriptFileDropped  = mod.onScriptFileDropped;
-  onUserMessage        = mod.onUserMessage;
-  onNewEdit            = mod.onNewEdit;
-  onWsProgress         = mod.onWsProgress;
-  console.log(`[EditFlow] Loaded ${AGENT_MODE ? 'agent-client' : 'orchestrator'}`);
+// View module cache and in-flight load deduplicator
+const _viewCache = new Map();
+const _viewLoading = new Map();
 
-  // Load the word-level Review editor with the same cache-buster, and expose it
-  // so the orchestrator's /review command (and the header button) can open it.
-  try {
-    const reviewMod = await import('./review-view.js' + bust);
-    openReview = reviewMod.openReview;
-    window.__editflowOpenReview = openReview;
-  } catch (e) {
-    console.error('[EditFlow] Failed to load review-view:', e);
+/**
+ * Lazy-load view module on-demand with cache-busting and error boundary.
+ * Only the active view is loaded on cold boot; non-active views remain deferred.
+ *
+ * @param {'captions' | 'storyCut' | 'review' | 'agent' | 'orchestrator'} viewName
+ * @returns {Promise<any>}
+ */
+export async function loadView(viewName) {
+  const key = (viewName === 'agent' || viewName === 'orchestrator') ? 'orchestrator' : viewName;
+  if (_viewCache.has(key)) {
+    return _viewCache.get(key);
+  }
+  if (_viewLoading.has(key)) {
+    return _viewLoading.get(key);
   }
 
-  // Load the Captions tab the same way (AE-style Transcribe→Generate flow
-  // for Tier-1 native caption tracks).
-  try {
-    const ccMod = await import('./captions-view.js' + bust);
-    openCaptions = ccMod.openCaptions;
-    window.__editflowOpenCaptions = openCaptions;
-  } catch (e) {
-    console.error('[EditFlow] Failed to load captions-view:', e);
-  }
-  try {
-    const scMod = await import('./story-cut-view.js' + bust);
-    openStoryCut = scMod.openStoryCut;
-    window.__editflowOpenStoryCut = openStoryCut;
-  } catch (e) {
-    console.error('[EditFlow] Failed to load story-cut-view:', e);
-  }
-
-  // Once sub-modules are ready, automatically mount the saved home view
-  try {
-    const homeView = localStorage.getItem('editflow_home_view') || 'captions';
-    if (typeof showView === 'function') {
-      showView(homeView);
+  const p = (async () => {
+    const bust = '?v=' + encodeURIComponent(BUILD_TAG);
+    let mod;
+    try {
+      switch (key) {
+        case 'captions':
+          mod = await import('./captions-view.js' + bust);
+          openCaptions = mod.openCaptions;
+          window.__editflowOpenCaptions = () => openView('captions');
+          break;
+        case 'review':
+          mod = await import('./review-view.js' + bust);
+          openReview = mod.openReview;
+          window.__editflowOpenReview = () => openView('review');
+          break;
+        case 'storyCut':
+          mod = await import('./story-cut-view.js' + bust);
+          openStoryCut = mod.openStoryCut;
+          window.__editflowOpenStoryCut = () => openView('storyCut');
+          break;
+        case 'orchestrator':
+          mod = AGENT_MODE
+            ? await import('./agent-client.js' + bust)
+            : await import('./orchestrator.js' + bust);
+          onScanClicked        = mod.onScanClicked;
+          onSourceProvided     = mod.onSourceProvided;
+          onPProItemsProvided  = mod.onPProItemsProvided;
+          onMediaFileDropped   = mod.onMediaFileDropped;
+          onScriptFileDropped  = mod.onScriptFileDropped;
+          onUserMessage        = mod.onUserMessage;
+          onNewEdit            = mod.onNewEdit;
+          onWsProgress         = mod.onWsProgress;
+          console.log(`[EditFlow] Loaded ${AGENT_MODE ? 'agent-client' : 'orchestrator'}`);
+          break;
+        default:
+          throw new Error(`Unknown view "${viewName}"`);
+      }
+      _viewCache.set(key, mod);
+      return mod;
+    } catch (err) {
+      console.error(`[EditFlow] Failed to load view "${key}":`, err);
+      _showGlobalError(`Failed to load view "${key}": ${err.message}`);
+      throw err;
+    } finally {
+      _viewLoading.delete(key);
     }
-  } catch (e) {
-    console.warn('[EditFlow] Initial view mount failed:', e);
+  })();
+
+  _viewLoading.set(key, p);
+  return p;
+}
+
+// ── Workspace Navigation & View Switching ─────────────────────
+function _setActiveNav(activeTab) {
+  const normTab = (activeTab === 'storyCut' || activeTab === 'story-cut') ? 'story-cut' : activeTab;
+  const tabs = {
+    'chat': document.getElementById('btn-nav-chat'),
+    'story-cut': document.getElementById('btn-story-cut'),
+    'captions': document.getElementById('btn-captions'),
+    'review': document.getElementById('btn-review'),
+  };
+  Object.entries(tabs).forEach(([key, el]) => {
+    if (el) el.classList.toggle('active', key === normTab);
+  });
+}
+
+/**
+ * Defensive error-boundary wrapped view switcher.
+ */
+export async function openView(viewName) {
+  const normView = (viewName === 'story-cut' || viewName === 'storyCut') ? 'storyCut' : viewName;
+  _setActiveNav(normView === 'storyCut' ? 'story-cut' : normView);
+  try {
+    const ccView = $('#captions-view');
+    const scView = $('#story-cut-view');
+    const rvView = $('#review-view');
+    const hero = $('#hero');
+    const chat = $('#chat-scroll');
+    const footer = $('#app-footer');
+
+    if (normView === 'chat') {
+      try { localStorage.setItem('editflow_home_view', 'chat'); } catch (_) {}
+      [ccView, scView, rvView].forEach(el => el && el.classList.add('hidden'));
+      if (chat && chat.children.length > 0) {
+        chat.classList.remove('hidden');
+        if (footer) footer.classList.remove('hidden');
+      } else if (hero) {
+        hero.classList.remove('hidden');
+      }
+      await loadView('orchestrator');
+      return;
+    }
+
+    try { localStorage.setItem('editflow_home_view', normView); } catch (_) {}
+    [hero, chat, footer, ccView, scView, rvView].forEach(el => el && el.classList.add('hidden'));
+    const mod = await loadView(normView);
+    if (normView === 'captions' && (mod.openCaptions || openCaptions)) {
+      (mod.openCaptions || openCaptions)();
+      if (ccView) ccView.classList.remove('hidden');
+    } else if (normView === 'review' && (mod.openReview || openReview)) {
+      (mod.openReview || openReview)();
+      if (rvView) rvView.classList.remove('hidden');
+    } else if (normView === 'storyCut' && (mod.openStoryCut || openStoryCut)) {
+      (mod.openStoryCut || openStoryCut)();
+      if (scView) scView.classList.remove('hidden');
+    }
+  } catch (err) {
+    console.error(`[EditFlow] Error opening view "${viewName}":`, err);
+    _showGlobalError(`Error opening view "${viewName}": ${err.message}`);
+    const hero = $('#hero'); if (hero) hero.classList.remove('hidden');
+  }
+}
+
+// Window interoperability hooks
+export const showView = openView;
+window.__editflowShowView = showView;
+window.__editflowOpenReview = () => openView('review');
+window.__editflowOpenCaptions = () => openView('captions');
+window.__editflowOpenStoryCut = () => openView('storyCut');
+window.__editflowSwitchToChat = () => openView('chat');
+
+/**
+ * Ensure stylesheets are cached by CEF and remove Date.now() cache-busting.
+ */
+function installStyleCacheGuard() {
+  const guards = [
+    { id: 'cc-style-link', file: 'captions.css' },
+    { id: 'rv-style-link', file: 'review.css' },
+    { id: 'sc-style-link', file: 'story-cut.css' },
+  ];
+  for (const g of guards) {
+    let link = document.getElementById(g.id);
+    if (!link) {
+      link = document.createElement('link');
+      link.id = g.id;
+      link.rel = 'stylesheet';
+      link.href = `styles/${g.file}?v=${encodeURIComponent(BUILD_TAG)}`;
+      document.head.appendChild(link);
+    }
+    // Intercept and strip dynamic Date.now() timestamp cache-busters so CEF caches styles
+    let curHref = link.href;
+    try {
+      Object.defineProperty(link, 'href', {
+        get() { return curHref; },
+        set(val) {
+          if (typeof val === 'string' && val.includes('?v=')) {
+            const base = val.split('?')[0];
+            curHref = `${base}?v=${encodeURIComponent(BUILD_TAG)}`;
+          } else {
+            curHref = val;
+          }
+          link.setAttribute('href', curHref);
+        },
+        configurable: true,
+      });
+    } catch (_) {}
   }
 }
 
@@ -247,27 +283,30 @@ async function init() {
   window.addEventListener('error', (e) => _showGlobalError((e && (e.error && e.error.message || e.message)) || 'Unknown error'));
   window.addEventListener('unhandledrejection', (e) => _showGlobalError((e && (e.reason && e.reason.message || e.reason)) || 'Unhandled promise rejection'));
 
+  // Install stylesheet cache guard to eliminate timestamp cache-busting
+  installStyleCacheGuard();
+
+  // 0. Only load the active home view on cold boot (non-active views are deferred)
+  const homeView = localStorage.getItem('editflow_home_view') || 'captions';
   try {
-    // 0. Load the chosen orchestrator module (was top-level — moved here so a
-    //    dynamic-import failure doesn't kill the DOMContentLoaded listener.)
-    await _loadOrchestrator();
-  } catch (err) {
-    console.error('[EditFlow] Failed to load orchestrator:', err);
-    const heroEl = $('#hero');
-    if (heroEl) {
-      heroEl.innerHTML = `<p style="color:#e57373;padding:24px;text-align:center">
-        Failed to load EditFlow: ${err.message}.<br>
-        Open the CEP debug console and check the error.
-      </p>`;
+    if (homeView === 'captions') {
+      await loadView('captions');
+    } else if (homeView === 'review') {
+      await loadView('review');
+    } else if (homeView === 'storyCut') {
+      await loadView('storyCut');
+    } else {
+      await loadView('orchestrator');
     }
-    return;
+  } catch (err) {
+    console.error(`[EditFlow] Failed to load initial view (${homeView}):`, err);
   }
 
-  // 1. Initialize ExtendScript bridge. Force disk reload on boot so
-  //    latest ExtendScript updates (e.g. clip_manager.jsx) always take effect.
+  // 1. Initialize ExtendScript bridge. Pass false on cold boot for fast-path evaluation
+  // (eliminates disk re-read on cold boot).
   let esAvailable = false;
   try {
-    esAvailable = await initExtendScript(true);
+    esAvailable = await initExtendScript(false);
   } catch (_) {
     esAvailable = false;
   }
@@ -282,11 +321,14 @@ async function init() {
 
   // 2. Wire up Scan button
   if (btnScan) {
-    btnScan.addEventListener('click', () => {
+    btnScan.addEventListener('click', async () => {
       btnScan.disabled = true;
-      onScanClicked().finally(() => {
+      try {
+        await loadView('orchestrator');
+        if (onScanClicked) await onScanClicked();
+      } finally {
         btnScan.disabled = false;
-      });
+      }
     });
   }
 
@@ -306,15 +348,18 @@ async function init() {
   // 5. Wire up drag-and-drop
   if (appMain && dropOverlay) {
     setupDropZone(appMain, dropOverlay, {
-      onMediaDrop: onMediaFileDropped,
-      onScriptDrop: onScriptFileDropped,
-      onPProDrop: onPProItemsProvided,
+      onMediaDrop: async (f) => { await loadView('orchestrator'); if (onMediaFileDropped) return onMediaFileDropped(f); },
+      onScriptDrop: async (f) => { await loadView('orchestrator'); if (onScriptFileDropped) return onScriptFileDropped(f); },
+      onPProDrop: async (items) => { await loadView('orchestrator'); if (onPProItemsProvided) return onPProItemsProvided(items); },
     });
   }
 
   // 6. Wire up selection chip
   if (selectionChip) {
-    setupSelectionChip(selectionChip, onPProItemsProvided, getState);
+    setupSelectionChip(selectionChip, async (items) => {
+      await loadView('orchestrator');
+      if (onPProItemsProvided) return onPProItemsProvided(items);
+    }, getState);
   }
 
   // 7. Wire up attach button
@@ -322,7 +367,8 @@ async function init() {
     btnAttach.addEventListener('click', async () => {
       const file = await pickScriptFile();
       if (file) {
-        await onScriptFileDropped(file);
+        await loadView('orchestrator');
+        if (onScriptFileDropped) await onScriptFileDropped(file);
       }
     });
   }
@@ -336,34 +382,35 @@ async function init() {
   // 9a. Wire Header Navigation Tabs with unified router
   const btnNavChat = document.getElementById('btn-nav-chat');
   if (btnNavChat) {
-    btnNavChat.addEventListener('click', () => showView('chat'));
+    btnNavChat.addEventListener('click', () => openView('chat'));
   }
   if (btnReview) {
-    btnReview.addEventListener('click', () => showView('review'));
+    btnReview.addEventListener('click', () => openView('review'));
   }
   const btnStoryCut = document.getElementById('btn-story-cut');
   if (btnStoryCut) {
-    btnStoryCut.addEventListener('click', () => showView('story-cut'));
+    btnStoryCut.addEventListener('click', () => openView('storyCut'));
   }
   if (btnCaptions) {
-    btnCaptions.addEventListener('click', () => showView('captions'));
+    btnCaptions.addEventListener('click', () => openView('captions'));
   }
 
   // 9e. Wire Hero Quick-Action Cards directly to router
   const cardCaptions = document.getElementById('hero-card-captions');
-  if (cardCaptions) cardCaptions.addEventListener('click', () => showView('captions'));
+  if (cardCaptions) cardCaptions.addEventListener('click', () => openView('captions'));
   const cardStoryCut = document.getElementById('hero-card-story-cut');
-  if (cardStoryCut) cardStoryCut.addEventListener('click', () => showView('story-cut'));
+  if (cardStoryCut) cardStoryCut.addEventListener('click', () => openView('storyCut'));
   const cardReview = document.getElementById('hero-card-review');
-  if (cardReview) cardReview.addEventListener('click', () => showView('review'));
+  if (cardReview) cardReview.addEventListener('click', () => openView('review'));
 
-  // 9f. Boot into the last-used home view
+  // 9f. Boot into the active home view
   try {
-    const homeView = localStorage.getItem('editflow_home_view') || 'captions';
-    showView(homeView);
+    const rawHome = localStorage.getItem('editflow_home_view') || 'captions';
+    const homeView = (rawHome === 'story-cut') ? 'storyCut' : rawHome;
+    await openView(homeView);
   } catch (e) {
     console.warn('[EditFlow] home view open failed, showing chat:', e);
-    showView('chat');
+    await openView('chat');
   }
 
   // 9b. Dev Reload button — re-loads the ExtendScript bundle + the panel
@@ -478,13 +525,14 @@ function _initInputDock() {
   });
 }
 
-function _sendInput() {
+async function _sendInput() {
   const text = chatInput.value.trim();
   if (!text) return;
 
   chatInput.value = '';
   chatInput.style.height = 'auto';
-  onUserMessage(text);
+  await loadView('orchestrator');
+  if (onUserMessage) onUserMessage(text);
 }
 
 // ── Settings overlay ─────────────────────────────────────────
