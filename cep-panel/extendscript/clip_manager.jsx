@@ -811,7 +811,7 @@ clipManager = (function() {
         return null;
     }
 
-    function ensureProjectItemForPath(mediaPath) {
+    function ensureProjectItemForPath(mediaPath, targetBinName) {
         if (!mediaPath) return null;
         var existing = findProjectItem(mediaPath);
         if (existing) return existing;
@@ -821,12 +821,9 @@ clipManager = (function() {
             if (!project) return null;
             var root = project.rootItem;
 
-            var importBin = editflowUtils.findBin(root, "EditFlow Imports");
-            if (!importBin) {
-                root.createBin("EditFlow Imports");
-                importBin = editflowUtils.findBin(root, "EditFlow Imports");
-            }
-            if (!importBin) importBin = root;
+            var binLabel = targetBinName || "EditFlow Imports";
+            var binRes = _resolveOrCreateBinPath(root, binLabel);
+            var importBin = (binRes && binRes.bin) ? binRes.bin : root;
 
             var prevCount = (importBin.children && importBin.children.numItems) ? importBin.children.numItems : 0;
             var pathStr = mediaPath;
@@ -930,21 +927,18 @@ clipManager = (function() {
         if (!paths || !paths.length) {
             return editflowUtils.safeStringify({ success: false, error: "No file paths provided" });
         }
+        var targetBinName = editflowUtils.getParam(options, 'bin_name', 'binName') || "EditFlow Imports";
 
         try {
             var project = app.project;
             var root = project.rootItem;
 
-            var importBin = editflowUtils.findBin(root, "EditFlow Imports");
-            if (!importBin) {
-                root.createBin("EditFlow Imports");
-                importBin = editflowUtils.findBin(root, "EditFlow Imports");
-            }
-            if (!importBin) importBin = root;
+            var binRes = _resolveOrCreateBinPath(root, targetBinName);
+            var importBin = (binRes && binRes.bin) ? binRes.bin : root;
 
             project.importFiles(paths, true, importBin, false);
 
-            return editflowUtils.safeStringify({ success: true, imported: paths.length });
+            return editflowUtils.safeStringify({ success: true, imported: paths.length, bin: targetBinName });
 
         } catch (e) {
             return editflowUtils.safeStringify({ success: false, error: e.toString() });
@@ -1190,18 +1184,52 @@ clipManager = (function() {
 
     // ── EditFlow Script Cut Operations ──
 
+    function _resolveOrCreateBinPath(root, binPath) {
+        if (!binPath) return { bin: root, existed: true, path: "" };
+        var norm = String(binPath).replace(/\\/g, "/");
+        var parts = norm.split("/");
+        var current = root;
+        var createdAny = false;
+        for (var i = 0; i < parts.length; i++) {
+            var seg = parts[i].replace(/^\s+|\s+$/g, "");
+            if (!seg) continue;
+            var found = null;
+            if (current && current.children) {
+                for (var c = 0; c < current.children.numItems; c++) {
+                    var child = current.children[c];
+                    if (child && child.type === ProjectItemType.BIN && child.name === seg) {
+                        found = child;
+                        break;
+                    }
+                }
+            }
+            if (!found && current === root) {
+                found = editflowUtils.findBin(root, seg);
+            }
+            if (!found) {
+                var created = current.createBin(seg);
+                createdAny = true;
+                found = created || editflowUtils.findBin(current, seg);
+            }
+            if (found) {
+                current = found;
+            }
+        }
+        return { bin: current, existed: !createdAny, path: norm };
+    }
+
     function ensureBin(options) {
         var binName = editflowUtils.getParam(options, 'bin_name', 'name') || "EditFlow Output";
+        var parentBin = editflowUtils.getParam(options, 'parent_bin', 'parentBin');
+        if (parentBin) {
+            binName = String(parentBin).replace(/\/+$/, "") + "/" + String(binName).replace(/^\/+/, "");
+        }
         var project = app.project;
         if (!project) return { success: false, error: "No project open" };
 
-        var root = project.rootItem;
-        var existing = editflowUtils.findBin(root, binName);
-        if (existing) return { success: true, name: binName, existed: true };
-
         try {
-            root.createBin(binName);
-            return { success: true, name: binName, existed: false };
+            var res = _resolveOrCreateBinPath(project.rootItem, binName);
+            return { success: true, name: binName, existed: res.existed };
         } catch (e) {
             return { success: false, error: e.toString() };
         }
@@ -1402,7 +1430,7 @@ clipManager = (function() {
                         break;
 
                     case "import_file":
-                        var importedItem = ensureProjectItemForPath(op.mediaPath || op.path);
+                        var importedItem = ensureProjectItemForPath(op.mediaPath || op.path, op.bin_name || op.binName);
                         result = importedItem
                             ? { success: true, path: op.mediaPath || op.path }
                             : { success: false, error: "Import failed: " + (op.mediaPath || op.path) };
@@ -1531,6 +1559,7 @@ clipManager = (function() {
         importFilesFromPaths: importFilesFromPaths,
         insertClipAtTime: insertClipAtTime,
         createNewSequence: createNewSequence,
+        ensureBin: ensureBin,
         organizeIntoBins: organizeIntoBins,
         setClipLabelColor: setClipLabelColor
     };

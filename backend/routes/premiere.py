@@ -2,16 +2,18 @@
 EditFlow AI - Premiere Pro Integration Routes
 Handles project context sync, sequence state, and EDL generation for the CEP panel.
 """
+import asyncio
 import json
 import logging
 import tempfile
 import time
+import uuid
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..models.schemas import (
     SequenceAnalyzeRequest,
@@ -20,7 +22,7 @@ from ..models.schemas import (
     SequencePhraseResponse,
 )
 from ..services.sequence_phrase_service import sequence_phrase_service
-from ..utils.progress import ProgressReporter
+from ..utils.progress import ProgressReporter, manager
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/premiere", tags=["premiere"])
@@ -375,3 +377,176 @@ async def premiere_health():
         "items_count": len(_project_context.get("items", [])),
         "bins_count": len(_project_context.get("bins", [])),
     }
+
+
+# ── Live Bi-Directional ExtendScript & UI RPC Bridge ──
+_pending_rpc: Dict[str, asyncio.Future] = {}
+_completed_rpc: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
+_queued_rpc: List[Dict[str, Any]] = []
+_MAX_RPC_HISTORY = 100
+_MAX_RPC_QUEUE = 50
+
+
+class PremiereRPCRequest(BaseModel):
+    command: str
+    payload: Dict[str, Any] = Field(default_factory=dict)
+    target: str = "extendscript"  # "extendscript" | "ui"
+    timeout: float = 20.0
+    queue_if_offline: bool = True
+
+
+class PremiereRPCResult(BaseModel):
+    request_id: str
+    result: Dict[str, Any] = Field(default_factory=dict)
+    client_id: Optional[str] = None
+
+
+@router.get("/bridge-status")
+async def get_bridge_status():
+    """Return live status of the Backend <-> CEP Panel <-> Premiere Pro bridge."""
+    active_clients = list(manager.active_connections.keys())
+    return {
+        "success": True,
+        "backend_online": True,
+        "cep_panel_connected": len(active_clients) > 0,
+        "active_clients": active_clients,
+        "queued_commands": len(_queued_rpc),
+        "context_available": _project_context.get("last_updated") is not None,
+        "sequence_available": len(_project_context.get("sequences", [])) > 0,
+        "items_count": len(_project_context.get("items", [])),
+        "bins_count": len(_project_context.get("bins", [])),
+    }
+
+
+@router.post("/reload-panel")
+async def reload_cep_panel():
+    """Broadcast a live reload signal to all connected CEP panels (hot-swaps JSX + JS)."""
+    active_clients = list(manager.active_connections.keys())
+    await manager.broadcast({"type": "dev_reload", "files": ["main.js", "clip_manager.jsx", "index.jsx"]})
+    return {"success": True, "reloaded_clients": active_clients}
+
+
+@router.post("/rpc")
+async def execute_premiere_rpc(req: PremiereRPCRequest):
+    """Execute a live ExtendScript or UI command inside the Premiere Pro CEP panel."""
+    global _project_context
+    req_id = f"rpc_{uuid.uuid4().hex[:12]}"
+    rpc_msg = {
+        "type": "premiere_rpc",
+        "request_id": req_id,
+        "target": req.target,
+        "command": req.command,
+        "payload": req.payload,
+        "created_at": time.time(),
+    }
+
+    has_clients = len(manager.active_connections) > 0
+    if has_clients:
+        loop = asyncio.get_running_loop()
+        fut = loop.create_future()
+        _pending_rpc[req_id] = fut
+        try:
+            await manager.broadcast(rpc_msg)
+            res = await asyncio.wait_for(fut, timeout=max(1.0, min(req.timeout, 120.0)))
+            if isinstance(res, dict) and req.command in ("scanProject", "scanProjectMedia", "getProjectState") and res.get("success"):
+                _project_context = {
+                    "items": res.get("items", _project_context.get("items", [])),
+                    "bins": res.get("bins", _project_context.get("bins", [])),
+                    "sequences": res.get("sequences", _project_context.get("sequences", [])),
+                    "last_updated": time.time(),
+                }
+            return {
+                "success": True,
+                "live": True,
+                "request_id": req_id,
+                "result": res,
+            }
+        except asyncio.TimeoutError:
+            _pending_rpc.pop(req_id, None)
+            logger.warning(f"Premiere RPC timed out after {req.timeout}s: {req.command}")
+        except Exception as e:
+            _pending_rpc.pop(req_id, None)
+            logger.error(f"Premiere RPC error ({req.command}): {e}")
+            return {"success": False, "live": True, "request_id": req_id, "error": str(e)}
+
+    # Fallback for read-only project/sequence state when panel is offline or busy
+    if req.command in ("scanProject", "scanProjectMedia", "getProjectState") and _project_context.get("last_updated"):
+        return {
+            "success": True,
+            "live": False,
+            "cached": True,
+            "request_id": req_id,
+            "result": {
+                "success": True,
+                "items": _project_context.get("items", []),
+                "bins": _project_context.get("bins", []),
+                "sequences": _project_context.get("sequences", []),
+            },
+        }
+    if req.command == "getSequenceState" and _project_context.get("sequences"):
+        return {
+            "success": True,
+            "live": False,
+            "cached": True,
+            "request_id": req_id,
+            "result": {
+                "success": True,
+                "sequence": _project_context["sequences"][0],
+            },
+        }
+
+    if req.queue_if_offline:
+        if len(_queued_rpc) >= _MAX_RPC_QUEUE:
+            _queued_rpc.pop(0)
+        _queued_rpc.append(rpc_msg)
+        return {
+            "success": True,
+            "live": False,
+            "queued": True,
+            "request_id": req_id,
+            "message": "Command queued. It will execute automatically as soon as the EditFlow AI panel is active in Premiere Pro.",
+        }
+
+    return {
+        "success": False,
+        "live": False,
+        "queued": False,
+        "request_id": req_id,
+        "error": "EditFlow CEP panel is not currently connected via WebSocket.",
+    }
+
+
+@router.post("/rpc-result")
+async def receive_premiere_rpc_result(res: PremiereRPCResult):
+    """Receive the execution result of a Premiere RPC command from the CEP panel."""
+    global _project_context
+    fut = _pending_rpc.pop(res.request_id, None)
+    if fut and not fut.done():
+        fut.set_result(res.result)
+
+    _completed_rpc[res.request_id] = {
+        "request_id": res.request_id,
+        "client_id": res.client_id,
+        "result": res.result,
+        "completed_at": time.time(),
+    }
+    while len(_completed_rpc) > _MAX_RPC_HISTORY:
+        _completed_rpc.popitem(last=False)
+
+    if isinstance(res.result, dict) and "items" in res.result and "bins" in res.result:
+        _project_context = {
+            "items": res.result.get("items", []),
+            "bins": res.result.get("bins", []),
+            "sequences": res.result.get("sequences", _project_context.get("sequences", [])),
+            "last_updated": time.time(),
+        }
+    return {"success": True}
+
+
+@router.get("/rpc-queue")
+async def drain_premiere_rpc_queue():
+    """Pop and return all queued RPC commands when the CEP panel connects."""
+    global _queued_rpc
+    commands = list(_queued_rpc)
+    _queued_rpc.clear()
+    return {"commands": commands, "count": len(commands)}

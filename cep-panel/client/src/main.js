@@ -626,11 +626,80 @@ async function devReload() {
   location.reload();
 }
 
+async function _handlePremiereRpc(data) {
+  const reqId = data && data.request_id;
+  const target = (data && data.target) || 'extendscript';
+  const command = data && data.command;
+  const payload = (data && data.payload) || {};
+  let result;
+  try {
+    if (target === 'ui') {
+      if (command === 'switch_view' || command === 'open_view') {
+        const view = payload.view || 'captions';
+        await openView(view);
+        result = { success: true, view };
+      } else if (command === 'reload_panel') {
+        setTimeout(() => devReload(), 50);
+        result = { success: true, reloading: true };
+      } else if (command === 'get_ui_state') {
+        result = {
+          success: true,
+          activeView: localStorage.getItem('editflow_home_view') || 'captions',
+          extendscriptAvailable: isExtendScriptAvailable(),
+          clientId: CLIENT_ID,
+        };
+      } else {
+        result = { success: false, error: `Unknown UI command: ${command}` };
+      }
+    } else {
+      result = await callExtendScript(command, payload);
+      if ((command === 'scanProject' || command === 'scanProjectMedia' || command === 'getProjectState') && result && result.success) {
+        try {
+          await apiPost('/api/premiere/context', {
+            items: result.items || [],
+            bins: result.bins || [],
+            sequences: result.sequences || [],
+          });
+        } catch (_) {}
+      }
+    }
+  } catch (err) {
+    result = { success: false, error: String((err && err.message) || err) };
+  }
+  if (reqId) {
+    try {
+      await apiPost('/api/premiere/rpc-result', {
+        request_id: reqId,
+        client_id: CLIENT_ID,
+        result: result || { success: false, error: 'Empty RPC result' },
+      });
+    } catch (e) {
+      console.warn('[ws] Failed to post premiere_rpc result:', e);
+    }
+  }
+  return result;
+}
+
+async function _drainQueuedRpc() {
+  try {
+    const q = await apiGet('/api/premiere/rpc-queue');
+    if (q && Array.isArray(q.commands) && q.commands.length > 0) {
+      for (const cmd of q.commands) {
+        await _handlePremiereRpc(cmd);
+      }
+    }
+  } catch (_) {}
+}
+
 function _initWebSocket() {
   try {
     const ws = connectWS(CLIENT_ID);
 
     ws.on('message', (data) => {
+      if (data && data.type === 'premiere_rpc') {
+        _handlePremiereRpc(data);
+        return;
+      }
       // Forward backend progress events to the active orchestrator so the in-flight
       // progress message ticks as work happens (esp. transcription).
       if (data && (data.type === 'progress' || data.type === 'agent_tool')) {
@@ -666,6 +735,7 @@ function _initWebSocket() {
 
     ws.on('open', () => {
       console.log('[ws] Connected to backend');
+      _drainQueuedRpc();
     });
 
     ws.on('error', () => {

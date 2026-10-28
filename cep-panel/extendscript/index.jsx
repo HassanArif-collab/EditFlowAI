@@ -269,6 +269,11 @@ function editflowDispatch(command, payloadData) {
             result = clipManager.createNewSequence(options);
             break;
 
+        case "createBin":
+        case "ensureBin":
+            result = editflowUtils.safeStringify(clipManager.ensureBin(options));
+            break;
+
         case "organizeBin":
             result = clipManager.organizeIntoBins(options);
             break;
