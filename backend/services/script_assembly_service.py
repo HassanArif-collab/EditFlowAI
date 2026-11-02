@@ -1089,11 +1089,11 @@ class ScriptAssemblyService:
                 from .broll_placement_engine import broll_placement_engine
                 from .visual_library_service import visual_library_service
 
-                vl_items = visual_library_service.query_items(limit=1, brand=brand or None)
+                vl_items = visual_library_service.query_items(limit=1, brand=brand or None, project_folder=project_folder)
                 if vl_items:
                     brolls = broll_placement_engine.place_broll_for_plan(
                         plan.cuts, aspect_ratio=aspect_ratio, pacing_style=pacing_style,
-                        brand=brand or None, allow_ai_generated=allow_ai_generated,
+                        brand=brand or None, allow_ai_generated=allow_ai_generated, project_folder=project_folder,
                     )
                     if brolls:
                         plan.broll_clips = brolls

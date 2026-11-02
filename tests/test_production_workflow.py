@@ -15,6 +15,7 @@ def compiler(tmp_path, monkeypatch):
     from backend.services.media_resolver import MediaResolverService
     resolver = MediaResolverService()
     resolver.root_dir = str(tmp_path)
+    resolver._cache_dir = tmp_path / 'resolver-cache'
     monkeypatch.setattr(assembly_module, "media_resolver", resolver)
     monkeypatch.setattr(assembly_module, "framing_for_file", lambda *args: {})
     return ScriptAssemblyService(), resolver, tmp_path

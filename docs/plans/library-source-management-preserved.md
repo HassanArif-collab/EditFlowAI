@@ -46,3 +46,18 @@ unchanged. The separate script-management plan does not replace this plan.
 
 Implementation belongs to a separate future task. Do not treat this preserved
 record as permission to execute the older library plan during script-management work.
+
+## Requested addition: Premiere bins and implementation phases
+
+Added 2026-11-02 at the user's request. The preceding agreed decisions are retained.
+
+Visual libraries must support **Add folder** and **Add Premiere bin**. A selected
+bin supplies an explicit set of original media paths; it is not treated as a disk
+folder. Register those paths in the same brand/project library, retain their bin
+provenance, and reuse existing indexing/caches. Never include sibling files just
+because they share a physical folder with a selected clip.
+
+The implementation sequence and acceptance checks are recorded separately in
+[Visual library implementation phases](visual-library-implementation-phases.md).
+This amendment and its companion are planning changes; no source-library runtime
+behavior is implemented by saving them.

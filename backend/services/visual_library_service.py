@@ -810,15 +810,37 @@ class VisualLibraryService:
         min_quality: float = 0.0,
         limit: int = 50,
         brand: Optional[str] = None,
+        project_folder: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Filter and search items in the visual library."""
         self.initialize()
         self.refresh_metadata()
         results: List[VisualItem] = []
+        selection = None
+        if brand and project_folder and self.base_dir == get_settings().DATA_DIR / 'visual_library':
+            from .basic_visual_sources import selected_paths
+            selection = selected_paths(brand, project_folder)
+        pool = list(self._items.values())
+        if selection is not None:
+            from .source_registry import canonical
+            from .media_framing import source_facts
+            known = {canonical(item.path): item for item in pool}
+            pool = []
+            for path in selection:
+                item = known.get(canonical(path))
+                if item is None:
+                    facts = source_facts(path)
+                    item = VisualItem(id=hashlib.sha256(path.encode()).hexdigest(), path=path,
+                        filename=Path(path).name, stem=Path(path).stem, folder_path=str(Path(path).parent),
+                        file_type='image' if Path(path).suffix.lower() in IMAGE_EXTS else 'video',
+                        category='still_graphic' if Path(path).suffix.lower() in IMAGE_EXTS else 'pure_broll',
+                        duration=facts.get('duration') or 5, brand=brand,
+                        tags=re.findall(r'[a-z]{3,}', Path(path).stem.lower()))
+                pool.append(item)
         tokens = [t.lower() for t in re.findall(r"\b[a-zA-Z0-9_-]+\b", query) if len(t) > 1]
 
-        for item in self._items.values():
-            if self._preview_asset(item.path) or (brand and self._item_brand(item).casefold() != brand.casefold()):
+        for item in pool:
+            if self._preview_asset(item.path) or (selection is None and brand and self._item_brand(item).casefold() != brand.casefold()):
                 continue
             if self._folders and any(Path(item.path).is_relative_to(Path(f.path)) and not f.is_active for f in self._folders.values()):
                 continue

@@ -87,6 +87,7 @@ async def analyze_timeline_visuals(req: TimelineAnalyzeRequest):
             language=req.language or "auto",
             force=req.force,
             brand=await asyncio.to_thread(_brand, req),
+            project_folder=req.project_folder,
             allow_ai_generated=req.allow_ai_generated,
             sequence_width=req.sequence_width,
             sequence_height=req.sequence_height,
@@ -109,6 +110,7 @@ async def recompute_timeline_visuals(req: TimelineRecomputeRequest):
     try:
         placements, cuts = BrollPlacementEngine.place_broll_for_timeline_segments(
             segments=req.segments,
+            project_folder=req.project_folder,
             aspect_ratio=req.aspect_ratio or "9:16",
             pacing_style=req.pacing_style or "editorial",
             target_track=int(req.target_track if req.target_track is not None else 1),

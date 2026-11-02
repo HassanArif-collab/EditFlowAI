@@ -219,7 +219,7 @@ def authoring_context(project_folder: str = Query(...)) -> Dict[str, Any]:
                 assets.append(row)
         return {"success": True, **info, "media_root": media_resolver.root_dir,
                 "assets": assets, "transcripts": transcripts,
-                "visuals": visual_library_service.query_items(brand=info["brand"], limit=5000) if info["brand"] else [],
+                "visuals": visual_library_service.query_items(brand=info["brand"], project_folder=info['project_folder'], limit=5000) if info["brand"] else [],
                 "execution_schema": "docs/agent-script-package.schema.json",
                 "workflow": ["Read the brand/project production rules and source transcripts.",
                     "Write the readable script into this project's Scripts folder.",

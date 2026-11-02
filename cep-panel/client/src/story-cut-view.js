@@ -52,6 +52,8 @@ const S = {
   assetsCount: 0,
   showFolderModal: false,
   visualFolders: [],
+  basicSources: [],
+  sourceScan: null,
   activeBrand: localStorage.getItem('editflow_active_brand') || '',
   availableBrands: [],
   isTranscribingVl: false,
@@ -246,6 +248,8 @@ function clearProjectPlan() {
   invalidatePlan();
   stopAudioPreview();
   S.scripts = [];
+  S.basicSources = [];
+  S.sourceScan = null;
   S.scriptLibrary = null;
   S.scriptReference = null;
   S.showScriptLibrary = false;
@@ -889,6 +893,7 @@ async function loadBrands() {
 
 async function loadVisualFolders() {
   const brand = S.activeBrand;
+  const project = S.projectFolder;
   try {
     if (!brand) { S.visualFolders = []; return; }
     const brandParam = `?brand=${encodeURIComponent(brand)}`;
@@ -896,11 +901,42 @@ async function loadVisualFolders() {
     if (brand !== S.activeBrand) return;
     if (res && res.success) {
       S.visualFolders = res.folders || [];
+      try {
+        const linked = await apiGet(`/api/library-sources/visuals?brand=${encodeURIComponent(brand)}&project_folder=${encodeURIComponent(project)}`);
+        if (brand !== S.activeBrand || project !== S.projectFolder) return;
+        S.basicSources = linked.sources || [];
+      } catch (_) { S.basicSources = []; }
       render();
     }
   } catch (e) {
     console.warn('[StoryCut] Error loading visual folders:', e);
   }
+}
+
+async function saveBasicSource(values) {
+  if (!S.projectFolder || !S.activeBrand) return;
+  const project = S.projectFolder, brand = S.activeBrand;
+  setBusy(true, 'Linking visual source...');
+  try {
+    await apiPost('/api/library-sources/visuals', { brand, project_folder: project, ...values }, {timeoutMs:120000});
+    if (project !== S.projectFolder || brand !== S.activeBrand) return;
+    invalidatePlan();
+    await loadVisualFolders();
+    setStatus('info', 'Visual sources updated. The current script will refresh.');
+  } catch (e) { setStatus('error', e.message); }
+  finally { if (project === S.projectFolder && brand === S.activeBrand) { setBusy(false); render(); } }
+}
+
+async function scanVisualBins() {
+  const token = S.projectLoadToken;
+  setBusy(true, 'Reading Premiere bins...');
+  try {
+    const scan = await callExtendScript('scanProject', {});
+    if (token !== S.projectLoadToken) return;
+    if (!scan?.path || !scan?.bins) throw new Error('Open and save the Premiere project first.');
+    S.sourceScan = scan;
+  } catch (e) { setStatus('error', e.message); }
+  finally { setBusy(false); render(); }
 }
 
 async function addVisualFolder(folderPath) {
@@ -1714,6 +1750,23 @@ function render() {
           </div>
         </div>
 
+        <div style="padding:8px 0">
+          <strong>Visual sources for this project</strong>
+          <p>Link a folder or a Premiere bin. Only its video/image paths are added. No transcription starts.</p>
+          <input id="sc-basic-folder" class="sc-input" placeholder="Visuals folder path" aria-label="Visuals folder path">
+          <button id="sc-basic-add-folder" class="sc-btn-subtle" ${S.busy ? 'disabled' : ''}>Link folder</button>
+          <button id="sc-basic-scan" class="sc-btn-subtle" ${S.busy ? 'disabled' : ''}>Choose Premiere bin</button>
+          ${S.sourceScan ? `<p>From: ${escapeHtml(S.sourceScan.path)}</p><select id="sc-basic-bin" class="sc-compact-select">
+            ${S.sourceScan.bins.map(bin=>`<option value="${escapeHtml(bin.path)}">${escapeHtml(bin.path)}</option>`).join('')}</select>
+            <button id="sc-basic-add-bin" class="sc-btn-subtle" ${S.busy ? 'disabled' : ''}>Link bin and sub-bins</button>` : ''}
+          ${S.basicSources.filter(source=>!source.metadata.removed).map(source=>`<div style="padding:6px 0">
+            ${escapeHtml(source.metadata.name)} · ${source.paths?.length || 0} files · ${source.enabled ? 'Enabled' : 'Disabled'}
+            <button class="sc-btn-subtle" data-basic-id="${source.id}" data-basic-enabled="${!source.enabled}">${source.enabled ? 'Disable' : 'Enable'}</button>
+            <button class="sc-btn-subtle" data-basic-remove="${source.id}">Remove</button>
+            <details><summary>File paths</summary><pre style="max-height:150px;overflow:auto;white-space:pre-wrap;user-select:text">${escapeHtml((source.paths || []).join('\n'))}</pre></details>
+          </div>`).join('')}
+          <p>${S.basicSources.length ? 'The linked sources above control visual matching, including an empty selection when all are disabled.' : 'Your existing visual library is used until you link a source here.'}</p>
+        </div>
         ${S.isTranscribingVl ? `
           <div class="sc-drawer-row" style="background:rgba(20, 115, 230, 0.08); border:1px solid rgba(20, 115, 230, 0.25); border-radius:6px; padding:8px 12px; margin-bottom:8px;">
             <div style="display:flex; justify-content:space-between; align-items:center; width:100%; margin-bottom:4px;">
@@ -2116,6 +2169,14 @@ function attachEventHandlers(v) {
   }
 
   // Script Select
+  const basicFolder = v.querySelector('#sc-basic-add-folder');
+  if (basicFolder) basicFolder.onclick = () => saveBasicSource({ folder:v.querySelector('#sc-basic-folder').value });
+  const basicScan = v.querySelector('#sc-basic-scan');
+  if (basicScan) basicScan.onclick = scanVisualBins;
+  const basicBin = v.querySelector('#sc-basic-add-bin');
+  if (basicBin) basicBin.onclick = () => saveBasicSource({project_path:S.sourceScan.path,bin_path:v.querySelector('#sc-basic-bin').value,items:S.sourceScan.items});
+  v.querySelectorAll('[data-basic-id]').forEach(button=>button.onclick=()=>saveBasicSource({source_id:button.dataset.basicId,enabled:button.dataset.basicEnabled==='true'}));
+  v.querySelectorAll('[data-basic-remove]').forEach(button=>button.onclick=()=>saveBasicSource({source_id:button.dataset.basicRemove,enabled:false,removed:true}));
   const emptyProjects = v.querySelector('#sc-toggle-empty-projects');
   if (emptyProjects) emptyProjects.onclick = () => { S.showEmptyProjects = !S.showEmptyProjects; localStorage.setItem('editflow_show_empty_projects', String(S.showEmptyProjects)); render(); };
   const libraryButton = v.querySelector('#sc-btn-script-library');

@@ -174,6 +174,7 @@ class TimelineVisualService:
         sequence_width: Optional[int] = None,
         sequence_height: Optional[int] = None,
         fps: float = 30,
+        project_folder: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Full compilation:
@@ -200,6 +201,7 @@ class TimelineVisualService:
         # 3. Compute B-roll placements on target track (e.g. V2)
         placements, cuts = BrollPlacementEngine.place_broll_for_timeline_segments(
             segments=aligned_segments,
+            project_folder=project_folder,
             aspect_ratio=aspect_ratio,
             pacing_style=pacing_style,
             target_track=target_track,

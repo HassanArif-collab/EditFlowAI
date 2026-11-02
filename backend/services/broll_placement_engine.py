@@ -164,6 +164,7 @@ class BrollPlacementEngine:
         max_density: float = 0.85,
         allow_ai_generated: bool = False,
         brand: Optional[str] = None,
+        project_folder: Optional[str] = None,
     ) -> List[BrollPlacement]:
         """
         Generate high-density, concept-aware B-roll placements on Track V2 across assembled cuts.
@@ -177,7 +178,7 @@ class BrollPlacementEngine:
         config = PACING_PRESETS.get(pacing_key, PACING_PRESETS["editorial"])
 
         # Retrieve available visual library items
-        raw_candidates = visual_library_service.query_items(limit=5000, brand=brand)
+        raw_candidates = visual_library_service.query_items(limit=5000, brand=brand, project_folder=project_folder)
         if not raw_candidates:
             return placements
 
@@ -296,6 +297,7 @@ class BrollPlacementEngine:
         target_track: int = 1,
         brand: Optional[str] = None,
         allow_ai_generated: bool = False,
+        project_folder: Optional[str] = None,
     ) -> Tuple[List[BrollPlacement], List[AssembledCut]]:
         """
         Takes transcribed timeline segments (from an active Premiere Pro sequence)
@@ -333,6 +335,7 @@ class BrollPlacementEngine:
             aspect_ratio=aspect_ratio,
             pacing_style=pacing_style,
             brand=brand,
+            project_folder=project_folder,
             allow_ai_generated=allow_ai_generated,
         )
 

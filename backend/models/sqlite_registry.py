@@ -338,6 +338,54 @@ class SQLiteRegistry:
                 updated_at TEXT NOT NULL,
                 PRIMARY KEY (take_id, project_path)
             );
+
+            -- Source permissions and provenance. Existing transcript/visual caches
+            -- remain authoritative for their content; these tables store membership only.
+            CREATE TABLE IF NOT EXISTS library_policy_state (
+                singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+                generation INTEGER NOT NULL DEFAULT 0
+            );
+            INSERT OR IGNORE INTO library_policy_state(singleton, generation) VALUES(1, 0);
+            CREATE TABLE IF NOT EXISTS library_sources (
+                id TEXT PRIMARY KEY,
+                brand TEXT NOT NULL,
+                source_type TEXT NOT NULL CHECK(source_type IN ('folder', 'premiere_bin')),
+                locator TEXT NOT NULL,
+                role TEXT NOT NULL CHECK(role IN ('raw_dialogue', 'visuals', 'references')),
+                project_key TEXT NOT NULL DEFAULT '',
+                enabled INTEGER NOT NULL DEFAULT 1,
+                revision INTEGER NOT NULL DEFAULT 1,
+                metadata TEXT NOT NULL DEFAULT '{}'
+            );
+            CREATE TABLE IF NOT EXISTS library_media (
+                id TEXT PRIMARY KEY,
+                canonical_path TEXT NOT NULL,
+                file_key TEXT NOT NULL,
+                fingerprint TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS library_media_paths (
+                path TEXT PRIMARY KEY,
+                asset_id TEXT NOT NULL REFERENCES library_media(id) ON DELETE CASCADE,
+                file_key TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS library_media_file_key ON library_media(file_key);
+            CREATE TABLE IF NOT EXISTS library_memberships (
+                source_id TEXT NOT NULL REFERENCES library_sources(id) ON DELETE CASCADE,
+                asset_id TEXT NOT NULL REFERENCES library_media(id) ON DELETE CASCADE,
+                range_key TEXT NOT NULL DEFAULT '',
+                range_in REAL,
+                range_out REAL,
+                fingerprint TEXT NOT NULL,
+                provenance TEXT NOT NULL DEFAULT '{}',
+                PRIMARY KEY(source_id, asset_id, range_key)
+            );
+            CREATE TABLE IF NOT EXISTS library_exclusions (
+                brand TEXT NOT NULL,
+                project_key TEXT NOT NULL DEFAULT '',
+                asset_id TEXT NOT NULL REFERENCES library_media(id) ON DELETE CASCADE,
+                reason TEXT NOT NULL,
+                PRIMARY KEY(brand, project_key, asset_id)
+            );
             """
         )
         self._migrate_schema(conn)

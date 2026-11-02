@@ -73,6 +73,7 @@ projectScanner = (function() {
             }
 
             info.mediaPath = editflowUtils.getMediaPath(item);
+            info.isSubclip = typeof item.isSubClip === 'function' ? !!item.isSubClip() : false;
             info.hasVideo = !!editflowUtils.hasVideo(item);
             info.hasAudio = !!editflowUtils.hasAudio(item);
 

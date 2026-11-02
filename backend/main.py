@@ -15,6 +15,8 @@ from .routes import agent, captions, chat, edit, external_plan, media, media_res
 
 import os
 
+from .routes import source_policy_routes
+
 
 def _dev_watch_enabled() -> bool:
     """Panel live-reload watcher is opt-in: only EditFlowAI.bat sets it."""
@@ -156,6 +158,7 @@ app.include_router(whisper_admin.router, prefix="/api")
 app.include_router(media_resolver_routes.router, prefix="/api")
 app.include_router(script_assembly_routes.router, prefix="/api")
 app.include_router(visual_library_routes.router, prefix="/api")
+app.include_router(source_policy_routes.router, prefix="/api")
 app.include_router(timeline_visual_routes.router, prefix="/api")
 
 panel_dir = Path(__file__).parent.parent / "cep-panel" / "client"

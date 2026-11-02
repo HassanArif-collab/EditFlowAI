@@ -23,6 +23,7 @@ node_modules/
 # logs, runtime plan output, proof/diagnostic scripts. Never committed.
 data/
 logs/
+/temp/
 *.log
 *.sqlite3-shm
 *.sqlite3-wal
