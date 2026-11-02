@@ -163,6 +163,7 @@ class BrollPlacementEngine:
         pacing_style: str = "editorial",
         max_density: float = 0.85,
         allow_ai_generated: bool = False,
+        brand: Optional[str] = None,
     ) -> List[BrollPlacement]:
         """
         Generate high-density, concept-aware B-roll placements on Track V2 across assembled cuts.
@@ -176,7 +177,7 @@ class BrollPlacementEngine:
         config = PACING_PRESETS.get(pacing_key, PACING_PRESETS["editorial"])
 
         # Retrieve available visual library items
-        raw_candidates = visual_library_service.query_items(limit=300)
+        raw_candidates = visual_library_service.query_items(limit=5000, brand=brand)
         if not raw_candidates:
             return placements
 
@@ -185,24 +186,17 @@ class BrollPlacementEngine:
         eligible_items = [
             it for it in raw_candidates
             if it.get("category") in ("pure_broll", "demonstration_broll", "still_graphic")
-            and it.get("stem", "").lower() not in TALKING_HEAD_STEMS
-            and "video of problems" not in it.get("filename", "").lower()
             and it.get("category") != "talking_head"
             and not it.get("banned")
             and not (it.get("ai_generated") and not allow_ai_generated)
         ]
         if not eligible_items:
-            eligible_items = [
-                it for it in raw_candidates
-                if it.get("stem", "").lower() not in TALKING_HEAD_STEMS
-                and "video of problems" not in it.get("filename", "").lower()
-                and it.get("category") != "talking_head"
-            ]
+            return placements
 
         # Global sequence-wide state to guarantee zero repetition and variety
         used_stems_global: Set[str] = set()
         last_cluster: Optional[str] = None
-        recent_used_stems: Set[str] = cls._load_recent_usage()
+        recent_used_stems: Set[str] = cls._load_recent_usage(brand=brand)
         total_cuts = len(cuts)
 
         for cut_idx, cut in enumerate(cuts):
@@ -242,19 +236,9 @@ class BrollPlacementEngine:
                     if score > 0.0:
                         scored.append((score, it))
 
-                # Fallback: if pool exhausted, allow unused items from wider library
+                # Leave the speaker visible when the relevant, unused pool is exhausted.
                 if not scored:
-                    for it in eligible_items:
-                        if it["stem"] not in used_stems_global:
-                            fb_score = cls._score_candidate(
-                                it, tokens, cue_text, clause_text, concept, aspect_ratio,
-                                used_stems_global, last_cluster, recent_used_stems
-                            )
-                            scored.append((100.0 + fb_score, it))
-
-                # If still nothing (whole library used!), pick highest quality clip
-                if not scored:
-                    scored = [(it.get("quality_score", 0), it) for it in eligible_items]
+                    continue
 
                 scored.sort(key=lambda x: x[0], reverse=True)
                 best_score, best_item = scored[0]
@@ -270,9 +254,11 @@ class BrollPlacementEngine:
                 rec_out = float(best_item.get("recommended_out", min(rec_in + 4.0, item_dur)))
                 slot_dur = slot["duration"]
 
-                source_in = rec_in
-                source_out = min(item_dur, rec_in + slot_dur) if not is_still else 5.0
+                source_in = rec_in if not is_still else 0.0
+                source_out = min(item_dur, rec_out, rec_in + slot_dur) if not is_still else slot_dur
                 actual_dur = round(source_out - source_in, 2) if not is_still else slot_dur
+                if actual_dur <= 0:
+                    continue
 
                 broll = BrollPlacement(
                     source_file=best_item["path"],
@@ -280,7 +266,7 @@ class BrollPlacementEngine:
                     track=1,  # Track V2
                     cut_index=cut.cut_index,
                     timeline_start=slot["timeline_start"],
-                    timeline_end=slot["timeline_end"],
+                    timeline_end=round(slot["timeline_start"] + actual_dur, 4),
                     duration=actual_dur,
                     source_in=round(source_in, 2),
                     source_out=round(source_out, 2),
@@ -308,6 +294,8 @@ class BrollPlacementEngine:
         aspect_ratio: str = "9:16",
         pacing_style: str = "editorial",
         target_track: int = 1,
+        brand: Optional[str] = None,
+        allow_ai_generated: bool = False,
     ) -> Tuple[List[BrollPlacement], List[AssembledCut]]:
         """
         Takes transcribed timeline segments (from an active Premiere Pro sequence)
@@ -344,6 +332,8 @@ class BrollPlacementEngine:
             cuts=cuts,
             aspect_ratio=aspect_ratio,
             pacing_style=pacing_style,
+            brand=brand,
+            allow_ai_generated=allow_ai_generated,
         )
 
         if target_track != 1:
@@ -504,10 +494,14 @@ class BrollPlacementEngine:
         item_setting = (item.get("setting") or "").lower()
         item_desc = (item.get("description") or "").lower()
         item_text = f"{stem} {item.get('filename', '')} {item_desc} {' '.join(tags)}".lower()
+        if concept == "general" and not any(token in tags or token in item_text for token in tokens):
+            return -1000.0
 
         if concept != "general":
             concept_kw = CONCEPT_TAXONOMY[concept]["keywords"]
             overlap = len(tags.intersection(concept_kw))
+            if not overlap and concept not in item_concepts and not any(kw in item_text for kw in concept_kw):
+                return -1000.0
             if overlap > 0:
                 score += 3.5
             if any(kw in item_text for kw in concept_kw):
@@ -570,13 +564,17 @@ class BrollPlacementEngine:
         return score
 
     @classmethod
-    def _get_history_file(cls) -> Path:
+    def _get_history_file(cls, brand: Optional[str] = None) -> Path:
         data_dir = get_settings().DATA_DIR
+        if brand:
+            import hashlib
+            key = hashlib.sha256(brand.casefold().encode("utf-8")).hexdigest()[:16]
+            return data_dir / "visual_library" / "usage" / f"{key}.json"
         return data_dir / "visual_library" / "usage_history.json"
 
     @classmethod
-    def _load_recent_usage(cls, max_reels: int = 2) -> Set[str]:
-        hist_file = cls._get_history_file()
+    def _load_recent_usage(cls, max_reels: int = 2, brand: Optional[str] = None) -> Set[str]:
+        hist_file = cls._get_history_file(brand)
         if not hist_file.exists():
             return set()
         try:
@@ -590,10 +588,10 @@ class BrollPlacementEngine:
             return set()
 
     @classmethod
-    def _record_usage(cls, sequence_name: str, stems: List[str]):
+    def _record_usage(cls, sequence_name: str, stems: List[str], brand: Optional[str] = None):
         if not stems:
             return
-        hist_file = cls._get_history_file()
+        hist_file = cls._get_history_file(brand)
         try:
             hist_file.parent.mkdir(parents=True, exist_ok=True)
             data = {}
@@ -616,11 +614,7 @@ class BrollPlacementEngine:
         """Classify item into a visual camera cluster to prevent consecutive identical angles."""
         if item.get("file_type") == "image" or item.get("category") == "still_graphic":
             return "graphic"
-        stem = item.get("stem", "").upper()
-        m = re.search(r"C(\d{2})", stem)
-        if m:
-            return f"cam_{m.group(1)}"
-        return "video_general"
+        return ":".join(str(item.get(k) or "unknown") for k in ("setting", "shot_size", "camera_motion"))
 
 
 # Global singleton

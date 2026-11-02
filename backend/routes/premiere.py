@@ -385,6 +385,9 @@ _completed_rpc: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
 _queued_rpc: List[Dict[str, Any]] = []
 _MAX_RPC_HISTORY = 100
 _MAX_RPC_QUEUE = 50
+_rpc_targets: Dict[str, str] = {}
+_rpc_started: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
+_READ_ONLY_RPC = {"scanProject", "scanProjectMedia", "getProjectState", "getSequenceState", "getProjectDirectory", "get_ui_state"}
 
 
 class PremiereRPCRequest(BaseModel):
@@ -392,7 +395,9 @@ class PremiereRPCRequest(BaseModel):
     payload: Dict[str, Any] = Field(default_factory=dict)
     target: str = "extendscript"  # "extendscript" | "ui"
     timeout: float = 20.0
-    queue_if_offline: bool = True
+    queue_if_offline: bool = False
+    target_client_id: Optional[str] = None
+    request_id: Optional[str] = Field(None, max_length=128)
 
 
 class PremiereRPCResult(BaseModel):
@@ -430,7 +435,17 @@ async def reload_cep_panel():
 async def execute_premiere_rpc(req: PremiereRPCRequest):
     """Execute a live ExtendScript or UI command inside the Premiere Pro CEP panel."""
     global _project_context
-    req_id = f"rpc_{uuid.uuid4().hex[:12]}"
+    req_id = req.request_id or f"rpc_{uuid.uuid4().hex[:12]}"
+    fingerprint = json.dumps({"command": req.command, "target": req.target, "payload": req.payload, "client": req.target_client_id}, sort_keys=True)
+    if req_id in _rpc_started:
+        if _rpc_started[req_id]["fingerprint"] != fingerprint:
+            raise HTTPException(409, "This request_id was already used for a different command.")
+        completed = _completed_rpc.get(req_id)
+        if completed:
+            result = completed["result"]
+            return {"success": result.get("success", True) is not False, "live": True, "deduplicated": True, "request_id": req_id, "result": result}
+        return {"success": False, "request_id": req_id, "deduplicated": True,
+                "error": "This command was already dispatched. Read the timeline state before retrying with a new request ID."}
     rpc_msg = {
         "type": "premiere_rpc",
         "request_id": req_id,
@@ -440,13 +455,38 @@ async def execute_premiere_rpc(req: PremiereRPCRequest):
         "created_at": time.time(),
     }
 
-    has_clients = len(manager.active_connections) > 0
+    clients = [cid for cid in manager.active_connections if cid.startswith("cep-")]
+    if not clients and len(manager.active_connections) == 1:
+        clients = list(manager.active_connections)
+    client = req.target_client_id
+    if client and client not in manager.active_connections:
+        return {"success": False, "live": False, "error": "The requested CEP session is disconnected."}
+    if not client and len(clients) > 1:
+        return {"success": False, "live": False, "error": "Multiple CEP sessions are connected. Specify target_client_id from bridge-status."}
+    client = client or (clients[0] if clients else None)
+    has_clients = client is not None
     if has_clients:
+        if req.command == "processEDL":
+            from ..services.edl_policy import prepare_batch
+            from subprocess import SubprocessError
+            # Reserve before the worker yields, so simultaneous retries cannot
+            # dispatch the same batch twice during alpha validation.
+            _rpc_started[req_id] = {"fingerprint": fingerprint, "started_at": time.time()}
+            try:
+                rpc_msg["payload"] = await asyncio.to_thread(prepare_batch, req.payload)
+            except (ValueError, OSError, SubprocessError) as exc:
+                _rpc_started.pop(req_id, None)
+                return {"success": False, "error": str(exc), "request_id": req_id}
         loop = asyncio.get_running_loop()
         fut = loop.create_future()
         _pending_rpc[req_id] = fut
+        _rpc_targets[req_id] = client
+        _rpc_started[req_id] = {"fingerprint": fingerprint, "started_at": time.time()}
+        while len(_rpc_started) > _MAX_RPC_HISTORY:
+            old, _ = _rpc_started.popitem(last=False)
+            _rpc_targets.pop(old, None)
         try:
-            await manager.broadcast(rpc_msg)
+            await manager.send_to(client, rpc_msg)
             res = await asyncio.wait_for(fut, timeout=max(1.0, min(req.timeout, 120.0)))
             if isinstance(res, dict) and req.command in ("scanProject", "scanProjectMedia", "getProjectState") and res.get("success"):
                 _project_context = {
@@ -456,7 +496,7 @@ async def execute_premiere_rpc(req: PremiereRPCRequest):
                     "last_updated": time.time(),
                 }
             return {
-                "success": True,
+                "success": not (isinstance(res, dict) and (res.get("success") is False or res.get("failedCount", 0) > 0)),
                 "live": True,
                 "request_id": req_id,
                 "result": res,
@@ -464,6 +504,8 @@ async def execute_premiere_rpc(req: PremiereRPCRequest):
         except asyncio.TimeoutError:
             _pending_rpc.pop(req_id, None)
             logger.warning(f"Premiere RPC timed out after {req.timeout}s: {req.command}")
+            return {"success": False, "live": True, "request_id": req_id, "outcome_unknown": True,
+                    "error": "Premiere did not reply before the timeout. Read the sequence state before retrying; this command was not queued again."}
         except Exception as e:
             _pending_rpc.pop(req_id, None)
             logger.error(f"Premiere RPC error ({req.command}): {e}")
@@ -495,7 +537,7 @@ async def execute_premiere_rpc(req: PremiereRPCRequest):
             },
         }
 
-    if req.queue_if_offline:
+    if req.queue_if_offline and req.command in _READ_ONLY_RPC and not has_clients:
         if len(_queued_rpc) >= _MAX_RPC_QUEUE:
             _queued_rpc.pop(0)
         _queued_rpc.append(rpc_msg)
@@ -520,6 +562,9 @@ async def execute_premiere_rpc(req: PremiereRPCRequest):
 async def receive_premiere_rpc_result(res: PremiereRPCResult):
     """Receive the execution result of a Premiere RPC command from the CEP panel."""
     global _project_context
+    expected_client = _rpc_targets.get(res.request_id)
+    if expected_client and expected_client != res.client_id:
+        raise HTTPException(409, "This result came from a different CEP session.")
     fut = _pending_rpc.pop(res.request_id, None)
     if fut and not fut.done():
         fut.set_result(res.result)

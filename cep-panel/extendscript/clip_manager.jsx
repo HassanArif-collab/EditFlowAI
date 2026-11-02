@@ -290,8 +290,10 @@ clipManager = (function() {
         if (!seq) return { success: false, error: "No active sequence" };
         var mediaPath = editflowUtils.getParam(options, 'mediaPath', 'path');
         var startTime = editflowUtils.getParam(options, 'startTime', 'time') || 0;
-        var inPoint = editflowUtils.getParam(options, 'inPoint', 'in') || 0;
-        var outPoint = editflowUtils.getParam(options, 'outPoint', 'out') || 0;
+        var inPoint = editflowUtils.getParam(options, 'inPoint', 'in');
+        var outPoint = editflowUtils.getParam(options, 'outPoint', 'out');
+        if (inPoint === undefined || inPoint === null) { inPoint = options.in_point || 0; }
+        if (outPoint === undefined || outPoint === null) { outPoint = options.out_point || 0; }
 
         // Track indices for placement
         var videoTrackIndex = editflowUtils.getParam(options, 'video_track_index', 'videoTrackIndex');
@@ -545,21 +547,26 @@ clipManager = (function() {
 
             // ── FIX-C: Scale punch-in on same-clip splices ───────────────
             var scalePunchIn = editflowUtils.getParam(options, 'scale_punch_in', 'scale');
-            if (scalePunchIn && placedClip) {
-                var targetScale = parseFloat(scalePunchIn);
+            var fitScale = parseFloat(options.fit_scale || 0);
+            if ((fitScale > 0 || (scalePunchIn && !options.fit_mode)) && placedClip) {
+                var targetScale = fitScale > 0 ? fitScale * parseFloat(options.zoom || 1.0) : parseFloat(scalePunchIn);
                 if (targetScale > 0) {
-                    if (targetScale <= 2.5) { targetScale = targetScale * 100.0; }
+                    if (!(fitScale > 0) && targetScale <= 2.5) { targetScale = targetScale * 100.0; }
                     try {
                         var comp = placedClip.components;
                         if (comp) {
                             for (var ci = 0; ci < comp.numItems; ci++) {
-                                if (comp[ci].displayName === "Motion") {
+                                if (comp[ci].matchName === "AE.ADBE Motion" || comp[ci].displayName === "Motion") {
                                     var props = comp[ci].properties;
                                     for (var pi = 0; pi < props.numItems; pi++) {
                                         if (props[pi].displayName === "Scale") {
                                             props[pi].setValue(targetScale, true);
                                             diag.scale_applied = targetScale;
-                                            break;
+                                        }
+                                        if (props[pi].displayName === "Uniform Scale") { props[pi].setValue(true, true); }
+                                        if (props[pi].displayName === "Position" && options.position && options.position.length === 2) {
+                                            props[pi].setValue(options.position, true);
+                                            diag.position_applied = options.position;
                                         }
                                     }
                                     break;
@@ -578,6 +585,7 @@ clipManager = (function() {
             // ([-0:136] / [+0:136]), we cleanly unlink the placed video & audio clips
             // via seq.unlinkSelection() before shifting audio start and inPoint.
             var audioLeadFrames = editflowUtils.getParam(options, 'audio_lead_frames', 'audioLeadFrames') || 0;
+            if (options.preserve_linked_audio) { audioLeadFrames = 0; }
             if (audioLeadFrames > 0 && audioTrackIndex >= 0 && placedAudio && placedClip) {
                 try {
                     var seqFps = 30.0;
@@ -1141,6 +1149,13 @@ clipManager = (function() {
             }
         } catch (_) {}
 
+        if ((!qeSeq || typeof qeSeq.extract !== "function") && typeof seq.extract !== "function") {
+            return editflowUtils.safeStringify({ success: false, error: "Timeline extract is not available; no ranges were changed." });
+        }
+        var previousIn = null, previousOut = null;
+        try { previousIn = seq.getInPoint(); } catch (_) {}
+        try { previousOut = seq.getOutPoint(); } catch (_) {}
+
         var fps = 30;
         try {
             if (seq.timebase) {
@@ -1202,8 +1217,8 @@ clipManager = (function() {
         }
 
         // Clean up in/out markers so the user's timeline remains clean
-        try { if (seq.clearInPoint) seq.clearInPoint(); } catch (_) {}
-        try { if (seq.clearOutPoint) seq.clearOutPoint(); } catch (_) {}
+        try { if (previousIn != null && parseFloat(previousIn) >= 0) { seq.setInPoint(previousIn); } else if (seq.clearInPoint) { seq.clearInPoint(); } } catch (_) {}
+        try { if (previousOut != null && parseFloat(previousOut) >= 0) { seq.setOutPoint(previousOut); } else if (seq.clearOutPoint) { seq.clearOutPoint(); } } catch (_) {}
         try { if (qeSeq && qeSeq.clearInPoint) qeSeq.clearInPoint(); } catch (_) {}
         try { if (qeSeq && qeSeq.clearOutPoint) qeSeq.clearOutPoint(); } catch (_) {}
 
@@ -1254,7 +1269,7 @@ clipManager = (function() {
     }
 
     function ensureBin(options) {
-        var binName = editflowUtils.getParam(options, 'bin_name', 'name') || "EditFlow Output";
+        var binName = editflowUtils.getParam(options, 'bin_name', 'name') || options.bin_path || "EditFlow Output";
         var parentBin = editflowUtils.getParam(options, 'parent_bin', 'parentBin');
         if (parentBin) {
             binName = String(parentBin).replace(/\/+$/, "") + "/" + String(binName).replace(/^\/+/, "");
@@ -1308,16 +1323,15 @@ clipManager = (function() {
             try {
                 newSeq = app.project.createNewSequenceFromClips(name, [clipItem]);
                 if (newSeq) {
-                    try {
-                        if (newSeq.videoTracks && newSeq.videoTracks[0] && newSeq.videoTracks[0].clips && newSeq.videoTracks[0].clips.numItems > 0) {
-                            newSeq.videoTracks[0].clips[0].remove(false, false);
+                    var seedTracks = [newSeq.videoTracks, newSeq.audioTracks];
+                    for (var seedKind = 0; seedKind < seedTracks.length; seedKind++) {
+                        for (var seedTrack = 0; seedTrack < seedTracks[seedKind].numTracks; seedTrack++) {
+                            var seedClips = seedTracks[seedKind][seedTrack].clips;
+                            for (var seedClip = seedClips.numItems - 1; seedClip >= 0; seedClip--) {
+                                seedClips[seedClip].remove(false, false);
+                            }
                         }
-                    } catch (e1) {}
-                    try {
-                        if (newSeq.audioTracks && newSeq.audioTracks[0] && newSeq.audioTracks[0].clips && newSeq.audioTracks[0].clips.numItems > 0) {
-                            newSeq.audioTracks[0].clips[0].remove(false, false);
-                        }
-                    } catch (e2) {}
+                    }
                 }
             } catch (e) { newSeq = null; }
         }
@@ -1358,13 +1372,20 @@ clipManager = (function() {
                 if (seqSettings) {
                     seqSettings.videoFrameWidth = parseInt(targetWidth, 10);
                     seqSettings.videoFrameHeight = parseInt(targetHeight, 10);
+                    var frameDuration = new Time();
+                    frameDuration.ticks = String(Math.round(254016000000 / fps));
+                    seqSettings.videoFrameRate = frameDuration;
+                    seqSettings.videoPixelAspectRatio = "1:1";
                     newSeq.setSettings(seqSettings);
                 }
-            } catch (err) {}
+            } catch (err) {
+                try { newSeq.name = "[INCOMPLETE] " + name; } catch (_) {}
+                return { success: false, error: "Could not configure output sequence: " + err.toString() };
+            }
         }
 
         // Move sequence into target bin if requested (prevents root clutter)
-        var targetBinName = editflowUtils.getParam(options, 'bin_name', 'bin');
+        var targetBinName = editflowUtils.getParam(options, 'bin_name', 'bin') || options.bin_path;
         if (targetBinName && newSeq.projectItem && app.project && app.project.rootItem) {
             try {
                 var binRes = _resolveOrCreateBinPath(app.project.rootItem, targetBinName);
@@ -1455,11 +1476,19 @@ clipManager = (function() {
         var seq = app.project.activeSequence;
         var results = [];
         var undoGroupName = "EditFlow";
+        var createdOutput = false;
 
         try {
             // The panel sends { ops: [...] }, the old file format uses
             // { operations: [...] }.  Accept both keys.
             var operations = options.ops || options.operations || [];
+            var actualProject = String(app.project.path || "").replace(/\\/g, "/").toLowerCase();
+            if (options.expected_project_path && actualProject !== String(options.expected_project_path).replace(/\\/g, "/").toLowerCase()) {
+                return editflowUtils.safeStringify({ success: false, error: "The Premiere project changed after review. Recompile for the open project." });
+            }
+            if (options.expected_sequence_id && (!seq || seq.sequenceID !== options.expected_sequence_id)) {
+                return editflowUtils.safeStringify({ success: false, error: "The active sequence changed after review. Analyze this sequence again." });
+            }
 
             for (var i = 0; i < operations.length; i++) {
                 var op = operations[i];
@@ -1502,13 +1531,29 @@ clipManager = (function() {
                         result = createSequenceFromOps(op);
                         if (result && result.success && result.sequence) {
                             seq = result.sequence;
-                        } else {
-                            seq = app.project.activeSequence;
+                            createdOutput = true;
                         }
-                        if (!seq && app.project && app.project.sequences && app.project.sequences.numSequences > 0) {
-                            seq = app.project.sequences[app.project.sequences.numSequences - 1];
-                            try { app.project.openSequence(seq); } catch (e) {}
+                        break;
+
+                    case "clone_sequence":
+                        if (!seq || typeof seq.clone !== "function") {
+                            result = { success: false, error: "This Premiere version cannot duplicate the sequence. Create a review copy first." };
+                            break;
                         }
+                        var existingIds = {};
+                        for (var sq = 0; sq < app.project.sequences.numSequences; sq++) { existingIds[app.project.sequences[sq].sequenceID] = true; }
+                        seq.clone();
+                        var cloned = null;
+                        for (var sq2 = 0; sq2 < app.project.sequences.numSequences; sq2++) {
+                            if (!existingIds[app.project.sequences[sq2].sequenceID]) { cloned = app.project.sequences[sq2]; break; }
+                        }
+                        if (cloned) {
+                            seq = cloned;
+                            seq.name = op.name || (seq.name + " - Visuals review");
+                            app.project.openSequence(seq.sequenceID);
+                            createdOutput = true;
+                            result = { success: true, id: seq.sequenceID, name: seq.name };
+                        } else { result = { success: false, error: "Sequence duplication failed; no visuals were placed." }; }
                         break;
 
                     case "add_marker":
@@ -1561,14 +1606,14 @@ clipManager = (function() {
                 result.operation = i;
                 result.action = action;
                 results.push(result);
-            }
-
-            // If options specify a sequence name, rename the active sequence
-            if (options.sequence_name && seq && seq.name !== options.sequence_name) {
-                try { seq.name = options.sequence_name; } catch (e) {}
+                if (result.success === false) {
+                    if (createdOutput && seq) { try { seq.name = "[INCOMPLETE] " + seq.name; } catch (_) {} }
+                    break;
+                }
             }
 
         } catch (e) {
+            if (createdOutput && seq) { try { seq.name = "[INCOMPLETE] " + seq.name; } catch (_) {} }
             return editflowUtils.safeStringify({ success: false, error: e.toString(), results: results });
         }
 

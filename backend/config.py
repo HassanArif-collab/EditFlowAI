@@ -136,6 +136,7 @@ class Settings(BaseSettings):
     MEDIA_CACHE_DIR: Path = _PROJECT_ROOT / "data" / "media_cache"
     OUTPUT_DIR: Path = _PROJECT_ROOT / "data" / "output"
     DB_PATH: Path = _PROJECT_ROOT / "data" / "editflow_v2.sqlite3"
+    BRANDS_ROOT: Path = Path("D:/MARKETING")
 
     # ── FFmpeg ──
     # Resolved at startup by _resolve_ffmpeg_path(). If neither PATH nor a

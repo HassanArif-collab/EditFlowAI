@@ -114,7 +114,7 @@ export async function ensureFont(family, weight) {
  * Text measurer for the model, in OUTPUT pixels, using the exact font
  * string the renderer draws with.
  */
-export function makeMeasurer(style) {
+export function makeMeasurer(style, sampleText = '') {
   const ctx = document.createElement('canvas').getContext('2d');
   const size = style.fontSize || 80;
   const fam = String(style.fontFamily || 'Montserrat').replace(/"/g, '');
@@ -128,13 +128,13 @@ export function makeMeasurer(style) {
   };
   const mH = ctx.measureText('H');
   const mg = ctx.measureText('gjpqy');
-  const mUrdu = ctx.measureText('ٹآقےجالْحَمْدُ');
+  const isRtl = /urdu|nastaliq|arabic/i.test(fam) || /[\u0600-\u06ff\u0750-\u077f\u08a0-\u08ff]/.test(sampleText);
+  const mUrdu = isRtl ? ctx.measureText(sampleText || 'ٹآقےجالْحَمْدُ') : null;
   let capH = mH.actualBoundingBoxAscent > 0 ? mH.actualBoundingBoxAscent : size * 0.72;
   if (mUrdu && mUrdu.actualBoundingBoxAscent > capH) capH = mUrdu.actualBoundingBoxAscent;
   let desc = mg.actualBoundingBoxDescent > 0 ? mg.actualBoundingBoxDescent : size * 0.2;
   if (mUrdu && mUrdu.actualBoundingBoxDescent > desc) desc = mUrdu.actualBoundingBoxDescent;
 
-  const isRtl = /urdu|nastaliq|arabic/i.test(fam) || (mUrdu && mUrdu.actualBoundingBoxDescent > size * 0.25);
   if (isRtl) {
     if (capH < size * 0.96) capH = size * 0.96;
     if (desc < size * 0.52) desc = size * 0.52;

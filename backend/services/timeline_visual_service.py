@@ -80,8 +80,8 @@ class TimelineVisualService:
             txt = (s.text if hasattr(s, "text") else s.get("text", "")).strip()
             if not txt:
                 continue
-            seg_start = round(float(s.start if hasattr(s, "start") else s.get("start", 0.0)), 2)
-            seg_end = round(float(s.end if hasattr(s, "end") else s.get("end", seg_start + 1.0)), 2)
+            seg_start = float(s.start if hasattr(s, "start") else s.get("start", 0.0))
+            seg_end = float(s.end if hasattr(s, "end") else s.get("end", seg_start + 1.0))
             raw_words = s.words if hasattr(s, "words") else s.get("words", [])
             words_list = []
             for w in raw_words:
@@ -169,6 +169,11 @@ class TimelineVisualService:
         target_track: int = 1,
         language: str = "auto",
         force: bool = False,
+        brand: Optional[str] = None,
+        allow_ai_generated: bool = False,
+        sequence_width: Optional[int] = None,
+        sequence_height: Optional[int] = None,
+        fps: float = 30,
     ) -> Dict[str, Any]:
         """
         Full compilation:
@@ -198,6 +203,8 @@ class TimelineVisualService:
             aspect_ratio=aspect_ratio,
             pacing_style=pacing_style,
             target_track=target_track,
+            brand=brand,
+            allow_ai_generated=allow_ai_generated,
         )
 
         # 4. Generate EDL operations
@@ -205,6 +212,10 @@ class TimelineVisualService:
             placements=placements,
             target_track=target_track,
             sequence_name=sequence_name,
+            aspect_ratio=aspect_ratio,
+            sequence_width=sequence_width,
+            sequence_height=sequence_height,
+            fps=fps,
         )
 
         unique_files = list(set(p.source_file for p in placements))
@@ -236,6 +247,10 @@ class TimelineVisualService:
         placements: List[BrollPlacement],
         target_track: int = 1,
         sequence_name: str = "Active Sequence",
+        aspect_ratio: str = "9:16",
+        sequence_width: Optional[int] = None,
+        sequence_height: Optional[int] = None,
+        fps: float = 30,
     ) -> List[Dict[str, Any]]:
         """
         Generates single-undo EDL operations to place B-roll clips directly on the active sequence.
@@ -246,6 +261,7 @@ class TimelineVisualService:
             "action": "beginUndoGroup",
             "name": f"EditFlow: Place Visuals on V{target_track + 1}",
         })
+        ops.append({"action": "clone_sequence", "name": f"{sequence_name} - Visuals review"})
         ops.append({"action": "ensure_bin", "bin_name": "_EditFlow Raw"})
 
         # Import all unique visual media files
@@ -261,6 +277,19 @@ class TimelineVisualService:
         for p in placements:
             if not p.source_file:
                 continue
+            from .media_framing import framing_for_file
+            width, height = {"9:16": (1080, 1920), "16:9": (1920, 1080), "1:1": (1080, 1080), "4:5": (1080, 1350)}[aspect_ratio]
+            width, height = sequence_width or width, sequence_height or height
+            p.timeline_start = round(p.timeline_start * fps) / fps
+            p.duration = max(1, round(p.duration * fps)) / fps
+            p.timeline_end = p.timeline_start + p.duration
+            p.source_in = round(p.source_in * fps) / fps
+            p.source_out = p.source_in + p.duration
+            from .media_framing import bound_visual
+            bound_visual(p, fps)
+            if p.duration <= 0:
+                continue
+            p.framing = framing_for_file(p.source_file, width, height, "contain" if p.is_still else "fill")
             ops.append({
                 "action": "add",
                 "mediaPath": p.source_file,
@@ -268,7 +297,10 @@ class TimelineVisualService:
                 "inPoint": p.source_in,
                 "outPoint": p.source_out,
                 "video_track_index": target_track,
-                "audio_track_index": "auto",  # Routes to clean empty audio track (A3..A8); dialogue on A1/A2 is 100% protected
+                "audio_track_index": -1,
+                "fit_mode": "contain" if p.is_still else "fill",
+                "zoom": 1.0,
+                **p.framing,
                 "auto_detect_track": target_track == -1,
             })
 

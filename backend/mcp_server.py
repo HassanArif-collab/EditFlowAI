@@ -2,7 +2,7 @@
 EditFlow AI — Native Model Context Protocol (MCP) Server
 ========================================================
 Provides any MCP-capable AI agent (Antigravity, Claude, Cursor, Windsurf) with
-full, zero-error control over both EditFlow AI (Visual Library, Brand Folders,
+project-scoped control over both EditFlow AI (Visual Library, Brand Folders,
 Whisper Transcription, Story Cut Assembly, Captions 3.0) and Adobe Premiere Pro
 (Bins/Folders, Media Import, Multi-Track Timeline Editing, Markers, Effects).
 
@@ -16,11 +16,14 @@ Features:
   byte length so Premiere Pro and DAWs see true durations instead of 13.5 hours.
 - 1-Call Composition Builder (premiere_build_custom_sequence): Creates bin,
   generates voiceover, imports all media, creates sequence, places multi-track
-  beats with exact timing, and sets markers in a single atomic round-trip.
+  beats with validated timing, and stops the native batch at its first failure.
 """
 from __future__ import annotations
 
 import json
+import importlib.util
+import re
+import math
 import os
 import struct
 import subprocess
@@ -210,6 +213,7 @@ def _call_premiere_rpc(
     payload: Optional[Dict[str, Any]] = None,
     target: str = "extendscript",
     timeout: float = 30.0,
+    queue_if_offline: bool = False,
 ) -> Dict[str, Any]:
     """Dispatch a live command to Adobe Premiere Pro via the EditFlow WebSocket bridge."""
     body = {
@@ -217,8 +221,33 @@ def _call_premiere_rpc(
         "payload": payload or {},
         "target": target,
         "timeout": timeout,
+        "queue_if_offline": queue_if_offline,
     }
     return _http_request("POST", "/api/premiere/rpc", body=body, timeout=timeout + 5.0)
+
+
+def _rpc_value(response: Dict[str, Any]) -> Dict[str, Any]:
+    value = response.get("result", {})
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            value = {"success": False, "error": value}
+    if not response.get("success"):
+        return {"success": False, "error": response.get("error") or (value.get("error") if isinstance(value, dict) else None) or "Premiere command failed."}
+    return value if isinstance(value, dict) else {"success": False, "error": "Unexpected Premiere response."}
+
+
+def _project_binding(folder: Optional[str]) -> Dict[str, Any]:
+    project = _rpc_value(_call_premiere_rpc("getProjectDirectory", {}, queue_if_offline=False))
+    if not project.get("success") or not project.get("projectPath"):
+        return {"success": False, "error": project.get("error") or "Save and open the intended Premiere project before building."}
+    context = _http_request("GET", "/api/script-assembly/project-context?" + urllib.parse.urlencode({"project_folder": folder or project["projectDirectory"]}))
+    if not context.get("success"):
+        return context
+    if not Path(project["projectPath"]).resolve().is_relative_to(Path(context["project_folder"]).resolve()):
+        return {"success": False, "error": "The open Premiere project differs from the reviewed production project."}
+    return {**context, "premiere_project_path": project["projectPath"]}
 
 
 # ── MCP Tool Definitions ──────────────────────────────────────────────────────
@@ -359,9 +388,8 @@ TOOLS = [
     {
         "name": "editflow_generate_voiceover",
         "description": (
-            "Generates speech/voiceover via Cartesia Sonic 3.6 using mandatory defaults (Hafiz Abdullah, "
-            "speed=1.2, volume=1.5, emotion=content, Islamic terms pronunciation dictionary), automatically "
-            "repairs the WAV header so Premiere Pro sees exact duration, and saves directly to disk."
+            "Generates narration using the selected project's brand voice or an explicit Cartesia voice. "
+            "Reuses the existing dynamic voice controller for names, repairs WAV headers and saves into the project."
         ),
         "inputSchema": {
             "type": "object",
@@ -370,13 +398,14 @@ TOOLS = [
                     "type": "string",
                     "description": "The exact script / narrative text to synthesize.",
                 },
+                "project_folder": {"type": "string", "description": "Dated production project; scopes the voice profile and output."},
                 "output_path": {
                     "type": "string",
                     "description": "Absolute output path for the .wav file (defaults to EditFlow scratch/output).",
                 },
                 "speaker": {
                     "type": "string",
-                    "description": "Speaker name or voice ID (defaults to 'Hafiz Abdullah(Raaf)').",
+                    "description": "Speaker name or voice UUID; otherwise use this brand/project profile.",
                 },
                 "speed": {
                     "type": "number",
@@ -391,7 +420,7 @@ TOOLS = [
                     "description": "Emotion tag (default: 'content').",
                 },
             },
-            "required": ["text"],
+            "required": ["text", "project_folder"],
         },
     },
     {
@@ -407,6 +436,19 @@ TOOLS = [
                     "type": "string",
                     "description": "Full voiceover or dialogue script text with optional [visual: ...] tags.",
                 },
+                "script_path": {
+                    "type": "string",
+                    "description": "Markdown file in the selected dated project's Scripts folder.",
+                },
+                "project_folder": {
+                    "type": "string",
+                    "description": "Dated project folder; keeps script selection scoped to the intended edit.",
+                },
+                "preview_only": {
+                    "type": "boolean",
+                    "description": "Compile and return the plan for review without changing Premiere (default false).",
+                },
+                "variant_id": {"type": "string", "description": "Script version from the compiled variants list; default primary."},
                 "sequence_name": {
                     "type": "string",
                     "description": "Target sequence name in Adobe Premiere Pro.",
@@ -417,7 +459,49 @@ TOOLS = [
                     "description": "Sequence aspect ratio (default: '9:16').",
                 },
             },
-            "required": ["script_text"],
+            "anyOf": [{"required": ["script_text"]}, {"required": ["script_path"]}],
+        },
+    },
+    {
+        "name": "editflow_list_projects",
+        "description": "List a brand's dated projects and their project-local Scripts folders.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"brand": {"type": "string"}},
+            "required": ["brand"],
+        },
+    },
+    {
+        "name": "editflow_project_context",
+        "description": "Read the dated project's existing media, transcript paths, and verified visuals for external script/storyboard authoring.",
+        "inputSchema": {"type": "object", "properties": {"project_folder": {"type": "string"}}, "required": ["project_folder"]},
+    },
+    {
+        "name": "editflow_script_catalog",
+        "description": "Search same-brand previous and project scripts for reference; never reassigns or assembles them.",
+        "inputSchema": {"type": "object", "properties": {"brand": {"type": "string"}, "query": {"type": "string"}}, "required": ["brand"]},
+    },
+    {
+        "name": "editflow_read_script_reference",
+        "description": "Read the current original script from a brand's catalog for style/reference. Verify dialogue against original transcripts.",
+        "inputSchema": {"type": "object", "properties": {"brand": {"type": "string"}, "path": {"type": "string"}}, "required": ["brand", "path"]},
+    },
+    {
+        "name": "editflow_list_project_scripts",
+        "description": "List only the selected project's scripts and return the folder where new scripts belong.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"project_folder": {"type": "string"}},
+            "required": ["project_folder"],
+        },
+    },
+    {
+        "name": "editflow_prepare_project_scripts",
+        "description": "Create a Scripts folder inside an existing dated project and return its canonical path.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"project_folder": {"type": "string"}},
+            "required": ["project_folder"],
         },
     },
     {
@@ -573,7 +657,7 @@ TOOLS = [
                 },
                 "audio_track_index": {
                     "type": "integer",
-                    "description": "0-based audio track (0=A1 Voiceover, -1=Silent B-roll, 1=A2, 2=A3).",
+                    "description": "0-based audio track (0=A1 linked camera dialogue, 1=A2 generated narration, -1=silent B-roll, 2=A3).",
                 },
                 "scale": {
                     "type": "number",
@@ -612,7 +696,7 @@ TOOLS = [
                 },
                 "voiceover_text": {
                     "type": "string",
-                    "description": "Script text to synthesize via Cartesia Sonic 3.6 and place on Track A1.",
+                    "description": "Script text to synthesize via Cartesia Sonic 3.6 and place on Track A2.",
                 },
                 "voiceover_path": {
                     "type": "string",
@@ -711,7 +795,7 @@ TOOLS = [
     },
     {
         "name": "premiere_execute_edl",
-        "description": "Executes a batch of EDL operations atomically in Premiere Pro.",
+        "description": "Executes one native EDL batch in Premiere Pro, enforcing camera audio links and transparent-card safe zones; stops on failure without transactional rollback.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -736,6 +820,16 @@ TOOLS = [
 ]
 
 
+# Supplemental optional fields shared by direct agent adapters.
+for _tool in TOOLS:
+    _props = _tool["inputSchema"]["properties"]
+    if _tool["name"] == "premiere_build_custom_sequence":
+        _props.update(project_folder={"type":"string","description":"Dated project; otherwise infer it from the saved Premiere project."},
+                      fps={"type":"number","description":"Output frame rate; default 30."})
+    if _tool["name"] == "premiere_add_clip_to_timeline":
+        _props.update(fit_mode={"type":"string","enum":["fill","contain"]}, zoom={"type":"number","description":"Zoom relative to proportional fit; default 1."})
+
+
 # ── Tool Execution Dispatcher ─────────────────────────────────────────────────
 
 def execute_tool(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -748,19 +842,9 @@ def execute_tool(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
         bridge = _http_request("GET", "/api/premiere/bridge-status")
         brands = _http_request("GET", "/api/visual-library/brands")
         vl_status = _http_request("GET", "/api/visual-library/status")
-        _http_request(
-            "POST",
-            "/api/agent/turn",
-            body={
-                "session_id": AGENT_SESSION_ID,
-                "client_id": AGENT_CLIENT_ID,
-                "event": "init",
-                "payload": {},
-            },
-        )
         return {
             "success": True,
-            "signed_in": True,
+            "controller_ready": bool(bridge.get("cep_panel_connected")),
             "session_id": AGENT_SESSION_ID,
             "client_id": AGENT_CLIENT_ID,
             "backend": boot,
@@ -815,9 +899,9 @@ def execute_tool(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
         top_k = int(args.get("top_k") or 5)
         if query:
             # Pass cue=query to match-cut (NOT text=query which causes HTTP 422)
-            params = urllib.parse.urlencode({"cue": query, "aspect_ratio": "9:16", "limit": top_k})
+            params = urllib.parse.urlencode({"cue": query, "aspect_ratio": "9:16", "limit": top_k, "brand": brand})
             match_res = _http_request("GET", f"/api/visual-library/match-cut?{params}")
-            items_res = _http_request("GET", f"/api/visual-library/items?query={urllib.parse.quote(query)}&limit=25")
+            items_res = _http_request("GET", "/api/visual-library/items?" + urllib.parse.urlencode({"query": query, "brand": brand, "limit": 25}))
             items = items_res.get("items", [])
             return {
                 "success": True,
@@ -828,27 +912,50 @@ def execute_tool(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
                 "total_matches": len(items),
             }
         else:
-            return _http_request("GET", f"/api/visual-library/items?limit=25")
+            return _http_request("GET", "/api/visual-library/items?" + urllib.parse.urlencode({"brand": brand, "limit": 25}))
 
     elif name == "editflow_generate_voiceover":
         text = (args.get("text") or "").strip()
         if not text:
             return {"success": False, "error": "No script text provided"}
+        if not args.get("project_folder"):
+            return {"success": False, "error": "project_folder is required so narration uses the correct brand and output folder."}
+        context = _http_request("GET", "/api/script-assembly/project-context?" + urllib.parse.urlencode({"project_folder": args["project_folder"]}))
+        if not context.get("success"):
+            return context
+        defaults = context.get("voice", {})
+        speaker_id = args.get("speaker") or defaults.get("speaker")
+        if not speaker_id:
+            return {"success": False, "error": "Choose a Cartesia voice for this brand or set voice.speaker in its brand.editflow.json profile."}
         api_key = get_cartesia_api_key()
         if not api_key:
             return {"success": False, "error": "CARTESIA_API_KEY not found in environment or registry"}
 
-        speaker_id = args.get("speaker") or DEFAULT_CARTESIA_SPEAKER_ID
-        if speaker_id == "hafiz_abdullah" or "hafiz" in speaker_id.lower():
-            speaker_id = DEFAULT_CARTESIA_SPEAKER_ID
+        if not re.fullmatch(r"[0-9a-fA-F-]{36}", speaker_id):
+            # Reuse the already-working dynamic voice controller for named voices.
+            controller = Path(os.environ.get("EDITFLOW_CARTESIA_CONTROLLER", str(Path.home() / ".config/opencode/skills/cartesia-voice-workflow/scripts/voice_studio.py")))
+            if not controller.is_file():
+                return {"success": False, "error": "Use a voice UUID or configure EDITFLOW_CARTESIA_CONTROLLER for named voice resolution."}
+            try:
+                spec = importlib.util.spec_from_file_location("editflow_voice_controller", controller)
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                env = module.load_env()
+                env["CARTESIA_API_KEY"] = api_key
+                speaker_id, _ = module.resolve_voice_id(env, speaker_id)
+            except Exception as exc:
+                return {"success": False, "error": f"Voice resolution failed: {exc}"}
+            if not re.fullmatch(r"[0-9a-fA-F-]{36}", speaker_id):
+                return {"success": False, "error": "The named voice did not resolve to a Cartesia voice UUID."}
 
-        speed = float(args.get("speed") or 1.2)
-        volume = float(args.get("volume") or 1.5)
-        emotion = args.get("emotion") or "content"
-        dict_id = args.get("dict_id") or DEFAULT_CARTESIA_DICT_ID
+        speed = float(args.get("speed") or defaults.get("speed") or 1.2)
+        volume = float(args.get("volume") or defaults.get("volume") or 1.5)
+        emotion = args.get("emotion") or defaults.get("emotion") or "content"
+        dict_id = args.get("dict_id") or defaults.get("dict_id")
+        model_id = defaults.get("model") or DEFAULT_CARTESIA_MODEL
 
         payload = {
-            "model_id": DEFAULT_CARTESIA_MODEL,
+            "model_id": model_id,
             "transcript": text,
             "voice": {"mode": "id", "id": speaker_id},
             "output_format": {
@@ -863,6 +970,8 @@ def execute_tool(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
             },
             "pronunciation_dict_id": dict_id,
         }
+        if not dict_id:
+            payload.pop("pronunciation_dict_id", None)
 
         req = urllib.request.Request(
             "https://api.cartesia.ai/tts/bytes",
@@ -877,11 +986,15 @@ def execute_tool(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
 
         out_str = args.get("output_path")
         if not out_str:
-            out_dir = REPO_ROOT / "backend" / "data" / "voiceovers"
+            out_dir = Path(context["paths"]["voice"])
             out_dir.mkdir(parents=True, exist_ok=True)
             out_str = str(out_dir / f"voiceover_{int(time.time())}.wav")
 
         out_path = Path(out_str)
+        if not out_path.resolve().is_relative_to(Path(context["project_folder"]).resolve()):
+            return {"success": False, "error": "Save narration inside the selected project."}
+        if out_path.exists():
+            return {"success": False, "error": "This narration file already exists. Reuse it or choose a new filename."}
         out_path.parent.mkdir(parents=True, exist_ok=True)
 
         try:
@@ -900,40 +1013,82 @@ def execute_tool(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
             "file_path": str(out_path),
             "duration_seconds": exact_dur,
             "speaker_id": speaker_id,
-            "model": DEFAULT_CARTESIA_MODEL,
+            "model": model_id,
         }
 
+    elif name == "editflow_list_projects":
+        query = urllib.parse.urlencode({"brand": args.get("brand", "")})
+        return _http_request("GET", f"/api/script-assembly/projects?{query}")
+
+    elif name == "editflow_project_context":
+        query = urllib.parse.urlencode({"project_folder": args.get("project_folder", "")})
+        return _http_request("GET", f"/api/script-assembly/authoring-context?{query}", timeout=120)
+
+    elif name in ("editflow_script_catalog", "editflow_read_script_reference"):
+        reference = name == "editflow_read_script_reference"
+        query = urllib.parse.urlencode({"brand": args.get("brand", ""),
+            **({"path": args.get("path", "")} if reference else {"query": args.get("query", "")})})
+        endpoint = "script-reference" if reference else "script-catalog"
+        return _http_request("GET", f"/api/script-assembly/{endpoint}?{query}")
+
+    elif name == "editflow_list_project_scripts":
+        query = urllib.parse.urlencode({"folder_path": args.get("project_folder", "")})
+        return _http_request("GET", f"/api/script-assembly/scripts?{query}")
+
+    elif name == "editflow_prepare_project_scripts":
+        return _http_request("POST", "/api/script-assembly/scripts-folder",
+                             body={"project_folder": args.get("project_folder", "")})
+
     elif name == "editflow_assemble_story_cut":
-        script_text = args.get("script_text", "")
+        if not args.get("project_folder") and not args.get("script_path"):
+            return {"success": False, "error": "Select project_folder before compiling script text."}
         seq_name = args.get("sequence_name") or "EditFlow Story Cut"
         aspect = args.get("aspect_ratio") or "9:16"
+        body = {"title": seq_name, "aspect_ratio": aspect}
+        if args.get("script_path"):
+            body["script_path"] = args["script_path"]
+        else:
+            body["script_content"] = args.get("script_text", "")
+        if args.get("project_folder"):
+            body["project_folder"] = args["project_folder"]
+        if args.get("variant_id"):
+            body["variant_id"] = args["variant_id"]
         compile_res = _http_request(
             "POST",
             "/api/script-assembly/compile",
-            body={"script_text": script_text, "client_id": AGENT_CLIENT_ID},
+            body=body,
             timeout=120.0,
         )
-        if not compile_res.get("beats") and not compile_res.get("success"):
+        if not compile_res.get("success"):
             return compile_res
-        beats = compile_res.get("beats", [])
-        assemble_res = _http_request(
-            "POST",
-            "/api/script-assembly/assemble",
-            body={"sequence_name": seq_name, "aspect_ratio": aspect, "beats": beats},
-            timeout=60.0,
-        )
-        edl_ops = assemble_res.get("ops") or assemble_res.get("operations")
-        edl_path = assemble_res.get("edl_path")
-        premiere_exec = None
-        if edl_ops:
-            premiere_exec = _call_premiere_rpc("processEDL", {"sequence_name": seq_name, "ops": edl_ops})
-        elif edl_path:
-            premiere_exec = _call_premiere_rpc("callModule", {"module": "clipManager", "fn": "processEDL", "edlJsonPath": edl_path})
+        edl_ops = compile_res.get("edl_ops", [])
+        if args.get("preview_only"):
+            return {"success": True, "status": "compiled" if edl_ops else "needs_sources", "assembly": compile_res, "premiere_execution": None}
+        if not edl_ops:
+            return {"success": False, "error": "Resolve the plan's validation errors before assembly.", "assembly": compile_res}
+        binding = _project_binding(args.get("project_folder") or compile_res.get("plan", {}).get("project_folder"))
+        if not binding.get("success"):
+            return binding
+        for op in edl_ops:
+            if op.get("action") == "create_sequence":
+                op["name"] = seq_name
+        premiere_exec = _call_premiere_rpc("processEDL", {"sequence_name": seq_name, "ops": edl_ops, "expected_project_path": binding["premiere_project_path"]}, queue_if_offline=False, timeout=120)
+        inner = premiere_exec.get("result") or {}
+        if isinstance(inner, str):
+            try:
+                inner = json.loads(inner)
+            except (ValueError, TypeError):
+                inner = {"success": False, "error": inner}
+        completed = (bool(premiere_exec.get("success")) and not premiere_exec.get("queued")
+                     and isinstance(inner, dict) and inner.get("success") is True
+                     and not inner.get("failedCount"))
         return {
-            "success": True,
-            "compiled_beats": len(beats),
-            "assembly": assemble_res,
+            "success": completed,
+            "status": "completed" if completed else ("queued" if premiere_exec.get("queued") else "failed"),
+            "compiled_beats": len(compile_res.get("plan", {}).get("cuts", [])),
+            "assembly": compile_res,
             "premiere_execution": premiere_exec,
+            "error": None if completed else (inner.get("error") if isinstance(inner, dict) else None) or premiere_exec.get("error") or "Premiere has not completed the edit.",
         }
 
     elif name == "premiere_scan_project":
@@ -994,7 +1149,12 @@ def execute_tool(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
         payload = {"name": name_seq, "aspect_ratio": aspect}
         if bin_name:
             payload["bin_name"] = bin_name
-        return _call_premiere_rpc("createSequence", payload)
+        create_res = _call_premiere_rpc("createSequence", payload)
+        try:
+            _call_premiere_rpc("openSequence", {"name": name_seq})
+        except Exception:
+            pass
+        return create_res
 
     elif name == "premiere_open_sequence":
         name_seq = args.get("sequence_name") or args.get("name")
@@ -1043,133 +1203,91 @@ def execute_tool(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
             payload["scale"] = float(args["scale"])
         if "j_cut_frames" in args and args["j_cut_frames"] is not None:
             payload["j_cut_frames"] = int(args["j_cut_frames"])
-        return _call_premiere_rpc("insertClipAtTime", payload)
+        sequence = _rpc_value(_call_premiere_rpc("getSequenceState", {}, queue_if_offline=False))
+        if not sequence.get("success"):
+            return sequence
+        payload["expected_sequence_id"] = sequence.get("id")
+        if args.get("scale") is None and payload.get("video_track_index", 0) >= 0:
+            path = Path(payload["mediaPath"])
+            geometry = _http_request("POST", "/api/script-assembly/framing", body={"source_file":str(path),
+                "width":sequence.get("width") or 1080, "height":sequence.get("height") or 1920,
+                "fit_mode":args.get("fit_mode") or ("contain" if path.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp", ".tiff") else "fill"),
+                "zoom":args.get("zoom") or 1})
+            if not geometry.get("success"):
+                return geometry
+            payload.update(geometry.get("framing", {}))
+        return _call_premiere_rpc("insertClipAtTime", payload, queue_if_offline=False)
 
     elif name == "premiere_build_custom_sequence":
+        context = _project_binding(args.get("project_folder"))
+        if not context.get("success"):
+            return context
         seq_name = args.get("sequence_name") or "EditFlow Story Cut"
         bin_name = args.get("bin_name") or "EditFlow Output"
         aspect = args.get("aspect_ratio") or "9:16"
-        video_clips = args.get("video_clips") or []
-        audio_clips = args.get("audio_clips") or []
-        markers = args.get("markers") or []
-        switch_view = args.get("switch_view", "storyCut")
-
-        # 1. Create target bin
-        _call_premiere_rpc("createBin", {"bin_name": bin_name})
-
-        # 2. Handle voiceover generation if requested
-        vo_res = None
+        width, height = {"9:16":(1080,1920), "16:9":(1920,1080), "1:1":(1080,1080), "4:5":(1080,1350)}[aspect]
+        video_clips = list(args.get("video_clips") or [])
+        audio_clips = list(args.get("audio_clips") or [])
+        voice = None
         vo_path = args.get("voiceover_path")
-        vo_text = args.get("voiceover_text")
-        if vo_text and not vo_path:
-            # Determine directory from first video clip
-            first_dir = None
-            if video_clips and video_clips[0].get("media_path"):
-                first_dir = Path(video_clips[0]["media_path"]).parent
-            target_vo = str((first_dir or REPO_ROOT / "backend" / "data" / "voiceovers") / f"{seq_name.replace(' ', '_')}_VO.wav")
-            vo_res = execute_tool("editflow_generate_voiceover", {"text": vo_text, "output_path": target_vo})
-            if vo_res.get("success"):
-                vo_path = vo_res.get("file_path")
-
-        # 3. Collect and import all media
-        import_paths: List[str] = []
-        if vo_path and Path(vo_path).is_file():
-            sanitize_wav_header(vo_path)
-            import_paths.append(str(Path(vo_path).resolve()))
-
-        for vc in video_clips:
-            vp = vc.get("media_path")
-            if vp and Path(vp).exists() and str(Path(vp).resolve()) not in import_paths:
-                if str(vp).lower().endswith(".wav"):
-                    sanitize_wav_header(vp)
-                import_paths.append(str(Path(vp).resolve()))
-
-        for ac in audio_clips:
-            ap = ac.get("media_path")
-            if ap and Path(ap).exists() and str(Path(ap).resolve()) not in import_paths:
-                if str(ap).lower().endswith(".wav"):
-                    sanitize_wav_header(ap)
-                import_paths.append(str(Path(ap).resolve()))
-
-        if import_paths:
-            _call_premiere_rpc("importFiles", {"paths": import_paths, "bin_name": bin_name})
-
-        # 4. Create sequence and focus it
-        seq_res = _call_premiere_rpc("createSequence", {"name": seq_name, "aspect_ratio": aspect, "bin_name": bin_name})
-
-        # 5. Place voiceover on Track A1
-        if vo_path and Path(vo_path).is_file():
-            vo_dur = vo_res.get("duration_seconds") if vo_res else sanitize_wav_header(vo_path)
-            _call_premiere_rpc(
-                "insertClipAtTime",
-                {
-                    "mediaPath": vo_path,
-                    "startTime": 0.0,
-                    "duration": vo_dur,
-                    "video_track_index": -1,
-                    "audio_track_index": 0,
-                },
-            )
-
-        # 6. Place video clips
-        placed_count = 0
-        for vc in video_clips:
-            c_payload = {
-                "mediaPath": vc.get("media_path"),
-                "startTime": float(vc.get("start_time", 0.0)),
-                "inPoint": float(vc.get("in_point", 0.0)),
-                "outPoint": float(vc.get("out_point", 0.0)),
-                "video_track_index": int(vc.get("video_track_index", 0)),
-                "audio_track_index": int(vc.get("audio_track_index", -1)),
-                "scale": float(vc.get("scale", 108.0)),
-            }
-            if "duration" in vc and vc["duration"] is not None:
-                c_payload["duration"] = float(vc["duration"])
-            p_res = _call_premiere_rpc("insertClipAtTime", c_payload)
-            if p_res.get("success"):
-                placed_count += 1
-
-        # 7. Place extra audio clips
-        for ac in audio_clips:
-            a_payload = {
-                "mediaPath": ac.get("media_path"),
-                "startTime": float(ac.get("start_time", 0.0)),
-                "audio_track_index": int(ac.get("audio_track_index", 1)),
-                "video_track_index": -1,
-            }
-            if "duration" in ac and ac["duration"] is not None:
-                a_payload["duration"] = float(ac["duration"])
-            _call_premiere_rpc("insertClipAtTime", a_payload)
-
-        # 8. Add markers
-        if markers:
-            _call_premiere_rpc("setChapterMarkers", {"chapters": markers})
-
-        # 9. Switch UI view
-        if switch_view:
-            _call_premiere_rpc("switch_view", {"view": switch_view}, target="ui")
-
-        # 10. Compute total duration
-        max_time = 0.0
-        for vc in video_clips:
-            end_t = float(vc.get("start_time", 0.0)) + float(vc.get("duration") or (float(vc.get("out_point", 0.0)) - float(vc.get("in_point", 0.0))) or 5.0)
-            if end_t > max_time:
-                max_time = end_t
-
-        return {
-            "success": True,
-            "sequence_name": seq_name,
-            "bin": bin_name,
-            "aspect_ratio": aspect,
-            "video_clips_placed": placed_count,
-            "voiceover": {
-                "generated": bool(vo_res and vo_res.get("success")),
-                "path": vo_path,
-                "duration_seconds": vo_res.get("duration_seconds") if vo_res else None,
-            },
-            "total_duration_seconds": round(max_time, 2),
-            "ui_view": switch_view,
-        }
+        if args.get("voiceover_text") and not vo_path:
+            voice = execute_tool("editflow_generate_voiceover", {"text":args["voiceover_text"], "project_folder":context["project_folder"],
+                "speaker":args.get("speaker"), "output_path":str(Path(context["paths"]["voice"]) / f"{re.sub(r'[^a-zA-Z0-9_-]', '_', seq_name)}_VO.wav")})
+            if not voice.get("success"):
+                return voice
+            vo_path = voice["file_path"]
+        if vo_path:
+            audio_clips.insert(0, {"media_path":vo_path, "start_time":0, "audio_track_index":1})
+        clips = [(clip, False) for clip in video_clips] + [(clip, True) for clip in audio_clips]
+        if not clips:
+            return {"success":False, "error":"Provide linked media clips before building a sequence."}
+        imports = []
+        additions = []
+        duration = 0.0
+        for clip, audio_only in clips:
+            path = Path(clip.get("media_path") or "")
+            if not path.is_file() or not path.resolve().is_relative_to(Path(context["paths"]["brand_media"]).resolve()):
+                return {"success":False, "error":f"Missing media or media outside the selected brand: {path}"}
+            path = path.resolve()
+            is_image = path.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp", ".tiff", ".bmp")
+            geometry = _http_request("POST", "/api/script-assembly/framing", body={"source_file":str(path), "width":width, "height":height,
+                "fit_mode":clip.get("fit_mode") or ("contain" if is_image else "fill"), "zoom":clip.get("zoom") or 1.0})
+            if not geometry.get("success"):
+                return geometry
+            source_in = float(clip.get("in_point") or 0)
+            source_out = float(clip.get("out_point") or 0)
+            start_time = float(clip.get("start_time") or 0)
+            source_duration = float(geometry.get("source", {}).get("duration") or 0)
+            if source_out <= source_in:
+                source_out = source_in + float(clip.get("duration") or (5 if is_image else source_duration - source_in))
+            if not all(math.isfinite(v) for v in (start_time, source_in, source_out)) or start_time < 0 or source_in < 0 or source_out <= source_in or (not is_image and source_duration > 0 and source_out > source_duration + 0.04):
+                return {"success":False, "error":f"Invalid timeline/source range for {path.name}."}
+            if str(path) not in imports:
+                imports.append(str(path))
+            payload = {"action":"add", "mediaPath":str(path), "startTime":start_time, "inPoint":source_in, "outPoint":source_out,
+                "video_track_index":-1 if audio_only else int(clip.get("video_track_index",0)),
+                "audio_track_index":int(clip.get("audio_track_index",1 if audio_only else (-1 if is_image or int(clip.get("video_track_index",0)) > 0 else 0))),
+                "preserve_linked_audio":True, **geometry.get("framing", {})}
+            if clip.get("scale") is not None:
+                payload.pop("fit_mode", None)
+                payload.pop("fit_scale", None)
+                payload["scale"] = float(clip["scale"])
+            additions.append(payload)
+            duration = max(duration, start_time + source_out - source_in)
+        ops = [{"action":"ensure_bin", "bin_name":bin_name}]
+        ops.extend({"action":"import_file", "mediaPath":path, "bin_name":bin_name} for path in imports)
+        ops.append({"action":"create_sequence", "name":seq_name, "bin_name":bin_name,
+                    "preset_from_clip_path":imports[0], "width":width, "height":height, "fps":float(args.get("fps") or 30)})
+        ops.extend(additions)
+        ops.extend({"action":"add_marker", "time":float(m.get("time") or 0), "name":m.get("name", "Beat"), "comments":m.get("comment", "")} for m in args.get("markers", []))
+        execution = _call_premiere_rpc("processEDL", {"ops":ops, "expected_project_path":context["premiere_project_path"]}, queue_if_offline=False, timeout=120)
+        result = _rpc_value(execution)
+        success = result.get("success") is True and not result.get("failedCount")
+        if success and args.get("switch_view", "storyCut"):
+            _call_premiere_rpc("switch_view", {"view":args.get("switch_view", "storyCut")}, target="ui")
+        return {"success":success, "sequence_name":seq_name, "bin":bin_name, "aspect_ratio":aspect,
+                "video_clips_placed":len(video_clips) if success else 0, "voiceover":voice,
+                "total_duration_seconds":round(duration,3), "premiere_execution":execution, "error":None if success else result.get("error")}
 
     elif name == "premiere_remove_timeline_ranges":
         return _call_premiere_rpc(

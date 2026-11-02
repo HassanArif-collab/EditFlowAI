@@ -11,16 +11,23 @@
  * - Micro-action controls: live audio preview, take swapping, in/out nudge steppers, visual swapping
  * - Inline thumbnail preview cards for B-roll visuals
  * - Slide-down project settings & Visual Library folder management drawer
- * - Context-aware footer dock with single-undo Premiere Pro assembly
+ * - Context-aware footer dock with review sequence assembly
  */
 import { apiGet, apiPost, getBaseUrl } from './api.js';
 import { callExtendScript, reloadExtensionRoot } from './extendscript.js';
 
 const S = {
-  mode: 'timeline_overlay', // 'timeline_overlay' (default for overlays) or 'rough_cut'
+  mode: 'rough_cut', // Script assembly and timeline analysis are explicit, separate workflows.
+  operationToken: 0,
+  planKind: null,
   activeSequence: null, // { name, duration, id }
   targetVideoTrack: 1, // 1 = Track V2 (0-based), -1 = Auto-detect empty track
   scripts: [],
+  scriptLibrary: null,
+  showScriptLibrary: false,
+  scriptReference: null,
+  scriptLibraryToken: 0,
+  scriptReferenceToken: 0,
   selectedScriptPath: '',
   selectedScriptTitle: '',
   sequenceName: '',
@@ -36,10 +43,16 @@ const S = {
   prevView: null,
   projectFolder: localStorage.getItem('editflow_project_folder') || '',
   projectName: '',
+  scriptsFolder: '',
+  mediaRoot: '',
+  availableProjects: [],
+  showEmptyProjects: localStorage.getItem('editflow_show_empty_projects') === 'true',
+  projectInitialized: false,
+  projectLoadToken: 0,
   assetsCount: 0,
   showFolderModal: false,
   visualFolders: [],
-  activeBrand: localStorage.getItem('editflow_active_brand') || 'Rahima Aziz Foundation',
+  activeBrand: localStorage.getItem('editflow_active_brand') || '',
   availableBrands: [],
   isTranscribingVl: false,
   vlProgressMsg: '',
@@ -136,16 +149,18 @@ export function openStoryCut() {
   }
 
   detectActiveSequence();
-  loadBrands();
-  loadVisualFolders();
-  if (!S.scripts.length) {
+  startScriptWatch();
+  if (!S.projectInitialized) {
     loadScripts();
   } else {
+    loadVisualFolders();
+    refreshSelectedScript();
     render();
   }
 }
 
 export function closeStoryCut() {
+  if (S.scriptWatchTimer) { clearInterval(S.scriptWatchTimer); S.scriptWatchTimer = null; }
   stopAudioPreview();
   const view = document.getElementById('story-cut-view');
   if (view) view.classList.add('hidden');
@@ -194,38 +209,174 @@ function getProjectDisplayName(folderPath) {
 }
 
 async function initProjectFolder() {
-  if (!S.projectFolder) {
+  let folder = S.projectFolder;
+  if (!S.projectInitialized) {
     try {
       const res = await callExtendScript('getProjectDirectory', {});
       if (res && res.projectDirectory) {
-        S.projectFolder = res.projectDirectory;
-        localStorage.setItem('editflow_project_folder', S.projectFolder);
+        folder = res.projectDirectory;
       }
     } catch (e) {}
   }
-  if (!S.projectFolder) {
-    S.projectFolder = 'D:\\MARKETING\\Rahima Aziz Foundation\\AI Automation';
-    localStorage.setItem('editflow_project_folder', S.projectFolder);
+  if (!folder) {
+    S.showFolderModal = true;
+    return null;
   }
-  S.projectName = getProjectDisplayName(S.projectFolder);
+  return apiPost('/api/script-assembly/scripts-folder', { project_folder: folder });
+}
+
+function projectStorageKey(folder = S.projectFolder) {
+  return 'editflow_project_scripts:' + folder.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+}
+
+function rememberProject() {
+  if (!S.projectFolder) return;
+  try {
+    localStorage.setItem(projectStorageKey(), JSON.stringify({
+      selectedScriptPath: S.selectedScriptPath,
+      mode: S.mode,
+      customMode: S.customMode,
+      customContent: S.customContent,
+    }));
+    localStorage.setItem('editflow_brand_project:' + S.activeBrand.toLowerCase(), S.projectFolder);
+  } catch (_) {}
+}
+
+function clearProjectPlan() {
+  invalidatePlan();
+  stopAudioPreview();
+  S.scripts = [];
+  S.scriptLibrary = null;
+  S.scriptReference = null;
+  S.showScriptLibrary = false;
+  S.scriptLibraryToken++;
+  S.scriptReferenceToken++;
+  S.selectedScriptPath = '';
+  S.variantId = 'primary';
+  S.selectedScriptTitle = '';
+  S.sequenceName = '';
+  S.sequenceNameEdited = false;
+  S.customMode = false;
+  S.customContent = '';
+  S.plan = null;
+  S.edlOps = [];
+  S.assetsCount = 0;
+  S.scriptsFolder = '';
+  S.status = null;
+  S.isTranscribingVl = false;
+  S.vlProgressMsg = '';
+  S.vlProgressPercent = 0;
+}
+
+async function loadBrandProjects() {
+  const brand = S.activeBrand;
+  if (!brand) return;
+  const res = await apiGet(`/api/script-assembly/projects?brand=${encodeURIComponent(brand)}`);
+  if (brand !== S.activeBrand) return;
+  S.availableProjects = res.projects || [];
+}
+
+export function visibleScriptProjects() {
+  return S.availableProjects.filter(project => S.showEmptyProjects || project.script_count > 0 || project.path === S.projectFolder);
+}
+
+let checkingScriptList = false;
+export async function refreshProjectScriptList() {
+  const project = S.projectFolder, token = S.projectLoadToken;
+  if (!project || S.busy || checkingScriptList) return;
+  checkingScriptList = true;
+  try {
+  const result = await apiGet(`/api/script-assembly/scripts?folder_path=${encodeURIComponent(project)}&_=${Date.now()}`);
+  if (project !== S.projectFolder || token !== S.projectLoadToken) return;
+  const next = result.scripts || [];
+  if (JSON.stringify(next) === JSON.stringify(S.scripts)) return;
+  S.scripts = next;
+  const info = S.availableProjects.find(item => item.path === project);
+  if (info) info.script_count = next.length;
+  if (S.selectedScriptPath && !next.some(item => item.full_path === S.selectedScriptPath)) {
+    S.selectedScriptPath = '';
+    invalidatePlan();
+    setStatus('error', 'The selected script was moved or removed. Choose its current location.');
+  }
+  render();
+  } finally { checkingScriptList = false; }
+}
+
+export function selectStoryCutProject(folder) {
+  rememberProject();
+  clearProjectPlan();
+  S.projectFolder = folder;
+  S.projectName = getProjectDisplayName(folder);
+  S.projectInitialized = true;
+  return loadScripts();
+}
+
+async function selectBrand(brand) {
+  rememberProject();
+  const token = ++S.projectLoadToken;
+  clearProjectPlan();
+  S.activeBrand = brand;
+  S.projectFolder = '';
+  S.projectName = '';
+  S.mediaRoot = '';
+  S.availableProjects = [];
+  S.visualFolders = [];
+  S.projectInitialized = true;
+  try { localStorage.setItem('editflow_active_brand', brand); } catch (_) {}
+  setBusy(true, 'Loading dated projects...');
+  try {
+    await Promise.all([loadBrandProjects(), loadVisualFolders()]);
+    if (token !== S.projectLoadToken) return;
+    let saved = '';
+    try { saved = localStorage.getItem('editflow_brand_project:' + brand.toLowerCase()) || ''; } catch (_) {}
+    const selected = S.availableProjects.find(p => p.path === saved);
+    if (selected) {
+      S.projectFolder = selected.path;
+      await loadScripts();
+    } else {
+      setBusy(false);
+      S.showFolderModal = false;
+      setStatus('info', 'Choose this brand\'s dated project folder to load its scripts.');
+      render();
+    }
+  } catch (e) {
+    if (token !== S.projectLoadToken) return;
+    setBusy(false);
+    setStatus('error', 'Could not load projects: ' + e.message);
+    render();
+  }
 }
 
 async function loadScripts(forceIndex = false) {
+  const token = ++S.projectLoadToken;
+  invalidatePlan();
   setBusy(true, 'Indexing project assets & loading scripts...');
   try {
-    await initProjectFolder();
+    const info = await initProjectFolder();
+    if (token !== S.projectLoadToken) return;
+    if (!info) return;
+    S.projectFolder = info.project_folder;
+    S.projectName = info.project_name;
+    S.scriptsFolder = info.scripts_folder;
+    S.mediaRoot = info.brand_root || info.project_folder;
+    S.projectInitialized = true;
+    S.activeBrand = info.brand || '';
+    try {
+      localStorage.setItem('editflow_project_folder', S.projectFolder);
+      localStorage.setItem('editflow_active_brand', S.activeBrand);
+    } catch (_) {}
+    await loadBrands();
+    if (token !== S.projectLoadToken) return;
+    await loadBrandProjects();
+    if (token !== S.projectLoadToken) return;
     try {
       const idxRes = await apiPost('/api/media-resolver/index', {
-        root_dir: S.projectFolder,
+        root_dir: S.mediaRoot,
         force: forceIndex,
       });
+      if (token !== S.projectLoadToken) return;
       if (idxRes) {
         S.assetsCount = idxRes.total_items || 0;
-        if (idxRes.root_dir) {
-          S.projectFolder = idxRes.root_dir;
-          S.projectName = getProjectDisplayName(S.projectFolder);
-          localStorage.setItem('editflow_project_folder', S.projectFolder);
-        }
       }
     } catch (ie) {
       console.warn('[StoryCut] Index failed:', ie);
@@ -238,13 +389,16 @@ async function loadScripts(forceIndex = false) {
     }
 
     const res = await apiGet(`/api/script-assembly/scripts?folder_path=${encodeURIComponent(S.projectFolder)}`);
+    if (token !== S.projectLoadToken) return;
     if (res && res.scripts) {
       S.scripts = res.scripts;
-      if (res.folder) {
-        S.projectFolder = res.folder;
-        S.projectName = getProjectDisplayName(S.projectFolder);
-      }
-      const defaultScript = S.scripts.find((s) => s.name.includes('Script 01')) || S.scripts[0];
+      let saved = {};
+      try { saved = JSON.parse(localStorage.getItem(projectStorageKey()) || '{}'); } catch (_) {}
+      S.customMode = !!saved.customMode;
+      S.customContent = saved.customContent || '';
+      S.mode = saved.mode === 'timeline_overlay' ? 'timeline_overlay' : 'rough_cut';
+      const selected = S.selectedScriptPath || saved.selectedScriptPath;
+      const defaultScript = S.scripts.find(s => s.full_path === selected) || S.scripts[0];
       if (defaultScript) {
         S.selectedScriptPath = defaultScript.full_path;
         S.selectedScriptTitle = defaultScript.name.replace(/\.md$/i, '');
@@ -254,28 +408,117 @@ async function loadScripts(forceIndex = false) {
         S.selectedScriptTitle = '';
         S.sequenceName = 'Rough Cut';
       }
+      rememberProject();
+      setStatus('info', S.scripts.length
+        ? `${S.scripts.length} scripts loaded for ${S.projectName}.`
+        : `Save this project's scripts in ${S.scriptsFolder}`);
     }
   } catch (e) {
+    if (token !== S.projectLoadToken) return;
     console.error('[StoryCut] Failed to load scripts:', e);
     setStatus('error', 'Could not load script library: ' + e.message);
   } finally {
-    setBusy(false);
-    render();
-    if (S.mode === 'rough_cut' && S.selectedScriptPath) {
-      compileScript();
+    if (token === S.projectLoadToken) {
+      setBusy(false);
+      render();
+      if (S.mode === 'rough_cut' && S.selectedScriptPath) await compileScript();
     }
   }
 }
 
-async function compileScript() {
-  if (!S.selectedScriptPath && !S.customContent) return;
+function invalidatePlan() {
+  S.operationToken++;
+  S.plan = null;
+  S.planKind = null;
+  S.planInputKey = null;
+  S.edlOps = [];
+}
+
+function scriptSelectionKey() {
+  return JSON.stringify([S.projectFolder,S.selectedScriptPath,S.customMode,S.customContent,S.variantId,S.aspectRatio,S.fps]);
+}
+
+let checkingScript = false;
+export async function refreshSelectedScript(force = false) {
+  if (checkingScript || S.busy || S.mode !== 'rough_cut' || S.customMode || !S.selectedScriptPath) return;
+  checkingScript = true;
+  const selection = scriptSelectionKey();
+  try {
+    const fresh = await apiGet(`/api/script-assembly/script-content?path=${encodeURIComponent(S.selectedScriptPath)}&_=${Date.now()}`);
+    if (selection !== scriptSelectionKey() || S.mode !== 'rough_cut') return;
+    const changed = !S.plan || fresh.revision !== S.plan.script_revision || fresh.execution_revision !== (S.plan.execution_revision || '');
+    if (force || changed) await compileScript();
+  } catch (e) {
+    if (selection === scriptSelectionKey()) {
+      invalidatePlan();
+      setStatus('error', `Cannot read the current script: ${e.message}`);
+      render();
+    }
+  } finally { checkingScript = false; }
+}
+
+export async function openScriptLibrary(query = '') {
+  const brand = S.activeBrand, project = S.projectFolder;
+  const requestToken = ++S.scriptLibraryToken;
+  S.scriptReferenceToken++;
+  if (!brand) { setStatus('error', 'Choose a brand to browse previous scripts.'); render(); return; }
+  S.showScriptLibrary = true;
+  S.scriptReference = null;
+  S.scriptLibrary = null;
+  render();
+  try {
+    const result = await apiGet(`/api/script-assembly/script-catalog?brand=${encodeURIComponent(brand)}&project_folder=${encodeURIComponent(project)}&query=${encodeURIComponent(query)}`);
+    if (!result?.success) throw new Error(result?.detail || 'Script catalog is unavailable.');
+    if (requestToken !== S.scriptLibraryToken || brand !== S.activeBrand || project !== S.projectFolder || !S.showScriptLibrary) return;
+    S.scriptLibrary = result;
+  } catch (e) { if (brand === S.activeBrand && project === S.projectFolder) setStatus('error', `Cannot load previous scripts: ${e.message}`); }
+  render();
+}
+
+export async function readScriptReference(path) {
+  const brand = S.activeBrand, project = S.projectFolder;
+  const requestToken = ++S.scriptReferenceToken;
+  S.scriptReference = null;
+  try {
+    const result = await apiGet(`/api/script-assembly/script-reference?brand=${encodeURIComponent(brand)}&path=${encodeURIComponent(path)}`);
+    if (!result?.success) throw new Error(result?.detail || 'Script reference is unavailable.');
+    if (requestToken !== S.scriptReferenceToken || brand !== S.activeBrand || project !== S.projectFolder || !S.showScriptLibrary) return;
+    S.scriptReference = result;
+  } catch (e) { if (brand === S.activeBrand && project === S.projectFolder) setStatus('error', `Cannot read previous script: ${e.message}`); }
+  render();
+}
+
+function startScriptWatch() {
+  if (S.scriptWatchTimer) return;
+  S.scriptWatchTimer = setInterval(() => {
+    const view = document.getElementById('story-cut-view');
+    if (!document.hidden && view && !view.classList.contains('hidden')) {
+      refreshProjectScriptList().catch(e => console.warn('[StoryCut] Script list refresh:', e.message));
+      refreshSelectedScript();
+    }
+  }, 3000);
+}
+window.addEventListener('focus', () => {
+  const view = document.getElementById('story-cut-view');
+  if (view && !view.classList.contains('hidden')) refreshSelectedScript();
+});
+
+export async function compileScript() {
+  if (S.mode !== 'rough_cut') return;
+  invalidatePlan();
+  if (!(S.customMode ? S.customContent : S.selectedScriptPath)) { setBusy(false); render(); return; }
 
   stopAudioPreview();
+  const projectToken = S.projectLoadToken;
+  const operationToken = S.operationToken;
+  const selection = scriptSelectionKey();
+  const current = () => projectToken === S.projectLoadToken && operationToken === S.operationToken && selection === scriptSelectionKey() && S.mode === 'rough_cut';
   setBusy(true, 'Compiling cuts & resolving takes...');
   try {
     const payload = S.customMode
       ? {
           script_content: S.customContent,
+          project_folder: S.projectFolder,
           title: S.sequenceName || 'Custom Cut',
           aspect_ratio: S.aspectRatio,
           fps: S.fps,
@@ -284,30 +527,44 @@ async function compileScript() {
         }
       : {
           script_path: S.selectedScriptPath,
+          project_folder: S.projectFolder,
           title: S.selectedScriptTitle,
           aspect_ratio: S.aspectRatio,
           fps: S.fps,
           auto_broll: true,
           pacing_style: S.pacing || 'editorial',
         };
+    payload.brand = S.activeBrand;
+    payload.variant_id = S.variantId || 'primary';
 
     const res = await apiPost('/api/script-assembly/compile', payload);
+    if (!current()) return;
     if (res && res.success && res.plan) {
       S.plan = res.plan;
+      S.planKind = 'script';
+      S.planInputKey = selection;
       S.edlOps = res.edl_ops || [];
-      if (!S.sequenceName) {
+      if (!S.sequenceNameEdited) {
         S.sequenceName = `Rough Cut - ${S.plan.title}`;
       }
-      setStatus('info', `Compiled ${S.plan.cuts.length} cuts (${S.plan.target_duration}s) ready to assemble.`);
+      for (const op of S.edlOps) { if (op.action === 'create_sequence') op.name = S.sequenceName; }
+      const errors = (S.plan.validation && S.plan.validation.errors) || [];
+      const warnings = (S.plan.validation && S.plan.validation.warnings) || [];
+      setStatus(errors.length ? 'error' : 'info', errors.length
+        ? errors.map(e => `Beat ${e.beat || '?'}: ${e.message}`).join(' • ')
+        : `Compiled ${S.plan.cuts.length} cuts (${S.plan.summary.total_duration}s), revision ${(S.plan.script_revision || '').slice(0,8)}. ${warnings.map(w => w.message).join(' ') || 'Ready to review and assemble.'}`);
     } else {
       setStatus('error', (res && res.detail) || 'Failed to compile script.');
     }
   } catch (e) {
+    if (!current()) return;
     console.error('[StoryCut] Compilation error:', e);
     setStatus('error', 'Compile error: ' + e.message);
   } finally {
-    setBusy(false);
-    render();
+    if (current()) {
+      setBusy(false);
+      render();
+    }
   }
 }
 
@@ -318,6 +575,8 @@ async function detectActiveSequence() {
     const res = await callExtendScript('callModule', { module: 'captionsManager', fn: 'sequenceInfo' });
     if (res && res.name) {
       S.activeSequence = {
+        id: res.id,
+        fps: res.fps,
         name: res.name,
         duration: res.duration || 0,
         width: res.width || 1080,
@@ -345,9 +604,12 @@ function autoSelectMatchingScript(sequenceName) {
   }
 }
 
-async function switchMode(newMode) {
+export async function switchMode(newMode) {
   if (S.mode === newMode) return;
+  invalidatePlan();
+  setBusy(false);
   S.mode = newMode;
+  rememberProject();
   stopAudioPreview();
   if (newMode === 'timeline_overlay') {
     await detectActiveSequence();
@@ -357,13 +619,17 @@ async function switchMode(newMode) {
   } else {
     setStatus('info', 'Switched to Rough Cut mode.');
     if (!S.plan && S.selectedScriptPath) {
-      compileScript();
+      await compileScript();
     }
   }
   render();
 }
 
 async function analyzeTimelineVisuals() {
+  if (S.mode !== 'timeline_overlay' || S.busy) return;
+  invalidatePlan();
+  const operationToken = S.operationToken;
+  const projectToken = S.projectLoadToken;
   stopAudioPreview();
   // Clear any previous cuts so no stale "Place Visuals" button is shown while transcribing
   S.plan = null;
@@ -371,6 +637,9 @@ async function analyzeTimelineVisuals() {
   setBusy(true, 'Extracting sequence audio cuts from active Premiere sequence...', 1, 'Extracting Sequence Audio');
   let stageTimer = null;
   try {
+    await detectActiveSequence();
+    if (operationToken !== S.operationToken) return;
+    const analyzedSequenceId = S.activeSequence && S.activeSequence.id;
     const clipsRes = await callExtendScript('callModule', {
       module: 'captionsManager',
       fn: 'sequenceAudioClips',
@@ -385,17 +654,22 @@ async function analyzeTimelineVisuals() {
     setBusy(true, `Transcribing timeline dialogue (${clipsRes.clips.length} clips) with GPU Whisper...`, 2, 'Transcribing Dialogue (Whisper AI)');
 
     stageTimer = setTimeout(() => {
-      if (S.busy && S.busyStage === 2) {
+      if (operationToken === S.operationToken && S.busy && S.busyStage === 2) {
         const bCount = (S.visualFolders || []).reduce((acc, f) => acc + (f.broll_count || 0), 0);
         setBusy(true, `Matching micro-visuals from Visual Library (${bCount || 0} B-Rolls)...`, 3, 'Matching Micro-Visuals');
       }
     }, 7000);
 
     const payload = {
+      brand: S.activeBrand,
+      project_folder: S.projectFolder,
+      sequence_width: S.activeSequence && S.activeSequence.width,
+      sequence_height: S.activeSequence && S.activeSequence.height,
+      fps: (S.activeSequence && S.activeSequence.fps) || S.fps,
       clips: clipsRes.clips,
       sequence_name: (S.activeSequence && S.activeSequence.name) || clipsRes.name || 'Active Sequence',
       duration: (S.activeSequence && S.activeSequence.duration) || 60.0,
-      script_path: S.selectedScriptPath || undefined,
+      script_path: S.customMode ? undefined : (S.selectedScriptPath || undefined),
       script_content: S.customMode ? S.customContent : undefined,
       aspect_ratio: S.aspectRatio,
       pacing_style: S.pacing || 'editorial',
@@ -403,8 +677,11 @@ async function analyzeTimelineVisuals() {
     };
 
     const res = await apiPost('/api/timeline-visuals/analyze', payload, { timeoutMs: 180000 });
+    if (projectToken !== S.projectLoadToken || operationToken !== S.operationToken) return;
     if (res && res.success) {
+      S.planKind = 'timeline';
       S.plan = {
+        source_sequence_id: analyzedSequenceId,
         title: res.sequence_name,
         target_duration: Math.round((res.duration || 60) * 100) / 100,
         cuts: res.cuts || [],
@@ -420,22 +697,32 @@ async function analyzeTimelineVisuals() {
       setStatus('error', (res && res.detail) || 'Failed to analyze timeline visuals.');
     }
   } catch (e) {
+    if (operationToken !== S.operationToken) return;
     console.error('[StoryCut] Timeline visuals error:', e);
     setStatus('error', 'Timeline visuals error: ' + e.message);
   } finally {
     if (stageTimer) clearTimeout(stageTimer);
-    setBusy(false);
+    if (projectToken === S.projectLoadToken && operationToken === S.operationToken) setBusy(false);
   }
 }
 
 async function recomputeTimelineVisuals() {
-  if (S.mode !== 'timeline_overlay' || !S.plan || !S.plan.transcription_segments || !S.plan.transcription_segments.length) {
-    compileScript();
+  if (S.mode !== 'timeline_overlay') { await compileScript(); return; }
+  if (!S.plan || S.planKind !== 'timeline' || !S.plan.transcription_segments || !S.plan.transcription_segments.length) {
+    setStatus('info', 'Use Transcribe & Match Visuals to analyze the timeline explicitly.');
     return;
   }
+  const operationToken = ++S.operationToken;
+  S.edlOps = [];
   setBusy(true, `Recomputing ${S.pacing} visual placements...`);
+  const projectToken = S.projectLoadToken;
   try {
     const res = await apiPost('/api/timeline-visuals/recompute', {
+      brand: S.activeBrand,
+      project_folder: S.projectFolder,
+      sequence_width: S.activeSequence && S.activeSequence.width,
+      sequence_height: S.activeSequence && S.activeSequence.height,
+      fps: (S.activeSequence && S.activeSequence.fps) || S.fps,
       segments: S.plan.transcription_segments,
       sequence_name: S.plan.title,
       duration: S.plan.target_duration,
@@ -443,6 +730,7 @@ async function recomputeTimelineVisuals() {
       pacing_style: S.pacing || 'editorial',
       target_track: S.targetVideoTrack !== undefined ? S.targetVideoTrack : 1,
     }, { timeoutMs: 60000 });
+    if (projectToken !== S.projectLoadToken || operationToken !== S.operationToken) return;
     if (res && res.success) {
       S.plan.cuts = res.cuts || [];
       S.plan.broll_clips = res.broll_placements || [];
@@ -453,10 +741,10 @@ async function recomputeTimelineVisuals() {
       setStatus('info', `Recomputed ${vCount} visuals (${res.pacing_style}) for ${trkDisplay}.`);
     }
   } catch (e) {
+    if (operationToken !== S.operationToken) return;
     console.warn('[StoryCut] Recompute error:', e);
   } finally {
-    setBusy(false);
-    render();
+    if (projectToken === S.projectLoadToken && operationToken === S.operationToken) { setBusy(false); render(); }
   }
 }
 
@@ -591,9 +879,7 @@ async function loadBrands() {
     const res = await apiGet('/api/visual-library/brands');
     if (res && res.success && res.brands) {
       S.availableBrands = res.brands;
-      if (!S.activeBrand || !S.availableBrands.includes(S.activeBrand)) {
-        if (S.availableBrands.length > 0) S.activeBrand = S.availableBrands[0];
-      }
+      if (S.activeBrand && !S.availableBrands.includes(S.activeBrand)) S.availableBrands.push(S.activeBrand);
       render();
     }
   } catch (e) {
@@ -602,9 +888,12 @@ async function loadBrands() {
 }
 
 async function loadVisualFolders() {
+  const brand = S.activeBrand;
   try {
-    const brandParam = S.activeBrand ? `?brand=${encodeURIComponent(S.activeBrand)}` : '';
+    if (!brand) { S.visualFolders = []; return; }
+    const brandParam = `?brand=${encodeURIComponent(brand)}`;
     const res = await apiGet(`/api/visual-library/folders${brandParam}`);
+    if (brand !== S.activeBrand) return;
     if (res && res.success) {
       S.visualFolders = res.folders || [];
       render();
@@ -639,6 +928,8 @@ async function addVisualFolder(folderPath) {
 }
 
 async function transcribeAndIndexVl(folderPath = null) {
+  const jobBrand = S.activeBrand;
+  const projectToken = S.projectLoadToken;
   S.isTranscribingVl = true;
   S.vlProgressMsg = 'Starting Whisper transcription...';
   S.vlProgressPercent = 0;
@@ -653,9 +944,11 @@ async function transcribeAndIndexVl(folderPath = null) {
     });
     if (res && res.success) {
       const pollTimer = setInterval(async () => {
+        if (projectToken !== S.projectLoadToken || jobBrand !== S.activeBrand) { clearInterval(pollTimer); return; }
         try {
-          const st = await apiGet('/api/visual-library/status');
+          const st = await apiGet(`/api/visual-library/status?brand=${encodeURIComponent(jobBrand)}`);
           if (st && st.status) {
+            if (st.status.job_id !== res.job_id) return;
             if (st.status.is_busy) {
               S.isTranscribingVl = true;
               S.vlProgressMsg = st.status.message || 'Transcribing footage...';
@@ -666,7 +959,7 @@ async function transcribeAndIndexVl(folderPath = null) {
               S.isTranscribingVl = false;
               S.vlProgressMsg = '';
               S.vlProgressPercent = 100;
-              setStatus('success', 'Visual Library transcription & indexing completed!');
+              setStatus(st.status.state === 'failed' ? 'error' : 'success', st.status.message || 'Visual Library indexing complete.');
               await loadVisualFolders();
               render();
             }
@@ -713,7 +1006,7 @@ async function removeVisualFolder(folderPath) {
 async function rescanVisualLibrary() {
   setBusy(true, 'Triggering video quality scan across all raw data folders in background...');
   try {
-    const res = await apiPost('/api/visual-library/analyze');
+    const res = await apiPost(`/api/visual-library/analyze?brand=${encodeURIComponent(S.activeBrand)}`);
     if (res && res.success) {
       setStatus('success', 'Visual Library analysis started in background.');
     } else {
@@ -728,36 +1021,7 @@ async function rescanVisualLibrary() {
 }
 
 async function autoPlaceBroll() {
-  if (!S.plan || !S.plan.cuts || !S.plan.cuts.length) {
-    setStatus('error', 'Compile a script first before placing B-roll.');
-    return;
-  }
-  setBusy(true, 'Matching optimal B-roll from Visual Library across cuts...');
-  try {
-    const res = await apiPost('/api/script-assembly/compile', {
-      script_path: S.selectedScriptPath,
-      script_content: S.customMode ? S.customContent : undefined,
-      title: S.sequenceName,
-      aspect_ratio: S.aspectRatio,
-      fps: S.fps,
-      auto_broll: true,
-      pacing_style: S.pacing || 'editorial',
-    });
-    if (res && res.success && res.plan) {
-      S.plan = res.plan;
-      S.edlOps = res.edl_ops || [];
-      const count = S.plan.broll_clips ? S.plan.broll_clips.length : 0;
-      setStatus('success', `Auto-placed ${count} visual overlays on Track V2.`);
-    } else {
-      setStatus('error', (res && res.detail) || 'Failed to auto-place B-roll.');
-    }
-  } catch (e) {
-    console.error('[StoryCut] Auto-place B-roll error:', e);
-    setStatus('error', 'Auto-place B-roll error: ' + e.message);
-  } finally {
-    setBusy(false);
-    render();
-  }
+  await compileScript();
 }
 
 // ── Interactive B-Roll Inserter ──────────────────────────────
@@ -775,7 +1039,7 @@ async function openBrollSwap(cutIndex) {
   const cue = cut.marker_comment || cut.quote || cut.caption_text || 'parking broken';
   setBusy(true, 'Finding matching visual B-roll from library...');
   try {
-    const res = await apiGet(`/api/visual-library/match-cut?cue=${encodeURIComponent(cue)}&aspect_ratio=${encodeURIComponent(S.aspectRatio)}&limit=12`);
+    const res = await apiGet(`/api/visual-library/match-cut?cue=${encodeURIComponent(cue)}&aspect_ratio=${encodeURIComponent(S.aspectRatio)}&brand=${encodeURIComponent(S.activeBrand)}&limit=12`);
     if (res && res.matches && res.matches.length) {
       S.popoverItems = res.matches;
       S.activePopoverCutIndex = cutIndex;
@@ -876,12 +1140,15 @@ function closePopover() {
 
 function updateEdlOpsFromPlan() {
   if (!S.plan) return;
+  if (S.planKind !== (S.mode === 'rough_cut' ? 'script' : 'timeline')) { S.edlOps = []; return; }
+  if (S.plan.validation && !S.plan.validation.valid) { S.edlOps = []; return; }
 
   // Timeline Overlay Mode: Only generate B-roll overlay operations (never touch dialogue sequence)
   if (S.mode === 'timeline_overlay') {
     const trkDisplay = S.targetVideoTrack === -1 ? 'Auto Track' : `Track V${S.targetVideoTrack + 1}`;
     const ops = [];
     ops.push({ action: 'beginUndoGroup', name: `EditFlow: Place Visuals on ${trkDisplay}` });
+    ops.push({ action: 'clone_sequence', name: `${S.plan.title} - Visuals review` });
     ops.appendBin = true;
     ops.push({ action: 'ensure_bin', bin_name: '_EditFlow Raw' });
 
@@ -904,7 +1171,10 @@ function updateEdlOpsFromPlan() {
           inPoint: b.source_in,
           outPoint: b.source_out,
           video_track_index: (b.video_track != null && b.video_track >= 0) ? b.video_track : targetTrk,
-          audio_track_index: 'auto', // Routes to clean empty audio track (A3..A8), preserving dialogue
+          audio_track_index: -1,
+          fit_mode: b.is_still ? 'contain' : 'fill',
+          zoom: 1.0,
+          ...(b.framing || {}),
           auto_detect_track: S.targetVideoTrack === -1,
         });
       }
@@ -955,6 +1225,10 @@ function updateEdlOpsFromPlan() {
       audio_track_index: c.audio_track || 0,
       audio_lead_frames: c.audio_lead_frames || 0,
       scale_punch_in: c.scale_punch_in || 1.0,
+      fit_mode: c.fit_mode || 'fill',
+      zoom: c.scale_punch_in || 1.0,
+      single_channel_dialogue: true,
+      ...(c.framing || {}),
     });
     const dialogue = c.quote || c.caption_text || c.marker_comment || '';
     ops.push({
@@ -977,7 +1251,10 @@ function updateEdlOpsFromPlan() {
         inPoint: b.source_in,
         outPoint: b.source_out,
         video_track_index: b.video_track != null ? b.video_track : targetTrk,
-        audio_track_index: 'auto',
+        audio_track_index: -1,
+        fit_mode: b.is_still ? 'contain' : 'fill',
+        zoom: 1.0,
+        ...(b.framing || {}),
         auto_detect_track: S.targetVideoTrack === -1,
       });
     }
@@ -989,17 +1266,50 @@ function updateEdlOpsFromPlan() {
 
 // ── Assembly Dispatch ────────────────────────────────────────
 
-async function assembleInPremiere() {
-  if (S.mode === 'timeline_overlay' && (!S.edlOps || !S.edlOps.length)) {
-    // If user hasn't transcribed yet, seamlessly run analyzeTimelineVisuals first!
-    setStatus('info', 'Analyzing active sequence and matching visuals...');
-    await analyzeTimelineVisuals();
-    if (!S.edlOps || !S.edlOps.length) {
+let assemblyInFlight = false;
+export async function assembleInPremiere() {
+  if (assemblyInFlight || S.busy) return;
+  assemblyInFlight = true;
+  try { await assembleReviewedPlan(); } finally { assemblyInFlight = false; }
+}
+
+async function assembleReviewedPlan() {
+  if (S.busy) return;
+  const expectedKind = S.mode === 'rough_cut' ? 'script' : 'timeline';
+  if (!S.plan || S.planKind !== expectedKind || !S.edlOps.length) {
+    setStatus('error', S.mode === 'rough_cut' ? 'Compile the selected script before assembling.' : 'Use Transcribe & Match Visuals explicitly before placing timeline visuals.');
+    return;
+  }
+  if (expectedKind === 'script' && S.planInputKey !== scriptSelectionKey()) {
+    invalidatePlan();
+    setStatus('error', 'The script selection or draft changed. Compile the current script first.');
+    render();
+    return;
+  }
+  const reviewedPlan = S.plan;
+  const reviewedToken = S.operationToken;
+  const stillReviewed = () => S.plan === reviewedPlan && S.operationToken === reviewedToken && S.planKind === expectedKind;
+  if (S.plan) {
+    try {
+      const checked = await apiPost('/api/script-assembly/validate-plan', { plan: S.plan });
+      if (!stillReviewed()) return;
+      if (!checked || !checked.valid) {
+        setStatus('error', ((checked && checked.errors) || []).map(e => e.message).join(' • ') || 'Review validation failed. Compile again.');
+        return;
+      }
+    } catch (e) { setStatus('error', `Could not validate reviewed media: ${e.message}`); return; }
+  }
+  if (S.plan && S.plan.validation && !S.plan.validation.valid) {
+    setStatus('error', 'Resolve the listed script sources and ranges, then compile again.');
+    return;
+  }
+  if (S.plan && S.plan.script_path && S.plan.script_revision) {
+    const fresh = await apiGet(`/api/script-assembly/script-content?path=${encodeURIComponent(S.plan.script_path)}`);
+    if (!stillReviewed()) return;
+    if (!fresh || fresh.revision !== S.plan.script_revision || fresh.execution_revision !== (S.plan.execution_revision || '')) {
+      setStatus('error', 'The script changed since this review. Compile it again before assembly.');
       return;
     }
-  } else if (!S.edlOps || !S.edlOps.length) {
-    setStatus('error', 'No timeline operations to assemble. Compile or transcribe first.');
-    return;
   }
 
   setBusy(true, 'Building sequence in Premiere Pro...', 3, 'Assembling Timeline in Premiere');
@@ -1014,17 +1324,34 @@ async function assembleInPremiere() {
       ? ((S.activeSequence && S.activeSequence.name) || (S.plan && S.plan.title) || 'Active Sequence')
       : (S.sequenceName || (S.plan && S.plan.title ? `Rough Cut - ${S.plan.title}` : 'Rough Cut'));
 
-    setStatus('info', `Executing ${S.edlOps.length} timeline operations with single-undo...`);
+    setStatus('info', `Executing ${S.edlOps.length} timeline operations on a review sequence...`);
 
-    const res = await callExtendScript('processEDL', { ops: S.edlOps, sequence_name: seqName });
+    const project = await callExtendScript('getProjectDirectory', {});
+    const normalizePath = p => String(p || '').replace(/\\/g, '/').replace(/\/$/, '').toLowerCase();
+    if (!project || !project.projectPath || !normalizePath(project.projectPath).startsWith(normalizePath(S.projectFolder) + '/')) {
+      setStatus('error', 'Open the selected project in Premiere before applying this review.');
+      return;
+    }
+    if (!stillReviewed()) return;
+    const res = await callExtendScript('processEDL', {
+      ops: S.edlOps, sequence_name: seqName,
+      expected_project_path: project.projectPath,
+      expected_sequence_id: S.mode === 'timeline_overlay' ? S.plan.source_sequence_id : undefined,
+    });
+    if (!stillReviewed()) return;
 
     if (res && res.success && (!res.failedCount || res.failedCount === 0)) {
       const count = (S.plan && S.plan.broll_clips) ? S.plan.broll_clips.length : 0;
       const trkDisplay = S.targetVideoTrack === -1 ? 'empty video track' : `Track V${S.targetVideoTrack + 1}`;
       const msg = S.mode === 'timeline_overlay'
-        ? `Placed ${count} visual overlays on ${trkDisplay}! (Ctrl+Z in Premiere to undo).`
-        : `Assembled "${seqName}" with ${S.plan.cuts.length} cuts! (Ctrl+Z in Premiere to undo).`;
+        ? `Placed ${count} visual overlays on ${trkDisplay}! Review copy created.`
+        : `Assembled "${seqName}" with ${S.plan.cuts.length} cuts! Review copy created.`;
       setStatus('success', msg);
+      await apiPost('/api/visual-library/usage', {
+        brand: S.activeBrand,
+        sequence_name: seqName,
+        stems: (S.plan.broll_clips || []).map(b => b.name.replace(/\.[^.]+$/, '')),
+      }).catch(e => console.warn('[StoryCut] Usage history:', e));
     } else {
       const err = (res && (res.error || (res.failedCount ? `${res.failedCount} timeline operations failed.` : null))) ||
         'ExtendScript assembly returned an error.';
@@ -1034,7 +1361,7 @@ async function assembleInPremiere() {
     console.error('[StoryCut] Assembly failed:', e);
     setStatus('error', 'Assembly error: ' + e.message);
   } finally {
-    setBusy(false);
+    if (stillReviewed()) setBusy(false);
   }
 }
 
@@ -1328,6 +1655,42 @@ function render() {
       </button>
     </header>
 
+    <div class="sc-project-context">
+      <label>Brand
+        <select id="sc-brand-select" class="sc-compact-select" aria-label="Brand">
+          ${!S.activeBrand ? '<option value="" selected>Choose brand</option>' : ''}
+          ${S.availableBrands.map(b => `<option value="${escapeHtml(b)}" ${b === S.activeBrand ? 'selected' : ''}>${escapeHtml(b)}</option>`).join('')}
+        </select>
+      </label>
+      <label>Project
+        <select id="sc-project-select" class="sc-compact-select" aria-label="Dated project">
+          ${!S.projectFolder ? '<option value="">Choose a dated project</option>' : ''}
+          ${S.projectFolder && !S.availableProjects.some(p => p.path === S.projectFolder) ? `<option value="${escapeHtml(S.projectFolder)}" selected>${escapeHtml(S.projectName)}</option>` : ''}
+          ${visibleScriptProjects().map(p => `<option value="${escapeHtml(p.path)}" ${p.path === S.projectFolder ? 'selected' : ''}>${escapeHtml(p.name)} (${p.script_count} scripts)</option>`).join('')}
+        </select>
+      </label>
+      <button id="sc-toggle-empty-projects" class="sc-btn-subtle" aria-pressed="${S.showEmptyProjects}" title="Show or hide project folders with no scripts">${S.showEmptyProjects ? 'Hide empty' : 'Show empty'}</button>
+      <button id="sc-btn-browse-project" class="sc-btn-subtle" title="Choose another project folder">${svgIcon('folder')}</button>
+    </div>
+
+    ${S.mode === 'rough_cut' && !S.customMode && S.selectedScriptPath ? `<div class="sc-drawer-row" style="padding:6px 12px;overflow-wrap:anywhere;user-select:text">Current script: ${escapeHtml(S.plan?.script_path || S.selectedScriptPath)}${S.plan?.script_revision ? ` · Revision ${escapeHtml(S.plan.script_revision.slice(0,8))}` : ''}</div>` : ''}
+
+    ${S.showScriptLibrary ? `
+      <section class="sc-drawer" aria-label="All scripts reference library">
+        <div class="sc-drawer-row"><strong>All Scripts · ${escapeHtml(S.activeBrand)}</strong>
+          <button id="sc-close-script-library" class="sc-btn-subtle">Close</button></div>
+        <p>Read previous scripts for inspiration. New scripts belong in this project's Scripts folder.</p>
+        <div class="sc-drawer-row"><input id="sc-library-query" class="sc-input" placeholder="Search titles, hooks or dialogue" aria-label="Search previous scripts">
+          <button id="sc-search-script-library" class="sc-btn-subtle">Search</button></div>
+        <select id="sc-reference-select" class="sc-compact-select" style="width:100%" aria-label="Previous script">
+          <option value="">${S.scriptLibrary ? `Choose from ${S.scriptLibrary.total} scripts` : 'Loading scripts…'}</option>
+          ${(S.scriptLibrary?.scripts || []).map(item => `<option value="${escapeHtml(item.full_path)}" ${S.scriptReference?.full_path === item.full_path ? 'selected' : ''}>[${escapeHtml(item.project_name)}] ${escapeHtml(item.name)}</option>`).join('')}
+        </select>
+        ${(S.scriptLibrary?.missing_paths || []).map(path => `<p>Missing library location: ${escapeHtml(path)}</p>`).join('')}
+        ${S.scriptReference ? `<p style="overflow-wrap:anywhere">Original: ${escapeHtml(S.scriptReference.full_path)} · Revision ${escapeHtml(S.scriptReference.revision.slice(0,8))}</p>
+          <pre style="white-space:pre-wrap;max-height:320px;overflow:auto;user-select:text">${escapeHtml(S.scriptReference.content)}</pre>` : ''}
+      </section>` : ''}
+
     <!-- Slide-Down Drawer (Settings & Visual Library Folders) -->
     ${S.showMoreDrawer ? `
       <div class="sc-drawer">
@@ -1345,12 +1708,9 @@ function render() {
         </div>
 
         <div class="sc-drawer-row">
-          <span class="sc-drawer-lbl">Brand / Client:</span>
-          <div class="sc-drawer-content" style="gap:8px; align-items:center;">
-            <select id="sc-brand-select" class="sc-select" style="max-width:240px; font-weight:600; background:var(--sc-surface-raised, #2a2a2a); color:var(--sc-text, #fff); border:1px solid var(--sc-border, #444); border-radius:4px; padding:3px 6px;">
-              ${(S.availableBrands && S.availableBrands.length > 0) ? S.availableBrands.map(b => `<option value="${escapeHtml(b)}" ${b === S.activeBrand ? 'selected' : ''}>${escapeHtml(b)}</option>`).join('') : `<option value="${escapeHtml(S.activeBrand)}">${escapeHtml(S.activeBrand)}</option>`}
-            </select>
-            <span style="font-size:11px; color:var(--sc-text-muted);">Scoped footage &amp; B-roll library</span>
+          <span class="sc-drawer-lbl">Scripts Folder:</span>
+          <div class="sc-drawer-content">
+            <input class="sc-input sc-script-location" aria-label="Scripts folder path" readonly value="${escapeHtml(S.scriptsFolder)}" title="Save the agent's scripts here. Select and copy this path.">
           </div>
         </div>
 
@@ -1449,7 +1809,7 @@ function render() {
 
         <!-- Optional Script Alignment Select -->
         <div class="sc-compact-select-wrap" style="flex:1; min-width:140px;">
-          <select id="sc-script-select" class="sc-compact-select" style="width:100%;" ${S.busy ? 'disabled' : ''}>
+          <select id="sc-alignment-select" class="sc-compact-select" style="width:100%;" title="Optional alignment reference for timeline analysis; does not build this script" ${S.busy ? 'disabled' : ''}>
             <option value="">Auto-Detect from Audio (No Script)</option>
             ${scriptOptions}
           </select>
@@ -1468,6 +1828,13 @@ function render() {
         <button id="sc-btn-toggle-custom" class="sc-btn-subtle" title="Toggle custom Markdown script">
           ${S.customMode ? 'Script Library' : 'Custom Script'}
         </button>
+        <button id="sc-btn-refresh-script" class="sc-btn-subtle" ${S.busy ? 'disabled' : ''} title="Read the current file and recompile">Refresh script</button>
+        <button id="sc-btn-script-library" class="sc-btn-subtle">All Scripts</button>
+
+        ${S.plan && S.plan.variants && S.plan.variants.length > 1 ? `
+          <select id="sc-variant-select" class="sc-compact-select" aria-label="Script version" ${S.busy ? 'disabled' : ''}>
+            ${S.plan.variants.map(v => `<option value="${escapeHtml(v.id)}" ${v.id === (S.variantId || 'primary') ? 'selected' : ''}>${escapeHtml(v.label)} (${v.duration}s)</option>`).join('')}
+          </select>` : ''}
 
         <div class="sc-compact-select-wrap">
           <select id="sc-pacing-select" class="sc-compact-select" title="Pacing Style">
@@ -1495,6 +1862,11 @@ function render() {
 
     <!-- Storyboard Beats Container -->
     <main class="sc-storyboard">
+      ${S.plan && S.plan.validation && (S.plan.validation.errors.length || S.plan.validation.warnings.length) ? `
+        <div class="sc-validation" role="status">
+          ${S.plan.validation.errors.map(e => `<p class="sc-validation-error"><strong>${e.beat ? `Beat ${e.beat}: ` : ''}</strong>${escapeHtml(e.message)}</p>`).join('')}
+          ${S.plan.validation.warnings.map(e => `<p>${escapeHtml(e.message)}</p>`).join('')}
+        </div>` : ''}
       ${storyboardHtml}
     </main>
 
@@ -1516,7 +1888,7 @@ function render() {
             ${S.busy ? svgIcon('spinner') : svgIcon('refresh')} ${S.busy ? 'Processing Timeline...' : (cuts.length > 0 ? 'Re-Transcribe Timeline' : 'Transcribe &amp; Match Visuals')}
           </button>
           ${(!S.busy && cuts.length > 0) ? `
-            <button id="sc-btn-apply-timeline" class="sc-btn-primary" title="Place visuals on target video track with single Ctrl+Z undo">
+            <button id="sc-btn-apply-timeline" class="sc-btn-primary" title="Place visuals on a duplicate sequence">
               ${(S.busy && S.busyTitle && S.busyTitle.includes('Premiere')) ? svgIcon('spinner') : svgIcon('check')} Place Visuals on ${S.targetVideoTrack === -1 ? 'Auto Track' : `Track V${S.targetVideoTrack + 1}`} (${(S.plan && S.plan.broll_clips) ? S.plan.broll_clips.length : S.edlOps.filter((o) => o.action === 'add').length})
             </button>
           ` : ''}
@@ -1524,7 +1896,7 @@ function render() {
           <button id="sc-btn-auto-broll" class="sc-btn-subtle" ${S.busy || !cuts.length ? 'disabled' : ''} title="Auto-match B-roll overlays on Track V2">
             ${svgIcon('broll')} Auto B-Roll
           </button>
-          <button id="sc-btn-assemble" class="sc-btn-primary" ${S.busy || !cuts.length ? 'disabled' : ''} title="Assemble rough cut into Premiere Pro">
+          <button id="sc-btn-assemble" class="sc-btn-primary" ${S.busy || !cuts.length || !S.edlOps.length ? 'disabled' : ''} title="Assemble rough cut into Premiere Pro">
             ${svgIcon('film')} Assemble Rough Cut
           </button>
         `}
@@ -1648,9 +2020,9 @@ function render() {
           </div>
           <div class="sc-modal-body">
             <p class="sc-modal-desc">
-              Point Story Cut to any directory containing your scripts, raw footage, or AI automation.
+              Choose the dated project folder that owns this edit. Its scripts belong in the Scripts subfolder.
             </p>
-            <input id="sc-input-folder-path" class="sc-input" type="text" value="${escapeHtml(S.projectFolder)}" placeholder="e.g. D:\\MARKETING\\Rahima Aziz Foundation\\AI Automation">
+            <input id="sc-input-folder-path" class="sc-input" type="text" value="${escapeHtml(S.projectFolder)}" placeholder="Brand / YYYY-MM-DD Project name">
           </div>
           <div class="sc-modal-footer">
             <button id="sc-btn-detect-folder" class="sc-btn-subtle" title="Detect from active Premiere project">
@@ -1744,26 +2116,52 @@ function attachEventHandlers(v) {
   }
 
   // Script Select
+  const emptyProjects = v.querySelector('#sc-toggle-empty-projects');
+  if (emptyProjects) emptyProjects.onclick = () => { S.showEmptyProjects = !S.showEmptyProjects; localStorage.setItem('editflow_show_empty_projects', String(S.showEmptyProjects)); render(); };
+  const libraryButton = v.querySelector('#sc-btn-script-library');
+  if (libraryButton) libraryButton.onclick = () => openScriptLibrary();
+  const closeLibrary = v.querySelector('#sc-close-script-library');
+  if (closeLibrary) closeLibrary.onclick = () => { S.showScriptLibrary = false; render(); };
+  const searchLibrary = v.querySelector('#sc-search-script-library');
+  if (searchLibrary) searchLibrary.onclick = () => openScriptLibrary(v.querySelector('#sc-library-query').value);
+  const referenceSelect = v.querySelector('#sc-reference-select');
+  if (referenceSelect) referenceSelect.onchange = e => { if (e.target.value) readScriptReference(e.target.value); };
   const selScript = v.querySelector('#sc-script-select');
   if (selScript) {
     selScript.onchange = (e) => {
       S.selectedScriptPath = e.target.value;
+      S.customMode = false;
+      S.mode = 'rough_cut';
+      S.variantId = 'primary';
       const opt = selScript.options[selScript.selectedIndex];
       S.selectedScriptTitle = opt ? opt.text.replace(/^\[.*?\]\s*/, '') : '';
       S.sequenceName = `Rough Cut - ${S.selectedScriptTitle}`;
-      if (S.mode === 'timeline_overlay' && S.plan && S.plan.transcription_segments && S.plan.transcription_segments.length) {
-        recomputeTimelineVisuals();
-      } else {
-        compileScript();
-      }
+      S.sequenceNameEdited = false;
+      rememberProject();
+      compileScript();
     };
   }
+
+  // Sequence Name Input
+  const refreshScript = v.querySelector('#sc-btn-refresh-script');
+  if (refreshScript) refreshScript.onclick = () => refreshSelectedScript(true);
+  const alignmentSelect = v.querySelector('#sc-alignment-select');
+  if (alignmentSelect) alignmentSelect.onchange = e => {
+    S.selectedScriptPath = e.target.value;
+    rememberProject();
+    if (S.planKind === 'timeline') recomputeTimelineVisuals();
+  };
+
+  // Sequence Name Input
+  const variantSelect = v.querySelector('#sc-variant-select');
+  if (variantSelect) variantSelect.onchange = e => { S.variantId = e.target.value; compileScript(); };
 
   // Sequence Name Input
   const seqInput = v.querySelector('#sc-seq-name-input');
   if (seqInput) {
     seqInput.onchange = (e) => {
       S.sequenceName = e.target.value.trim() || `Rough Cut - ${S.selectedScriptTitle}`;
+      S.sequenceNameEdited = true;
       updateEdlOpsFromPlan();
     };
   }
@@ -1800,6 +2198,8 @@ function attachEventHandlers(v) {
   if (btnToggle) {
     btnToggle.onclick = () => {
       S.customMode = !S.customMode;
+      invalidatePlan();
+      rememberProject();
       render();
     };
   }
@@ -1808,6 +2208,8 @@ function attachEventHandlers(v) {
   if (customInput) {
     customInput.oninput = (e) => {
       S.customContent = e.target.value;
+      invalidatePlan();
+      rememberProject();
     };
   }
 
@@ -1826,11 +2228,13 @@ function attachEventHandlers(v) {
   const brandSelect = v.querySelector('#sc-brand-select');
   if (brandSelect) {
     brandSelect.onchange = (e) => {
-      S.activeBrand = e.target.value;
-      try { localStorage.setItem('editflow_active_brand', S.activeBrand); } catch (_) {}
-      loadVisualFolders();
+      selectBrand(e.target.value);
     };
   }
+  const projectSelect = v.querySelector('#sc-project-select');
+  if (projectSelect) projectSelect.onchange = e => {
+    if (e.target.value) selectStoryCutProject(e.target.value);
+  };
 
   const btnTranscribeVl = v.querySelector('#sc-btn-transcribe-vl');
   if (btnTranscribeVl) btnTranscribeVl.onclick = () => transcribeAndIndexVl();
@@ -1839,9 +2243,8 @@ function attachEventHandlers(v) {
   if (btnRescanVl) btnRescanVl.onclick = rescanVisualLibrary;
 
   // Project Folder Modal Actions
-  const btnChangeFolder = v.querySelector('#sc-btn-change-folder');
-  if (btnChangeFolder) {
-    btnChangeFolder.onclick = () => {
+  for (const btn of v.querySelectorAll('#sc-btn-change-folder, #sc-btn-browse-project')) {
+    btn.onclick = () => {
       S.showFolderModal = true;
       render();
     };
@@ -1882,11 +2285,8 @@ function attachEventHandlers(v) {
         alert('Please enter a valid folder path.');
         return;
       }
-      S.projectFolder = val;
-      S.projectName = getProjectDisplayName(val);
-      localStorage.setItem('editflow_project_folder', val);
       S.showFolderModal = false;
-      loadScripts(true);
+      selectStoryCutProject(val);
     };
   }
 

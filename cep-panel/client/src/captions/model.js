@@ -424,8 +424,7 @@ export function groupWords(words, opts, layout) {
         // a lone word mid-sentence flashes by — the choppiest look there is
         const w = words[j];
         const isolated = gapBefore(j) > 0.35 && gapAfter(last) > 0.35;
-        const lingers = w.end - w.start >= 0.6;
-        cost += (isolated || lingers || endsSentence(w.text)) ? 0.4 : 2.6;
+        cost += (isolated || endsSentence(w.text)) ? 0.4 : 2.6;
       } else {
         cost += 0.15 * (maxWords - size);
       }

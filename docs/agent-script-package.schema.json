@@ -1,0 +1,171 @@
+{
+  "$defs": {
+    "AgentCut": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "default": "recorded_dialogue",
+          "enum": [
+            "recorded_dialogue",
+            "generated_narration",
+            "graphic",
+            "visual"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "source_file": {
+          "title": "Source File",
+          "type": "string"
+        },
+        "source_in": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Source In",
+          "type": "number"
+        },
+        "source_out": {
+          "exclusiveMinimum": 0,
+          "title": "Source Out",
+          "type": "number"
+        },
+        "speaker": {
+          "default": "",
+          "title": "Speaker",
+          "type": "string"
+        },
+        "quote": {
+          "default": "",
+          "title": "Quote",
+          "type": "string"
+        },
+        "caption": {
+          "default": "",
+          "title": "Caption",
+          "type": "string"
+        },
+        "visual_cue": {
+          "default": "",
+          "title": "Visual Cue",
+          "type": "string"
+        },
+        "fit_mode": {
+          "default": "fill",
+          "enum": [
+            "fill",
+            "contain"
+          ],
+          "title": "Fit Mode",
+          "type": "string"
+        },
+        "zoom": {
+          "default": 1,
+          "maximum": 3,
+          "minimum": 1,
+          "title": "Zoom",
+          "type": "number"
+        },
+        "focal_point": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Focal Point"
+        }
+      },
+      "required": [
+        "source_file",
+        "source_out"
+      ],
+      "title": "AgentCut",
+      "type": "object"
+    },
+    "AgentVariant": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "default": "primary",
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "default": "Primary cut",
+          "title": "Label",
+          "type": "string"
+        },
+        "cuts": {
+          "items": {
+            "$ref": "#/$defs/AgentCut"
+          },
+          "minItems": 1,
+          "title": "Cuts",
+          "type": "array"
+        }
+      },
+      "required": [
+        "cuts"
+      ],
+      "title": "AgentVariant",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "project_folder": {
+      "title": "Project Folder",
+      "type": "string"
+    },
+    "brand": {
+      "title": "Brand",
+      "type": "string"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    },
+    "script_revision": {
+      "maxLength": 64,
+      "minLength": 64,
+      "title": "Script Revision",
+      "type": "string"
+    },
+    "variants": {
+      "items": {
+        "$ref": "#/$defs/AgentVariant"
+      },
+      "minItems": 1,
+      "title": "Variants",
+      "type": "array"
+    },
+    "captions_enabled": {
+      "default": false,
+      "title": "Captions Enabled",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "project_folder",
+    "brand",
+    "title",
+    "script_revision",
+    "variants"
+  ],
+  "title": "AgentScriptPackage",
+  "type": "object"
+}

@@ -34,15 +34,20 @@ test('ExtendScript loader keeps dispatcher available and handles Windows paths',
   assert.doesNotMatch(source, /throw\s+e\s*;\s*\n\s*}\s*\n\s*}\s*\n\s*\/\/ Load modules/);
 });
 
-test('client passes the CEP extension root before dispatching ExtendScript commands', () => {
-  const source = fs.readFileSync(
-    path.join(repoRoot, 'cep-panel', 'client', 'src', 'main.js'),
-    'utf8'
-  );
-
-  assert.match(source, /extensionPathType = \(state\.csInterface\.SYSTEM_PATH && state\.csInterface\.SYSTEM_PATH\.EXTENSION\) \|\| 'extension'/);
-  assert.match(source, /getSystemPath\(extensionPathType\)/);
-  assert.match(source, /editflowConfigureExtensionRoot/);
+test('client configures the CEP extension root before dispatching commands', async () => {
+  const {loadEsm} = require('./_load-esm');
+  const calls = [];
+  class CSInterface {
+    constructor(){this.SYSTEM_PATH={EXTENSION:'extension'};}
+    getSystemPath(key){assert.equal(key,'extension'); return 'C:/Extensions/editflow';}
+    evalScript(script,callback){calls.push(script);callback('{"success":true}');}
+  }
+  const bridge=loadEsm(path.join(repoRoot,'cep-panel/client/src/extendscript.js'),{CSInterface,console:{log(){},warn(){}}});
+  assert.equal(await bridge.initExtendScript(),true);
+  await bridge.callExtendScript('getSequenceState',{});
+  assert.match(calls[0],/editflowConfigureExtensionRoot/);
+  assert.match(calls[0],/C:\/Extensions\/editflow/);
+  assert.match(calls[1],/editflowDispatch\("getSequenceState"/);
 });
 
 test('ExtendScript can reload modules from a CEP extension root', () => {
@@ -91,30 +96,21 @@ test('ExtendScript exposes guarded timeline range removal', () => {
   );
   assert.match(indexSource, /case "removeTimelineRanges"/);
   assert.match(clipSource, /function removeTimelineRanges/);
-  // The guarded version MUST refuse to cut when QE razor is unavailable.
-  assert.match(clipSource, /QE razor\(\) is not available/);
+  // Refuse extraction before changing ranges when the host lacks the API.
+  assert.match(clipSource, /Timeline extract is not available; no ranges were changed/);
   // And it must be in modifyingCommands so undo wrapping fires.
   assert.match(indexSource, /"removeTimelineRanges"/);
 });
 
-test('CEP panel wires the active sequence phrase workflow end-to-end', () => {
-  const source = fs.readFileSync(
-    path.join(repoRoot, 'cep-panel', 'client', 'src', 'main.js'),
-    'utf8'
-  );
-  // Helper that prepares the snake_case payload for the backend.
-  assert.match(source, /function getSequenceAudioClipsForBackend/);
-  // Public entry points used by buttons + chat command.
-  assert.match(source, /async function analyzeActiveSequenceAudio/);
-  assert.match(source, /async function findPhraseInActiveSequence/);
-  // Buttons must exist and be bound.
-  assert.match(source, /#btn-analyze-sequence-audio/);
-  assert.match(source, /#btn-preview-phrase/);
-  assert.match(source, /#btn-apply-phrase-cut/);
-  // The chat router must intercept "cut/remove/delete '<phrase>'".
-  assert.match(source, /\\b\(\?:cut\|remove\|delete\)\\b/);
-  // State must declare lastPhraseRanges.
-  assert.match(source, /lastPhraseRanges\s*:\s*\[\]/);
+test('Story Cut wires project scripts through compilation and native assembly', () => {
+  const source=fs.readFileSync(path.join(repoRoot,'cep-panel/client/src/story-cut-view.js'),'utf8');
+  assert.match(source,/async function compileScript/);
+  assert.match(source,/apiPost\('\/api\/script-assembly\/compile'/);
+  assert.match(source,/project_folder: S\.projectFolder/);
+  assert.match(source,/sc-script-select/);
+  assert.match(source,/sc-btn-assemble/);
+  assert.match(source,/callExtendScript\('processEDL'/);
+  assert.match(source,/expected_project_path: project\.projectPath/);
 });
 
 test('ExtendScript manager modules export singletons without function-scoped var declarations', () => {

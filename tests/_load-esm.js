@@ -12,14 +12,19 @@ function loadEsm(filePath, sandbox = {}) {
   src = src.replace(/^\s*import\s+[^;\n]+;?\s*$/gm, '');
   const names = [];
   src = src.replace(
-    /^export\s+(const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/gm,
-    (_m, kind, name) => {
+    /^export\s+(async\s+)?(const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/gm,
+    (_m, asyncPrefix, kind, name) => {
       names.push(name);
       const decl = kind === 'const' || kind === 'let' ? 'var' : kind;
-      return `${decl} ${name}`;
+      return `${asyncPrefix || ''}${decl} ${name}`;
     }
   );
-  src = src.replace(/^export\s*\{[^}]*\};?\s*$/gm, '');
+  src = src.replace(/^export\s*\{([^}]*)\};?\s*$/gm, (_match, listed) => {
+    for (const name of listed.split(',').map(n => n.trim()).filter(n => /^[A-Za-z_$][\w$]*$/.test(n))) {
+      if (!names.includes(name)) names.push(name);
+    }
+    return '';
+  });
   const keys = Object.keys(sandbox);
   const body = `${src}\n;return { ${names.join(', ')} };`;
   // eslint-disable-next-line no-new-func

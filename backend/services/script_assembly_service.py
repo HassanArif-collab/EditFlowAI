@@ -8,6 +8,7 @@ with checkerboarded J-cuts, 108% scale punch-ins, and V2 B-roll cover.
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import math
 import os
@@ -17,6 +18,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from .media_resolver import MediaItem, media_resolver
+from .media_framing import framing_for_file, source_facts
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +61,11 @@ class ParsedBeat:
     title: str = ""
     speaker: str = ""
     clip_stem: str = ""
+    source_ref: str = ""
+    kind: str = "recorded_dialogue"
+    fit_mode: str = ""
+    zoom: float = 1.0
+    focal_point: Optional[List[float]] = None
     source_in: float = 0.0
     source_out: float = 0.0
     timeline_in: float = 0.0
@@ -114,6 +121,11 @@ class AssembledCut:
     has_broll_overlay: bool = False
     broll_name: Optional[str] = None
     broll_placements: List[Dict[str, Any]] = field(default_factory=list)
+    kind: str = "recorded_dialogue"
+    fit_mode: str = "fill"
+    resolution_error: str = ""
+    framing: Dict[str, Any] = field(default_factory=dict)
+    source_revision: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -135,6 +147,8 @@ class BrollPlacement:
     visual_cue: str = ""
     is_still: bool = False
     item_id: str = ""
+    framing: Dict[str, Any] = field(default_factory=dict)
+    source_revision: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -156,6 +170,15 @@ class AssembledScriptPlan:
     markers: List[Dict[str, Any]] = field(default_factory=list)
     captions: List[Dict[str, Any]] = field(default_factory=list)
     summary: Dict[str, Any] = field(default_factory=dict)
+    schema_version: int = 1
+    brand: str = ""
+    project_folder: str = ""
+    script_path: str = ""
+    script_revision: str = ""
+    execution_revision: str = ""
+    variant_id: str = "primary"
+    variants: List[Dict[str, Any]] = field(default_factory=list)
+    validation: Dict[str, Any] = field(default_factory=lambda: {"valid": True, "errors": [], "warnings": []})
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -172,6 +195,15 @@ class AssembledScriptPlan:
             "markers": self.markers,
             "captions": self.captions,
             "summary": self.summary,
+            "schema_version": self.schema_version,
+            "brand": self.brand,
+            "project_folder": self.project_folder,
+            "script_path": self.script_path,
+            "script_revision": self.script_revision,
+            "execution_revision": self.execution_revision,
+            "variant_id": self.variant_id,
+            "variants": self.variants,
+            "validation": self.validation,
         }
 
 
@@ -192,6 +224,7 @@ class FrankenBiteTrimmer:
         gross_out: float,
         transcript_path: Optional[str] = None,
         target_slot_sec: Optional[float] = None,
+        strict_word_timing: bool = False,
     ) -> List[MicroCutSlice]:
         """
         Split a quote with ellipses (...) into micro-cut time slices.
@@ -210,6 +243,11 @@ class FrankenBiteTrimmer:
 
         if not sub_phrases:
             return [MicroCutSlice(0, quote.strip(), gross_in, gross_out, gross_dur)]
+
+        if strict_word_timing:
+            if len(sub_phrases) == 1:
+                return [MicroCutSlice(0, quote.strip(), gross_in, gross_out, gross_dur)]
+            return self._exact_word_slices(sub_phrases, gross_in, gross_out, transcript_path)
 
         # If only 1 phrase and no ellipses, return single cut
         if len(sub_phrases) == 1 and "…" not in quote and "..." not in quote:
@@ -245,7 +283,7 @@ class FrankenBiteTrimmer:
                 merged_in = min(prev.source_in, s.source_in)
                 merged_out = max(prev.source_out, s.source_out)
                 clean_slices[-1] = MicroCutSlice(
-                    prev.slice_index,
+                    prev.sub_index,
                     prev.sub_text + " " + s.sub_text,
                     merged_in,
                     merged_out,
@@ -255,6 +293,26 @@ class FrankenBiteTrimmer:
                 clean_slices.append(s)
 
         return clean_slices
+
+    def _exact_word_slices(self, phrases: List[str], start: float, end: float, transcript_path: Optional[str]) -> List[MicroCutSlice]:
+        if not transcript_path or Path(transcript_path).suffix.lower() != ".json":
+            raise ValueError("Subphrase edits require a JSON transcript with word timestamps or explicitly linked cuts.")
+        data = json.loads(Path(transcript_path).read_text(encoding="utf-8-sig"))
+        raw = data.get("words") or [word for segment in data.get("segments", []) for word in segment.get("words", [])]
+        words = sorted([w for w in raw if float(w.get("start", -1)) >= start - 0.03 and float(w.get("end", end + 1)) <= end + 0.03], key=lambda w: w["start"])
+        normalize = lambda text: re.sub(r"[^\w]", "", text.casefold())
+        tokens = [normalize(w.get("word") or w.get("text") or "") for w in words]
+        slices, cursor = [], 0
+        for index, phrase in enumerate(phrases):
+            wanted = [normalize(token) for token in phrase.split() if normalize(token)]
+            found = next((i for i in range(cursor, len(tokens) - len(wanted) + 1) if tokens[i:i + len(wanted)] == wanted), None) if wanted else None
+            if found is None:
+                raise ValueError(f"No exact word timing for subphrase '{phrase}'. Link the individual source ranges instead.")
+            last = found + len(wanted) - 1
+            source_in, source_out = max(start, float(words[found]["start"]) - 0.03), min(end, float(words[last]["end"]) + 0.03)
+            slices.append(MicroCutSlice(index, phrase, source_in, source_out, source_out - source_in))
+            cursor = last + 1
+        return slices
 
     def _align_with_transcript(
         self,
@@ -458,6 +516,24 @@ class ScriptAssemblyService:
         # Strategy 4: Fallback sentence / paragraph parser
         return self._parse_freeform_beats(script_text)
 
+    def script_variants(self, text: str) -> List[Dict[str, Any]]:
+        """Each executable cut table is a separate version, never silently concatenated."""
+        variants = []
+        heading = "Primary cut"
+        lines = text.splitlines()
+        for index, line in enumerate(lines):
+            if line.lstrip().startswith("#") or "CUT LIST" in line.upper():
+                heading = line.strip("# *")
+            if line.strip().startswith("|") and re.search(r"\|\s*(?:#|cut|index)\s*\|", line, re.I) and "source" in line.lower():
+                end = index + 1
+                while end < len(lines) and lines[end].strip().startswith("|"):
+                    end += 1
+                beats = self._parse_cut_list_table("\n".join(lines[index:]))
+                if beats:
+                    variants.append({"id": "primary" if not variants else f"variant-{len(variants) + 1}",
+                                     "label": heading, "beats": beats})
+        return variants
+
     def _parse_cut_list_table(self, text: str) -> List[ParsedBeat]:
         """Extract beats from a markdown table e.g. | # | Person | Source file | Cut IN -> OUT | ..."""
         lines = text.splitlines()
@@ -492,6 +568,13 @@ class ScriptAssemblyService:
                 idx_val = len(beats) + 1
                 person_val = self._get_col(parts, col_map, ["person", "speaker", "cast"], default="Speaker")
                 src_val = self._get_col(parts, col_map, ["source", "source file", "file"], default="")
+                # Existing agent scripts document exact workspace paths below
+                # the table. Honor those links before resolving a short name.
+                short_name = Path(src_val.strip().strip("`").replace("\\", "/")).name.casefold()
+                for label, actual in re.findall(r"`([^`\n]+)`\s*(?:→|->)\s*`([A-Za-z]:[\\/][^`\n]+)`", text):
+                    if Path(label.replace("\\", "/")).name.casefold() == short_name:
+                        src_val = actual
+                        break
                 cut_val = self._get_col(parts, col_map, ["cut in", "cut in -> out", "cut", "in -> out"], default="")
                 timeline_val = self._get_col(parts, col_map, ["timeline", "slot"], default="")
                 yields_val = self._get_col(parts, col_map, ["yields", "duration"], default="")
@@ -506,7 +589,7 @@ class ScriptAssemblyService:
                 clip_stem = media_resolver.normalize_stem(src_val) if src_val else ""
 
                 # 1. Check table columns for explicit dialogue quote in quotation marks (e.g. "every dollar...")
-                quote = ""
+                quote = self._get_col(parts, col_map, ["quote", "dialogue", "spoken"], default="").strip(' "“”')
                 quote_match = re.search(r'["“](.+?)["”]', cut_val)
                 if quote_match and len(quote_match.group(1).strip()) > 3:
                     quote = quote_match.group(1).strip()
@@ -558,12 +641,17 @@ class ScriptAssemblyService:
                     title=f"Cut {idx_val} - {person_val}",
                     speaker=person_val,
                     clip_stem=clip_stem,
+                    source_ref=src_val.strip().strip("`"),
+                    kind=("generated_narration" if re.search(r"generated.?vo|voiceover|narration|cartesia|generated audio", f"{src_val} {person_val} {cut_val}", re.I)
+                          else "graphic" if re.search(r"end.?card|\.png|\.jpe?g|\.webp", src_val, re.I)
+                          else "recorded_dialogue"),
                     source_in=src_in,
                     source_out=src_out,
                     timeline_in=tl_in,
                     timeline_out=tl_out,
                     target_slot_duration=target_dur or (src_out - src_in),
                     quote=quote,
+                    visual_cue=self._get_col(parts, col_map, ["visual cue", "visual"], default=""),
                     handoff_note=handoff_val,
                     combine_mode="MONTAGE" if "montage" in handoff_val.lower() else "SEAMLESS",
                 ))
@@ -739,6 +827,10 @@ class ScriptAssemblyService:
         fps: float = 30.0,
         auto_broll: bool = True,
         pacing_style: str = "editorial",
+        brand: str = "",
+        project_folder: str = "",
+        variant_id: str = "primary",
+        allow_ai_generated: bool = False,
     ) -> AssembledScriptPlan:
         """
         Compile a script into a concrete multi-track assembly plan.
@@ -746,24 +838,79 @@ class ScriptAssemblyService:
         checkerboarded J-cuts, and matches B-roll overlays.
         """
         # If script_input is a path on disk, read it
-        if os.path.exists(script_input):
+        script_path = ""
+        package_info = None
+        if os.path.isfile(script_input):
             p = Path(script_input)
+            script_path = str(p.resolve())
             script_id = p.stem
             title = p.name
             with open(script_input, "r", encoding="utf-8", errors="ignore") as f:
                 content = f.read()
+            from .agent_script_package import load_package
+            package_info = load_package(script_path)
         else:
             content = script_input
 
+        # Markdown is authoritative. A sidecar from an older revision must
+        # never supply old quotes or timings to the current preview.
+        stale_package = bool(package_info and not package_info[2])
+        if stale_package:
+            script_path = package_info[1]
+            content = Path(script_path).read_text(encoding="utf-8")
+        if script_path:
+            heading = re.search(r"(?m)^#\s+(.+)$", content)
+            if heading:
+                title = heading.group(1).strip()
         # Parse beats
-        beats = self.parse_markdown_script(content)
+        if package_info and not stale_package:
+            package, markdown_path, revision_matches = package_info
+            if project_folder and Path(package.project_folder).resolve() != Path(project_folder).resolve():
+                raise ValueError("The execution sidecar belongs to another project.")
+            if brand and package.brand.casefold() != brand.casefold():
+                raise ValueError("The execution sidecar belongs to another brand.")
+            project_folder, brand, title = package.project_folder, package.brand, package.title
+            script_path = markdown_path
+            content = Path(markdown_path).read_text(encoding="utf-8")
+            variants = []
+            for version in package.variants:
+                cursor = 0.0
+                version_beats = []
+                for index, cut in enumerate(version.cuts, 1):
+                    duration = cut.source_out - cut.source_in
+                    version_beats.append(ParsedBeat(index=index, title=f"Cut {index}", speaker=cut.speaker,
+                        source_ref=cut.source_file, clip_stem=media_resolver.normalize_stem(cut.source_file),
+                        source_in=cut.source_in, source_out=cut.source_out, timeline_in=cursor,
+                        timeline_out=cursor + duration, target_slot_duration=duration, quote=cut.quote,
+                        caption=cut.caption, visual_cue=cut.visual_cue, kind=cut.kind,
+                        fit_mode="contain" if cut.kind == "graphic" else cut.fit_mode, zoom=cut.zoom, focal_point=cut.focal_point))
+                    cursor += duration
+                variants.append({"id": version.id, "label": version.label, "beats": version_beats})
+        else:
+            variants = self.script_variants(content)
+        if variants:
+            selected = next((v for v in variants if v["id"] == variant_id), None)
+            if selected is None:
+                raise ValueError(f"Unknown script variant: {variant_id}")
+            beats = selected["beats"]
+        else:
+            beats = self.parse_markdown_script(content)
         if not beats:
             raise ValueError("No valid beats could be parsed from the provided script.")
 
         # Determine overall title and duration
         target_dur = beats[-1].timeline_out if beats[-1].timeline_out > 0 else sum(b.target_slot_duration for b in beats)
 
-        width, height = (1080, 1920) if aspect_ratio == "9:16" else (1920, 1080)
+        if not math.isfinite(fps) or fps <= 0 or fps > 120:
+            raise ValueError("fps must be a finite value between 0 and 120.")
+        for nominal, rational in ((23.976, 24000/1001), (29.97, 30000/1001), (59.94, 60000/1001)):
+            if abs(fps - nominal) < 0.001:
+                fps = rational
+                break
+        dimensions = {"9:16": (1080, 1920), "16:9": (1920, 1080), "1:1": (1080, 1080), "4:5": (1080, 1350)}
+        if aspect_ratio not in dimensions:
+            raise ValueError(f"Unsupported aspect ratio: {aspect_ratio}")
+        width, height = dimensions[aspect_ratio]
         plan = AssembledScriptPlan(
             script_id=script_id,
             title=title,
@@ -772,9 +919,20 @@ class ScriptAssemblyService:
             fps=fps,
             width=width,
             height=height,
+            brand=brand,
+            project_folder=project_folder,
+            script_path=script_path,
+            script_revision=hashlib.sha256(content.encode("utf-8")).hexdigest(),
+            variant_id=variant_id,
+            variants=[{"id": v["id"], "label": v["label"], "duration": max(b.timeline_out for b in v["beats"])} for v in variants],
         )
+        if stale_package:
+            plan.validation["warnings"].append({"code": "stale_execution_package", "message": "Showing the current Markdown. Execution links from an older revision were ignored; any missing links must be updated before assembly."})
+        if package_info:
+            plan.execution_revision = hashlib.sha256(Path(script_path).with_suffix(".editflow.json").read_bytes()).hexdigest()
 
         curr_timeline_sec = 0.0
+        raw_timeline_sec = 0.0
         last_speaker = ""
         last_clip_stem = ""
         active_video_track = 0  # Alternates 0 (V1) and 1 (V2) for J-cuts
@@ -782,29 +940,21 @@ class ScriptAssemblyService:
 
         for beat in beats:
             # Step 1: Resolve speaker and clip stem
-            resolved_media = None
-            if beat.clip_stem:
-                resolved_media = media_resolver.resolve_media(beat.clip_stem)
-
-            # If no clip stem directly on beat, search speaker
+            resolved_media, resolution_error = self._resolve_script_source(
+                beat.source_ref or beat.clip_stem, project_folder, script_path)
             speaker_name = beat.speaker
-            if not resolved_media and speaker_name:
-                sp_info = media_resolver.get_speaker(speaker_name)
-                if sp_info and sp_info.clip_stems:
-                    resolved_media = media_resolver.resolve_media(sp_info.clip_stems[0])
-
-            # Fallback: if no media resolved yet, search quote text across transcript index
-            if not resolved_media and beat.quote:
-                resolved_media = self._find_media_by_quote(beat.quote)
-
-            # If still nothing, fallback to first available video in resolver
-            if not resolved_media:
-                all_videos = [m for m in media_resolver._media_by_path.values() if m.file_type == "video"]
-                if all_videos:
-                    resolved_media = all_videos[0]
+            if resolution_error:
+                plan.validation["errors"].append({"beat": beat.index,
+                    "code": "narration_required" if beat.kind == "generated_narration" else "source_unresolved",
+                    "message": (f"Narration audio is missing: {beat.source_ref or beat.clip_stem}. Link or generate audio matching the current words."
+                                if beat.kind == "generated_narration" else resolution_error)})
 
             source_path = resolved_media.path if resolved_media else ""
             source_stem = resolved_media.stem if resolved_media else beat.clip_stem
+            if resolved_media and ((beat.kind == "generated_narration" and resolved_media.file_type != "audio") or
+                                   (beat.kind == "graphic" and resolved_media.file_type != "image") or
+                                   (beat.kind == "recorded_dialogue" and resolved_media.file_type == "image")):
+                plan.validation["errors"].append({"beat": beat.index, "code": "wrong_source_type", "message": f"{beat.kind} cannot use {resolved_media.file_type} source {resolved_media.name}."})
 
             # Step 2: Resolve companion audio and transcript
             pair = media_resolver.resolve_audio_pair(source_stem) if source_stem else None
@@ -815,9 +965,15 @@ class ScriptAssemblyService:
             gross_in = beat.source_in
             gross_out = beat.source_out if beat.source_out > beat.source_in else gross_in + beat.target_slot_duration
 
-            # Intelligently snap to complete spoken sentences if transcript exists
-            if transcript_path and os.path.exists(transcript_path):
-                gross_in, gross_out = self._snap_to_complete_sentences(gross_in, gross_out, beat.quote, transcript_path, clip_stem=source_stem)
+            # Curated source ranges are authoritative. Segment-level transcripts do not
+            # provide enough precision to expand or rewrite an editor's exact range.
+            if gross_in < 0 or gross_out <= gross_in:
+                plan.validation["errors"].append({"beat": beat.index, "code": "invalid_range", "message": "Source OUT must be after IN, with IN at or after zero."})
+            source_duration = resolved_media.duration if resolved_media else 0
+            if resolved_media and resolved_media.file_type != "image" and not source_duration:
+                source_duration = source_facts(source_path).get("duration", 0)
+            if resolved_media and source_duration > 0 and resolved_media.file_type != "image" and gross_out > source_duration + 1 / fps:
+                plan.validation["errors"].append({"beat": beat.index, "code": "range_exceeds_source", "message": f"Source OUT {gross_out:.3f}s exceeds {resolved_media.name} ({source_duration:.3f}s)."})
 
             target_slot = beat.target_slot_duration or (gross_out - gross_in)
 
@@ -827,18 +983,20 @@ class ScriptAssemblyService:
             if not is_explicit_frankenbite:
                 slices = [MicroCutSlice(0, beat.quote.strip(), gross_in, gross_out, gross_out - gross_in)]
             else:
-                slices = self.frankenbite.trim_frankenbite(
-                    quote=beat.quote,
-                    gross_in=gross_in,
-                    gross_out=gross_out,
-                    transcript_path=transcript_path,
-                    target_slot_sec=target_slot,
-                )
+                try:
+                    slices = self.frankenbite.trim_frankenbite(
+                        quote=beat.quote, gross_in=gross_in, gross_out=gross_out,
+                        transcript_path=transcript_path, target_slot_sec=target_slot, strict_word_timing=True)
+                except (ValueError, OSError) as exc:
+                    plan.validation["errors"].append({"beat": beat.index, "code": "word_timing_required", "message": str(exc)})
+                    slices = [MicroCutSlice(0, beat.quote, gross_in, gross_out, gross_out - gross_in)]
 
             # Step 4: Emit AssembledCut items
             # Only apply J-cut if explicitly requested in script handoff note (e.g. "j-cut out: ...")
             # Default behavior: clean straight cuts joined on ONE track (V1 / A1), no overlapping voices
-            has_j_cut = "j-cut" in beat.handoff_note.lower()
+            # Camera audio must stay linked on A1. Do not unlink/re-time it to
+            # implement an automatically inferred J-cut.
+            has_j_cut = False
             audio_lead_frames = 15 if has_j_cut else 0
             audio_lead_sec = round(audio_lead_frames / fps, 4)
 
@@ -856,10 +1014,14 @@ class ScriptAssemblyService:
                 cut_idx = len(plan.cuts) + 1
                 is_same_clip = bool(source_stem and source_stem == last_clip_stem and sub_idx > 0)
 
-                cut_start = curr_timeline_sec
-                cut_end = cut_start + sl.duration
+                cut_start = round(curr_timeline_sec * fps) / fps
+                raw_timeline_sec += sl.duration
+                cut_end = round(raw_timeline_sec * fps) / fps
+                sl.source_in = round(sl.source_in * fps) / fps
+                sl.duration = cut_end - cut_start
+                sl.source_out = sl.source_in + sl.duration
 
-                punch_in = 1.08 if is_same_clip else 1.0
+                punch_in = beat.zoom * (1.08 if is_same_clip else 1.0)
 
                 cut_quote = sl.sub_text or beat.quote
                 if not cut_quote and transcript_path:
@@ -871,13 +1033,14 @@ class ScriptAssemblyService:
                     speaker=speaker_name or (pair.speaker if pair else "Speaker"),
                     source_file=source_path,
                     source_stem=source_stem,
-                    source_in=round(sl.source_in, 3),
-                    source_out=round(sl.source_out, 3),
-                    duration=round(sl.duration, 3),
-                    timeline_start=round(cut_start, 3),
-                    timeline_end=round(cut_end, 3),
-                    video_track=active_video_track,  # V1 by default (joined on single track)
-                    audio_track=active_audio_track,  # A1 by default (joined on single track)
+                    source_in=sl.source_in,
+                    source_out=sl.source_out,
+                    duration=sl.duration,
+                    timeline_start=cut_start,
+                    timeline_end=cut_end,
+                    video_track=-1 if resolved_media and resolved_media.file_type == "audio" else active_video_track,
+                    audio_track=(-1 if beat.kind in ("graphic", "visual") or (resolved_media and resolved_media.file_type == "image")
+                                 else 1 if beat.kind == "generated_narration" else 0),
                     audio_lead_frames=audio_lead_frames if sub_idx == 0 else 0,
                     audio_lead_sec=audio_lead_sec if sub_idx == 0 else 0.0,
                     same_clip_splice=is_same_clip,
@@ -889,9 +1052,17 @@ class ScriptAssemblyService:
                     marker_comment=cut_quote,
                     enhanced_audio_file=enhanced_audio_path,
                     transcript_file=transcript_path,
+                    kind=beat.kind,
+                    fit_mode=beat.fit_mode or ("contain" if beat.kind == "graphic" or (resolved_media and resolved_media.file_type == "image") else "fill"),
+                    resolution_error=resolution_error,
                 )
 
                 plan.cuts.append(assembled_cut)
+                if source_path:
+                    stat = Path(source_path).stat()
+                    assembled_cut.source_revision = f"{stat.st_size}:{stat.st_mtime_ns}"
+                if source_path and assembled_cut.video_track >= 0:
+                    assembled_cut.framing = framing_for_file(source_path, width, height, assembled_cut.fit_mode, punch_in, beat.focal_point)
 
                 # Caption entry for Captions Studio matching each cut
                 plan.captions.append({
@@ -913,15 +1084,16 @@ class ScriptAssemblyService:
             })
 
         # Step 5: Intelligent B-Roll Placement via Visual Library
-        if auto_broll and plan.cuts:
+        if auto_broll and plan.cuts and brand:
             try:
                 from .broll_placement_engine import broll_placement_engine
                 from .visual_library_service import visual_library_service
 
-                vl_items = visual_library_service.query_items(limit=1)
+                vl_items = visual_library_service.query_items(limit=1, brand=brand or None)
                 if vl_items:
                     brolls = broll_placement_engine.place_broll_for_plan(
-                        plan.cuts, aspect_ratio=aspect_ratio, pacing_style=pacing_style
+                        plan.cuts, aspect_ratio=aspect_ratio, pacing_style=pacing_style,
+                        brand=brand or None, allow_ai_generated=allow_ai_generated,
                     )
                     if brolls:
                         plan.broll_clips = brolls
@@ -930,6 +1102,13 @@ class ScriptAssemblyService:
 
             last_speaker = speaker_name
 
+        plan.validation["valid"] = not plan.validation["errors"]
+        declared = re.search(r"(?im)^\*\*(?:Length|Duration):\*\*\s*(\d+(?:\.\d+)?)\s*(?:s|seconds)", content)
+        if declared and abs(curr_timeline_sec - float(declared.group(1))) > max(0.5,float(declared.group(1))*.03):
+            plan.validation["warnings"].append({"code":"brief_duration_mismatch",
+                "message":f"The complete spoken cuts take {curr_timeline_sec:.2f}s; the brief requests {float(declared.group(1)):.2f}s. Shorter wording/cuts are needed to meet that length; speech was not truncated."})
+        if target_dur and abs(curr_timeline_sec - target_dur) > max(1 / fps, 0.05):
+            plan.validation["warnings"].append({"code": "duration_mismatch", "message": f"Selected ranges yield {curr_timeline_sec:.2f}s; the script's slots total {target_dur:.2f}s. Review before assembly."})
         plan.summary = {
             "total_cuts": len(plan.cuts),
             "broll_count": len(plan.broll_clips),
@@ -941,6 +1120,58 @@ class ScriptAssemblyService:
         }
 
         return plan
+
+    def _resolve_script_source(self, reference: str, project_folder: str = "", script_path: str = "") -> Tuple[Optional[MediaItem], str]:
+        """Resolve exact media references; ambiguity/missing media requires an agent/editor decision."""
+        if not reference:
+            return None, "No source linked. Link a recorded clip, generated narration file, or graphic."
+        from .media_resolver import VIDEO_EXTS, AUDIO_EXTS, IMAGE_EXTS
+        playable = VIDEO_EXTS | AUDIO_EXTS | IMAGE_EXTS
+        reference = reference.strip().strip("`").strip()
+        query = media_resolver.remap_legacy_path(reference)
+        path = Path(query)
+        roots = [project_folder, media_resolver.root_dir]
+        if script_path:
+            from .script_sources import script_locations
+            roots.extend(str(p.parent) for p in script_locations(script_path))
+        direct = [path] if path.is_absolute() else [Path(root) / query for root in roots if root]
+        for candidate in direct:
+            if candidate.is_file() and candidate.suffix.lower() in playable:
+                if media_resolver.root_dir and not candidate.resolve().is_relative_to(Path(media_resolver.root_dir).resolve()):
+                    return None, f"Source is outside the selected brand's media root: {candidate}"
+                ext = candidate.suffix.lower()
+                for indexed in media_resolver._media_by_path.values():
+                    if Path(indexed.path).resolve() == candidate.resolve():
+                        return indexed, ""
+                return MediaItem(stem=media_resolver.normalize_stem(str(candidate)), name=candidate.name, path=str(candidate.resolve()),
+                                 file_type="video" if ext in VIDEO_EXTS else "audio" if ext in AUDIO_EXTS else "image", ext=ext), ""
+        stem = media_resolver.normalize_stem(reference)
+        key = media_resolver.clean_alphanumeric(stem)
+        filename = Path(reference.replace("\\", "/")).name.casefold()
+        exact_files = {os.path.normcase(str(Path(item.path).resolve())): item
+                       for item in media_resolver._media_by_path.values()
+                       if item.name.casefold() == filename and item.ext.lower() in playable and Path(item.path).is_file()
+                       and (not media_resolver.root_dir or Path(item.path).resolve().is_relative_to(Path(media_resolver.root_dir).resolve()))}
+        if len(exact_files) == 1:
+            return next(iter(exact_files.values())), ""
+        candidates = [item for item in media_resolver._media_by_path.values()
+                      if item.ext.lower() in playable and Path(item.path).is_file()
+                      and (not media_resolver.root_dir or Path(item.path).resolve().is_relative_to(Path(media_resolver.root_dir).resolve()))
+                      and (item.stem.casefold() == stem.casefold() or media_resolver.clean_alphanumeric(item.stem) == key)]
+        ext = Path(reference.replace("\\", "/")).suffix.lower()
+        if ext in playable:
+            candidates = [item for item in candidates if item.ext.lower() == ext]
+        elif not ext:
+            videos = [item for item in candidates if item.file_type == "video"]
+            if videos:
+                candidates = videos
+        # The same indexed file can be reached through a migrated junction.
+        unique = {os.path.normcase(str(Path(item.path).resolve())): item for item in candidates}
+        if len(unique) == 1:
+            return next(iter(unique.values())), ""
+        if len(unique) > 1:
+            return None, f"Ambiguous source '{reference}': {len(unique)} matching files. Link its full path."
+        return None, f"Missing source '{reference}'. No unrelated clip was substituted."
 
     def _find_media_by_quote(self, quote: str) -> Optional[MediaItem]:
         """Search across all indexed transcripts to find which video uttered this quote."""
@@ -1082,6 +1313,8 @@ class ScriptAssemblyService:
           - Beat chapter markers
           - Single-undo group in Premiere Pro
         """
+        if not plan.validation.get("valid", False) or not plan.cuts:
+            return []
         seq_name = target_seq_name or f"Rough Cut - {plan.title}"
         ops: List[Dict[str, Any]] = []
 
@@ -1125,7 +1358,11 @@ class ScriptAssemblyService:
                 "audio_track_index": cut.audio_track,
                 "audio_lead_frames": cut.audio_lead_frames,
                 "scale_punch_in": cut.scale_punch_in,
+                "fit_mode": cut.fit_mode,
+                "zoom": cut.scale_punch_in,
                 "single_channel_dialogue": True,
+                "preserve_linked_audio": True,
+                **cut.framing,
             })
 
             # Add marker for the cut
@@ -1141,6 +1378,11 @@ class ScriptAssemblyService:
         for broll in plan.broll_clips:
             if not broll.source_file:
                 continue
+            from .media_framing import bound_visual
+            bound_visual(broll, plan.fps)
+            if broll.duration <= 0:
+                continue
+            broll.framing = framing_for_file(broll.source_file, plan.width, plan.height, "contain" if broll.is_still else "fill")
             ops.append({
                 "action": "add",
                 "mediaPath": broll.source_file,
@@ -1149,6 +1391,9 @@ class ScriptAssemblyService:
                 "outPoint": broll.source_out,
                 "video_track_index": broll.track,  # 1 = V2
                 "audio_track_index": -1,           # No audio for B-roll overlay
+                "fit_mode": "contain" if broll.is_still else "fill",
+                "zoom": 1.0,
+                **broll.framing,
             })
 
         ops.append({"action": "endUndoGroup"})

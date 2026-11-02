@@ -181,9 +181,11 @@ def test_high_density_editorial_placement(sample_dialogue_cuts, mock_visual_libr
         print(f"Total placements: {len(placements)}")
         assert len(placements) >= 10, f"Expected at least 10 micro-visuals in Editorial mode, got {len(placements)}"
 
-        # Every cut from 1 to 5 should have received at least 2 micro-visuals
-        for c in sample_dialogue_cuts[:5]:
+        # The first four cuts have several relevant camera angles. The plan
+        # beat has only one blueprint: do not repeat it to meet a density quota.
+        for c in sample_dialogue_cuts[:4]:
             assert len(c.broll_placements) >= 2, f"Cut #{c.cut_index} should have >= 2 micro-visuals, got {len(c.broll_placements)}"
+        assert len(sample_dialogue_cuts[4].broll_placements) == 1
 
 
 def test_high_density_dynamic_viral_placement(sample_dialogue_cuts, mock_visual_library):

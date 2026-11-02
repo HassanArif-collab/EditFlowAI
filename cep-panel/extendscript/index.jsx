@@ -192,6 +192,12 @@ function editflowDispatch(command, payloadData) {
         }
 
         var result;
+        if (options.expected_project_path && String(app.project.path || "").replace(/\\/g, "/").toLowerCase() !== String(options.expected_project_path).replace(/\\/g, "/").toLowerCase()) {
+            return JSON.stringify({ success: false, error: "The open Premiere project changed. Review the active project before editing." });
+        }
+        if (options.expected_sequence_id && (!app.project.activeSequence || app.project.activeSequence.sequenceID !== options.expected_sequence_id)) {
+            return JSON.stringify({ success: false, error: "The active sequence changed. Review this sequence before editing." });
+        }
 
     switch (command) {
         // ── Project Scanning ──
@@ -269,6 +275,43 @@ function editflowDispatch(command, payloadData) {
         case "openSequence":
             result = clipManager.openSequence(options);
             break;
+
+        case "moveSequenceToBin": {
+            var seqName = editflowUtils.getParam(options, "name") || "TEST 30S MAGNIFIC STORY";
+            var targetBinName = editflowUtils.getParam(options, "bin") || "test";
+            var project = app.project;
+            var targetBin = null;
+            var foundItem = null;
+
+            function searchBin(bin) {
+                for (var i = 0; i < bin.children.numItems; i++) {
+                    var item = bin.children[i];
+                    if (item.type === 2 && item.name === targetBinName) {
+                        targetBin = item;
+                    }
+                    if (item.name === seqName) {
+                        foundItem = item;
+                    }
+                    if (item.type === 2) {
+                        searchBin(item);
+                    }
+                }
+            }
+            if (project && project.rootItem) {
+                searchBin(project.rootItem);
+            }
+            if (foundItem && targetBin) {
+                try {
+                    foundItem.moveBin(targetBin);
+                    result = JSON.stringify({ success: true, moved: foundItem.name, to: targetBin.name });
+                } catch (e) {
+                    result = JSON.stringify({ success: false, error: e.toString() });
+                }
+            } else {
+                result = JSON.stringify({ success: false, error: "Item or Bin not found", foundItem: !!foundItem, targetBin: !!targetBin });
+            }
+            break;
+        }
 
         case "createSequence":
             result = clipManager.createNewSequence(options);

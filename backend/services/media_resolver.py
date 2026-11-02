@@ -188,12 +188,53 @@ class MediaResolverService:
             # If pointing to an automation or scripts subfolder, walk up to the project root
             # (e.g. D:\MARKETING\Rahima Aziz Foundation) so all footage, B-roll, and transcripts are indexed.
             curr = p
+            curr = p
             skip_names = {
                 "ai automation", "ai workflow", "scripts", "script gen", "scripts_15_30_45",
-                "mix", "mixed with old data", "interviews_talking_heads", "project"
+                "mix", "mixed with old data", "interviews_talking_heads", "project",
             }
-            while curr.name.lower() in skip_names and curr.parent != curr:
-                curr = curr.parent
+            # Generic project-root discovery: walk up past known non-project folders
+            # AND past any folder that does not itself contain a media-bearing subfolder
+            # (e.g. dated content folders like "2026-9-23 myairbridge Talking Content").
+            # Stop at the first ancestor that contains a recognizable media root
+            # ("Raw Data", "Finals", "Footage", "Media", "Assets") so the whole
+            # project tree (camera masters + transcripts) gets indexed.
+            media_markers = {"raw data", "finals", "footage", "media", "assets", "raw"}
+            boundary_names = {"marketing", "users", "documents", "desktop", "d:", "c:"}
+            best = None
+            walk = p
+            visited = 0
+            while walk.parent != walk and visited < 12:
+                visited += 1
+                name_l = walk.name.lower()
+                if name_l in boundary_names:
+                    break
+                has_marker = False
+                try:
+                    for child in walk.iterdir():
+                        if child.is_dir() and child.name.lower() in media_markers:
+                            # Only count as a media root if the marker folder actually
+                            # contains media files (avoids stopping at empty "Finals").
+                            try:
+                                if any(x.is_file() and x.suffix.lower() in (".mp4", ".mov", ".mxf", ".avi", ".mkv", ".wav", ".mp3") for x in child.rglob("*")):
+                                    has_marker = True
+                                    break
+                            except Exception:
+                                has_marker = True
+                                break
+                except Exception:
+                    pass
+                if has_marker:
+                    best = walk
+                    break
+                walk = walk.parent
+
+            if best is not None:
+                curr = best
+            else:
+                curr = p
+                while curr.name.lower() in skip_names and curr.parent != curr:
+                    curr = curr.parent
             self.root_dir = str(curr)
         elif not self.root_dir:
             self._cache_dir.mkdir(parents=True, exist_ok=True)

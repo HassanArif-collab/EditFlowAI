@@ -4,6 +4,7 @@ Verifies CUT LIST table parsing, chain blocks, Franken-bite ellipsis trimming,
 checkerboarded J-cuts, scale punch-in, and ExtendScript EDL operations.
 """
 import os
+import json
 import shutil
 import tempfile
 from pathlib import Path
@@ -69,7 +70,11 @@ def temp_project_dir():
     (root / "Raw Data" / "myairbridge" / "C5024.MP4").write_text("fake video 2")
     (root / "Voice" / "1 Abdullah" / "01 Abdullah-enhanced-v2.mp3").write_text("fake enhanced audio")
     (root / "Raw_Transcriptions" / "C5032.json").write_text(
-        '{"segments": [{"start": 40.0, "end": 45.0, "text": "Caissons in the ground earth retention up"}, {"start": 47.0, "end": 51.0, "text": "first concrete poured"}]}'
+        json.dumps({"segments": [{"start":40, "end":51, "text":"Caissons in the ground earth retention up first concrete poured",
+            "words":[{"word":word,"start":start,"end":end} for word,start,end in [
+                ("Caissons",40,40.8),("in",40.8,41.0),("the",41.0,41.2),("ground",41.2,42.0),
+                ("earth",43,43.5),("retention",43.5,44.4),("up",44.4,45),
+                ("first",47,47.5),("concrete",47.5,48.4),("poured",48.4,49.2)]]}]})
     )
     (root / "Concrete Pouring" / "1.mp4").write_text("fake broll")
     (root / "Visuals" / "3D Mosque Render.png").write_text("fake render")
@@ -171,9 +176,9 @@ class TestScriptAssemblyService:
         assert plan.height == 1920
         assert len(plan.cuts) >= 3
 
-        # Verify J-cut detection on speaker handoff
+        # Camera speech remains linked on V1/A1; no inferred unlink/J-cut.
         cuts = plan.cuts
-        assert any(c.audio_lead_frames > 0 for c in cuts)
+        assert all(c.audio_lead_frames == 0 and c.audio_track == 0 and c.video_track == 0 for c in cuts)
 
         # Verify same-clip splice scale punch-in (108%)
         assert any(c.scale_punch_in == 1.08 for c in cuts)
@@ -226,7 +231,11 @@ class TestScriptAssemblyAPI:
         ass_data = assemble_resp.json()
         assert ass_data["success"] is True
         assert "extendscript_ops" in ass_data
-        assert ass_data["total_ops"] > 0
+        # An unlinked narration brief remains reviewable; it must never use an
+        # arbitrary indexed clip to make the assembly appear successful.
+        assert ass_data["total_ops"] == 0
+        assert ass_data["ready_to_assemble"] is False
+        assert ass_data["plan"]["validation"]["errors"]
 
         # Test Aspect Ratios (16:9 and 1:1)
         r_169 = client.post(

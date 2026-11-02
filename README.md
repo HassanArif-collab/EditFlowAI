@@ -23,6 +23,11 @@ See the complete release notes in [CHANGELOG.md](file:///C:/Users/Hassan%20Arif/
 
 ## Features
 
+Scripts are organized under each brand's dated project: `<Brand>/<dated project>/Scripts/`.
+Story Cut includes Brand and Project selectors and keeps script choices separate from
+shared footage libraries. See [project script folders](docs/project-scripts.md) for
+the agent commands and migration behavior.
+
 ### 1. Captions Studio
 - **WYSIWYG Real-Time Preview**: Fast 60fps HTML5 Canvas playback with word-by-word highlights.
 - **Rich Animation Presets**: Pop, Fade, Bounce, Karaoke, and Classic subtitle animations.
